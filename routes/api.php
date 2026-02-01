@@ -23,6 +23,18 @@ use App\Http\Controllers\SettingsController;
 |--------------------------------------------------------------------------
 */
 
+// Health Check - ใช้ทดสอบว่า API ทำงานได้
+Route::get('/health', function () {
+    return response()->json([
+        'status' => 'ok',
+        'message' => 'API is running',
+        'timestamp' => now()->toISOString(),
+        'environment' => app()->environment(),
+        'php_version' => PHP_VERSION,
+        'laravel_version' => app()->version(),
+    ]);
+});
+
 // Public routes (no auth required)
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
