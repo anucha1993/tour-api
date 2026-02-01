@@ -57,6 +57,9 @@ Route::get('tours/search/filters', [TourSearchController::class, 'getFilters']);
 Route::get('integrations/{id}/tours/search', [TourSearchController::class, 'searchWholesaler']);
 Route::get('integrations/{id}/tours/{tourId}', [TourSearchController::class, 'getTourDetail']);
 
+// Tour Code Lookup (by external_id)
+Route::post('tours/lookup-codes', [TourSearchController::class, 'lookupTourCodes']);
+
 // Queue & Sync Status (for monitoring/debugging)
 Route::get('queue/status', [IntegrationController::class, 'getQueueStatus']);
 Route::post('queue/fix-stuck', [IntegrationController::class, 'fixStuckSyncs']);
@@ -125,7 +128,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('tours.periods', PeriodController::class);
 
     // Tour Itineraries CRUD
+    Route::post('itineraries/upload-image', [App\Http\Controllers\TourItineraryController::class, 'uploadImageOnly']);
+    Route::post('itineraries/delete-image', [App\Http\Controllers\TourItineraryController::class, 'deleteImage']);
     Route::post('tours/{tour}/itineraries/reorder', [App\Http\Controllers\TourItineraryController::class, 'reorder']);
+    Route::post('tours/{tour}/itineraries/{itinerary}/upload-image', [App\Http\Controllers\TourItineraryController::class, 'uploadImage']);
+    Route::post('tours/{tour}/itineraries/{itinerary}/remove-image', [App\Http\Controllers\TourItineraryController::class, 'removeImage']);
     Route::apiResource('tours.itineraries', App\Http\Controllers\TourItineraryController::class);
 
     // Promotions

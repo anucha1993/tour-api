@@ -39,7 +39,7 @@ class TourSearchController extends Controller
             'wholesaler_ids' => 'nullable|array',
             'wholesaler_ids.*' => 'integer',
             '_sort' => 'nullable|string|in:price,-price,departure_date,-departure_date,title,-title',
-            '_limit' => 'nullable|integer|min:1|max:100',
+            '_limit' => 'nullable|integer|min:1|max:500',
             '_offset' => 'nullable|integer|min:0',
         ]);
 
@@ -95,7 +95,7 @@ class TourSearchController extends Controller
             'max_price' => 'nullable|numeric|min:0',
             'min_seats' => 'nullable|integer|min:1',
             '_sort' => 'nullable|string|in:price,-price,departure_date,-departure_date,title,-title',
-            '_limit' => 'nullable|integer|min:1|max:100',
+            '_limit' => 'nullable|integer|min:1|max:500',
             '_offset' => 'nullable|integer|min:0',
             'with_periods' => 'nullable|boolean',
         ]);
@@ -348,5 +348,72 @@ class TourSearchController extends Controller
         }
 
         return $endpoint;
+    }
+
+    /**
+     * Lookup tour codes by external_id
+     * 
+     * POST /api/tours/lookup-codes
+     * Body: { "external_ids": [{ "wholesaler_id": 1, "external_id": "12345" }, ...] }
+     * 
+     * Returns mapping of external_id to tour_code (null if not synced)
+     */
+    public function lookupTourCodes(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'external_ids' => 'required|array|max:200',
+            'external_ids.*.wholesaler_id' => 'required|integer',
+            'external_ids.*.external_id' => 'required|string',
+        ]);
+
+        try {
+            $lookupMap = [];
+            
+            // Group by wholesaler_id for efficient querying
+            $grouped = collect($validated['external_ids'])->groupBy('wholesaler_id');
+            
+            foreach ($grouped as $wholesalerId => $items) {
+                $externalIds = $items->pluck('external_id')->toArray();
+                
+                // Query tours with these external_ids
+                $tours = \App\Models\Tour::where('wholesaler_id', $wholesalerId)
+                    ->whereIn('external_id', $externalIds)
+                    ->select('external_id', 'tour_code', 'id', 'title', 'sync_status')
+                    ->get()
+                    ->keyBy('external_id');
+                
+                foreach ($externalIds as $extId) {
+                    $key = "{$wholesalerId}_{$extId}";
+                    if (isset($tours[$extId])) {
+                        $tour = $tours[$extId];
+                        $lookupMap[$key] = [
+                            'synced' => true,
+                            'tour_id' => $tour->id,
+                            'tour_code' => $tour->tour_code,
+                            'sync_status' => $tour->sync_status,
+                        ];
+                    } else {
+                        $lookupMap[$key] = [
+                            'synced' => false,
+                            'tour_id' => null,
+                            'tour_code' => null,
+                            'sync_status' => null,
+                        ];
+                    }
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $lookupMap,
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('TourSearch: lookupTourCodes error', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Lookup failed: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 }
