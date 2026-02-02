@@ -232,4 +232,176 @@ class SettingsController extends Controller
             ],
         ]);
     }
+
+    /**
+     * Get SMTP configuration
+     */
+    public function getSmtpConfig(): JsonResponse
+    {
+        $smtpConfig = Setting::get('smtp_config', [
+            'host' => '',
+            'port' => 587,
+            'encryption' => 'tls',
+            'username' => '',
+            'password' => '',
+            'from_address' => '',
+            'from_name' => '',
+            'enabled' => false,
+        ]);
+
+        // ซ่อน password ไม่ให้แสดงทั้งหมด
+        if (!empty($smtpConfig['password'])) {
+            $smtpConfig['password_masked'] = str_repeat('•', 8);
+            $smtpConfig['has_password'] = true;
+        } else {
+            $smtpConfig['password_masked'] = '';
+            $smtpConfig['has_password'] = false;
+        }
+        unset($smtpConfig['password']);
+
+        return response()->json([
+            'success' => true,
+            'data' => $smtpConfig,
+        ]);
+    }
+
+    /**
+     * Update SMTP configuration
+     */
+    public function updateSmtpConfig(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'host' => 'required|string|max:255',
+            'port' => 'required|integer|min:1|max:65535',
+            'encryption' => 'required|in:tls,ssl,none',
+            'username' => 'nullable|string|max:255',
+            'password' => 'nullable|string|max:255',
+            'from_address' => 'required|email|max:255',
+            'from_name' => 'required|string|max:255',
+            'enabled' => 'boolean',
+        ]);
+
+        // Get current config for password handling
+        $currentConfig = Setting::get('smtp_config', []);
+
+        // If password is empty, keep the old one (already encrypted)
+        if (empty($validated['password']) && !empty($currentConfig['password'])) {
+            $validated['password'] = $currentConfig['password'];
+        } else if (!empty($validated['password'])) {
+            // Only encrypt if it's a new password
+            $validated['password'] = encrypt($validated['password']);
+        }
+
+        Setting::set('smtp_config', $validated, 'mail', 'json');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'SMTP configuration updated successfully',
+        ]);
+    }
+
+    /**
+     * Test SMTP connection by sending a test email
+     */
+    public function testSmtpConfig(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'to_email' => 'required|email',
+        ]);
+
+        $smtpConfig = Setting::get('smtp_config');
+
+        if (!$smtpConfig || empty($smtpConfig['host'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'SMTP configuration not found. Please save settings first.',
+            ], 400);
+        }
+
+        try {
+            // Decrypt password
+            $password = '';
+            if (!empty($smtpConfig['password'])) {
+                try {
+                    $password = decrypt($smtpConfig['password']);
+                } catch (\Exception $e) {
+                    // If decryption fails, use as-is (legacy data)
+                    $password = $smtpConfig['password'];
+                }
+            }
+
+            // Create a temporary mailer config
+            // TLS (port 587) = STARTTLS, third param = false
+            // SSL (port 465) = implicit SSL, third param = true
+            // none = no encryption, third param = false
+            $useTls = $smtpConfig['encryption'] === 'ssl'; // true = implicit SSL
+            
+            $transport = new \Symfony\Component\Mailer\Transport\Smtp\EsmtpTransport(
+                $smtpConfig['host'],
+                (int) $smtpConfig['port'],
+                $useTls
+            );
+
+            if (!empty($smtpConfig['username'])) {
+                $transport->setUsername($smtpConfig['username']);
+            }
+            if (!empty($password)) {
+                $transport->setPassword($password);
+            }
+
+            $mailer = new \Symfony\Component\Mailer\Mailer($transport);
+
+            $email = (new \Symfony\Component\Mime\Email())
+                ->from(new \Symfony\Component\Mime\Address(
+                    $smtpConfig['from_address'],
+                    $smtpConfig['from_name']
+                ))
+                ->to($validated['to_email'])
+                ->subject('ทดสอบการส่งอีเมล - NextTrip')
+                ->html('
+                    <div style="font-family: sans-serif; padding: 20px;">
+                        <h2 style="color: #2563eb;">🎉 ทดสอบการส่งอีเมลสำเร็จ!</h2>
+                        <p>อีเมลนี้ถูกส่งจากระบบ NextTrip เพื่อทดสอบการตั้งค่า SMTP</p>
+                        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+                        <p style="color: #6b7280; font-size: 14px;">
+                            <strong>SMTP Server:</strong> ' . $smtpConfig['host'] . '<br>
+                            <strong>Port:</strong> ' . $smtpConfig['port'] . '<br>
+                            <strong>Encryption:</strong> ' . strtoupper($smtpConfig['encryption']) . '<br>
+                            <strong>From:</strong> ' . $smtpConfig['from_name'] . ' &lt;' . $smtpConfig['from_address'] . '&gt;
+                        </p>
+                        <p style="color: #9ca3af; font-size: 12px; margin-top: 30px;">
+                            ส่งเมื่อ: ' . now()->format('d/m/Y H:i:s') . '
+                        </p>
+                    </div>
+                ');
+
+            $mailer->send($email);
+
+            return response()->json([
+                'success' => true,
+                'message' => "ส่งอีเมลทดสอบไปที่ {$validated['to_email']} สำเร็จ",
+            ]);
+
+        } catch (\Symfony\Component\Mailer\Exception\TransportExceptionInterface $e) {
+            \Log::error('SMTP test failed', [
+                'error' => $e->getMessage(),
+                'host' => $smtpConfig['host'],
+                'port' => $smtpConfig['port'],
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'ไม่สามารถเชื่อมต่อ SMTP Server: ' . $e->getMessage(),
+            ], 400);
+        } catch (\Exception $e) {
+            \Log::error('SMTP test failed', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'เกิดข้อผิดพลาด: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
 }

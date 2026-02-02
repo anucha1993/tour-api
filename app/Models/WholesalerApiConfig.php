@@ -54,6 +54,10 @@ class WholesalerApiConfig extends Model
         'pdf_footer_height',
         // Aggregation Config
         'aggregation_config',
+        // Notification Settings
+        'notifications_enabled',
+        'notification_emails',
+        'notification_types',
     ];
 
     protected $casts = [
@@ -67,6 +71,9 @@ class WholesalerApiConfig extends Model
         'last_health_check_status' => 'boolean',
         'enabled_fields' => 'array',
         'aggregation_config' => 'array',
+        'notifications_enabled' => 'boolean',
+        'notification_emails' => 'array',
+        'notification_types' => 'array',
     ];
 
     /**

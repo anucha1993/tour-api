@@ -13,6 +13,7 @@ use App\Models\TourItinerary;
 use App\Models\WholesalerApiConfig;
 use App\Models\WholesalerFieldMapping;
 use App\Services\CloudflareImagesService;
+use App\Services\NotificationService;
 use App\Services\PdfBrandingService;
 use App\Services\WholesalerAdapters\AdapterFactory;
 use Illuminate\Bus\Queueable;
@@ -157,6 +158,19 @@ class SyncToursJob implements ShouldQueue
                 'duration_seconds' => now()->diffInSeconds($syncLog->started_at),
                 'error_summary' => ['message' => $e->getMessage()],
             ]);
+
+            // Send notification
+            try {
+                $notificationService = app(NotificationService::class);
+                $notificationService->notifyIntegration($config->id, 'sync_error', [
+                    'error' => $e->getMessage(),
+                    'sync_type' => $this->syncType,
+                ]);
+            } catch (\Exception $notifyError) {
+                Log::warning('SyncToursJob: Failed to send notification', [
+                    'error' => $notifyError->getMessage(),
+                ]);
+            }
 
             throw $e;
         }

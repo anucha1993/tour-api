@@ -287,6 +287,11 @@ class IntegrationController extends Controller
             'supports_hold_booking' => 'nullable|boolean',
             'supports_modify_booking' => 'nullable|boolean',
             'is_active' => 'nullable|boolean',
+            // Notification settings
+            'notifications_enabled' => 'nullable|boolean',
+            'notification_emails' => 'nullable|array',
+            'notification_emails.*' => 'email',
+            'notification_types' => 'nullable|array',
         ]);
 
         if ($validator->fails()) {
@@ -319,6 +324,29 @@ class IntegrationController extends Controller
             'success' => true,
             'message' => 'Integration deleted successfully',
         ]);
+    }
+
+    /**
+     * Test notification for an integration
+     */
+    public function testNotification(int $id): JsonResponse
+    {
+        try {
+            $notificationService = app(\App\Services\NotificationService::class);
+            $result = $notificationService->sendTestNotification($id);
+
+            return response()->json($result, $result['success'] ? 200 : 400);
+        } catch (\Exception $e) {
+            Log::error('testNotification error', [
+                'integration_id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'เกิดข้อผิดพลาด: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**
@@ -2128,8 +2156,11 @@ class IntegrationController extends Controller
                     'integration_id' => $id,
                 ]);
                 
-                if ($result) {
-                    $url = $result['url'] ?? $result['variants'][0] ?? null;
+                if ($result && !empty($result['variants'])) {
+                    // Find 'public' variant, fallback to first variant
+                    $url = collect($result['variants'])->first(fn($v) => str_contains($v, '/public')) 
+                        ?? $result['variants'][0] 
+                        ?? null;
                 }
             }
             
@@ -2203,8 +2234,11 @@ class IntegrationController extends Controller
                     'integration_id' => $id,
                 ]);
                 
-                if ($result) {
-                    $url = $result['url'] ?? $result['variants'][0] ?? null;
+                if ($result && !empty($result['variants'])) {
+                    // Find 'public' variant, fallback to first variant
+                    $url = collect($result['variants'])->first(fn($v) => str_contains($v, '/public')) 
+                        ?? $result['variants'][0] 
+                        ?? null;
                 }
             }
             

@@ -180,6 +180,9 @@ Route::middleware('auth:sanctum')->group(function () {
         // Aggregation Config per Wholesaler
         Route::get('/{id}/aggregation-config', [IntegrationController::class, 'getAggregationConfig']);
         Route::put('/{id}/aggregation-config', [IntegrationController::class, 'updateAggregationConfig']);
+        
+        // Test Notification
+        Route::post('/{id}/test-notification', [IntegrationController::class, 'testNotification']);
     });
 
     // Settings
@@ -187,6 +190,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/', [SettingsController::class, 'index']);
         Route::get('/aggregation', [SettingsController::class, 'getAggregationConfig']);
         Route::put('/aggregation', [SettingsController::class, 'updateAggregationConfig']);
+        
+        // SMTP Settings
+        Route::get('/smtp', [SettingsController::class, 'getSmtpConfig']);
+        Route::put('/smtp', [SettingsController::class, 'updateSmtpConfig']);
+        Route::post('/smtp/test', [SettingsController::class, 'testSmtpConfig']);
+        
         Route::get('/{key}', [SettingsController::class, 'show']);
         Route::put('/{key}', [SettingsController::class, 'update']);
     });
