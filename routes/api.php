@@ -60,9 +60,13 @@ Route::get('integrations/{id}/tours/{tourId}', [TourSearchController::class, 'ge
 // Tour Code Lookup (by external_id)
 Route::post('tours/lookup-codes', [TourSearchController::class, 'lookupTourCodes']);
 
+// Mass Sync from Search (sync selected tours)
+Route::post('integrations/{id}/tours/sync-selected', [IntegrationController::class, 'syncSelectedTours']);
+
 // Queue & Sync Status (for monitoring/debugging)
 Route::get('queue/status', [IntegrationController::class, 'getQueueStatus']);
 Route::post('queue/fix-stuck', [IntegrationController::class, 'fixStuckSyncs']);
+Route::post('queue/clear-failed', [IntegrationController::class, 'clearFailedJobs']);
 Route::post('queue/process', [IntegrationController::class, 'processQueue']);
 
 // Wholesaler Sync API (Public for testing - move inside auth:sanctum for production)
@@ -118,6 +122,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('tours/{tour}/recalculate', [TourController::class, 'recalculate']);
     Route::post('tours/{tour}/upload-cover-image', [TourController::class, 'uploadCoverImage']);
     Route::post('tours/{tour}/upload-pdf', [TourController::class, 'uploadPdf']);
+    Route::post('tours/mass-delete', [TourController::class, 'massDelete']);
     Route::apiResource('tours', TourController::class);
 
     // Tour Periods CRUD

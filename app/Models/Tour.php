@@ -136,7 +136,6 @@ class Tour extends Model
         'promotion_type',
         'max_discount_percent',
         'next_departure_date',
-        'last_departure_date',
         'total_departures',
         'available_seats',
         'has_promotion',
@@ -171,7 +170,6 @@ class Tour extends Model
         'display_price' => 'decimal:2',
         'discount_amount' => 'decimal:2',
         'next_departure_date' => 'date',
-        'last_departure_date' => 'date',
         'has_promotion' => 'boolean',
         'is_published' => 'boolean',
         'published_at' => 'datetime',
@@ -381,6 +379,15 @@ class Tour extends Model
             $promotionType = 'normal';
         }
 
+        // คำนวณ hotel_star หลัก: ใช้ค่าที่พบบ่อยสุด (mode), ถ้าเท่ากันใช้ค่าสูงสุด
+        $hotelStar = null;
+        if ($hotelStars->isNotEmpty()) {
+            $starCounts = $hotelStars->countBy();
+            $maxCount = $starCounts->max();
+            // หา star ที่มี count = maxCount แล้วเอาค่าสูงสุด
+            $hotelStar = $starCounts->filter(fn($count) => $count === $maxCount)->keys()->max();
+        }
+
         $this->update([
             'price_adult' => $priceAdult,
             'discount_adult' => $discountAdult,
@@ -390,10 +397,10 @@ class Tour extends Model
             'discount_amount' => $totalDiscount > 0 ? $totalDiscount : null,
             'discount_label' => $discountLabel,
             'next_departure_date' => $openPeriods->min('start_date'),
-            'last_departure_date' => $openPeriods->max('start_date'),
             'total_departures' => $openPeriods->count(),
             'available_seats' => $openPeriods->sum('available'),
             'has_promotion' => $totalDiscount > 0,
+            'hotel_star' => $hotelStar,
             'hotel_star_min' => $hotelStars->min(),
             'hotel_star_max' => $hotelStars->max(),
             'promotion_type' => $promotionType,

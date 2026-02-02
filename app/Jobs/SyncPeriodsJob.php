@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\Tour;
 use App\Models\Period;
 use App\Models\Offer;
+use App\Models\Setting;
 use App\Models\WholesalerApiConfig;
 use App\Models\WholesalerFieldMapping;
 use App\Models\SyncLog;
@@ -151,7 +152,12 @@ class SyncPeriodsJob implements ShouldQueue
         $result = [];
 
         foreach ($mappings as $mapping) {
-            $value = $this->extractValue($rawPeriod, $mapping->their_field, $mapping->their_field_path);
+            $fieldPath = $mapping->their_field_path ?? $mapping->their_field ?? null;
+            if (empty($fieldPath)) {
+                continue;
+            }
+            
+            $value = $this->extractValue($rawPeriod, $fieldPath);
             
             if ($value !== null) {
                 $value = $this->applyTransform($value, $mapping->transform_type, $mapping->transform_config);
@@ -166,9 +172,13 @@ class SyncPeriodsJob implements ShouldQueue
     /**
      * Extract value from raw data using field path
      */
-    protected function extractValue(array $data, string $field, ?string $path): mixed
+    protected function extractValue(array $data, string $fieldPath): mixed
     {
-        $fieldPath = $path ?: $field;
+        // Strip array prefix like "periods[]." since we're already iterating over the array
+        $fieldPath = preg_replace('/^[Pp]eriods\[\]\./', '', $fieldPath);
+        $fieldPath = preg_replace('/^[Ss]chedules\[\]\./', '', $fieldPath);
+        $fieldPath = preg_replace('/^[Dd]epartures\[\]\./', '', $fieldPath);
+        
         $parts = explode('.', $fieldPath);
         $value = $data;
 
@@ -216,9 +226,35 @@ class SyncPeriodsJob implements ShouldQueue
      */
     protected function syncPeriod(Tour $tour, array $data, array &$stats): void
     {
+        // Map departure_date to start_date if needed
+        if (!empty($data['departure_date']) && empty($data['start_date'])) {
+            $data['start_date'] = $data['departure_date'];
+        }
+        
         // Skip if no start date
         if (empty($data['start_date'])) {
             $stats['skipped']++;
+            return;
+        }
+        
+        // Get sync settings and check for past periods
+        $syncSettings = Setting::get('sync_settings', [
+            'skip_past_periods' => true,
+            'past_period_threshold_days' => 0,
+        ]);
+        
+        $skipPastPeriods = $syncSettings['skip_past_periods'] ?? true;
+        $thresholdDays = $syncSettings['past_period_threshold_days'] ?? 0;
+        $thresholdDate = now()->subDays($thresholdDays)->toDateString();
+        
+        // Skip past periods if enabled
+        if ($skipPastPeriods && $data['start_date'] < $thresholdDate) {
+            $stats['skipped']++;
+            Log::debug('SyncPeriodsJob: Skipped past period', [
+                'tour_id' => $tour->id,
+                'start_date' => $data['start_date'],
+                'threshold_date' => $thresholdDate,
+            ]);
             return;
         }
 
@@ -238,15 +274,14 @@ class SyncPeriodsJob implements ShouldQueue
 
         $periodData = [
             'tour_id' => $tour->id,
-            'wholesaler_id' => $this->wholesalerId,
+            'external_id' => $data['external_id'] ?? null,
             'period_code' => $periodCode,
-            'external_period_id' => $data['external_id'] ?? null,
             'start_date' => $data['start_date'],
             'end_date' => $data['end_date'] ?? $data['start_date'],
             'capacity' => $data['capacity'] ?? 30,
             'booked' => $data['booked'] ?? 0,
             'available' => $data['available'] ?? ($data['capacity'] ?? 30) - ($data['booked'] ?? 0),
-            'status' => $data['status'] ?? 'open',
+            'status' => $this->mapPeriodStatus($data['status'] ?? null),
             'is_visible' => $data['is_visible'] ?? true,
             'sale_status' => $data['sale_status'] ?? 'available',
         ];
@@ -338,5 +373,29 @@ class SyncPeriodsJob implements ShouldQueue
             'wholesaler_id' => $this->wholesalerId,
             'error' => $exception->getMessage(),
         ]);
+    }
+
+    /**
+     * Map status string to Period status enum
+     */
+    protected function mapPeriodStatus(?string $status): string
+    {
+        if (!$status) {
+            return Period::STATUS_OPEN;
+        }
+
+        $statusMap = [
+            'open' => Period::STATUS_OPEN,
+            'available' => Period::STATUS_OPEN,
+            'active' => Period::STATUS_OPEN,
+            'closed' => Period::STATUS_CLOSED,
+            'inactive' => Period::STATUS_CLOSED,
+            'sold_out' => Period::STATUS_SOLD_OUT,
+            'full' => Period::STATUS_SOLD_OUT,
+            'cancelled' => Period::STATUS_CANCELLED,
+            'canceled' => Period::STATUS_CANCELLED,
+        ];
+
+        return $statusMap[strtolower($status)] ?? Period::STATUS_OPEN;
     }
 }

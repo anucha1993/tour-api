@@ -362,7 +362,7 @@ class TourSearchController extends Controller
     {
         $validated = $request->validate([
             'external_ids' => 'required|array|max:200',
-            'external_ids.*.wholesaler_id' => 'required|integer',
+            'external_ids.*.wholesaler_id' => 'required|numeric',
             'external_ids.*.external_id' => 'required|string',
         ]);
 

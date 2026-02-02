@@ -771,6 +771,7 @@ class IntegrationController extends Controller
     /**
      * Check tour count from wholesaler API
      * Fetches data from API and counts available tours
+     * Supports both Single-Phase and Two-Phase sync modes
      */
     public function checkTourCount(int $wholesalerId): JsonResponse
     {
@@ -813,6 +814,13 @@ class IntegrationController extends Controller
             $tours = $syncResult->tours;
             $tourCount = count($tours);
 
+            // Check if Two-Phase sync is enabled
+            $credentials = $config->auth_credentials ?? [];
+            $isTwoPhase = ($config->sync_mode === 'two_phase') || !empty($credentials['two_phase_sync']);
+            $periodsEndpoint = $credentials['endpoints']['periods'] 
+                ?? $credentials['periods_endpoint'] 
+                ?? null;
+
             // ดึง mapping เพื่อหา field names ที่ใช้
             $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)
                 ->where('is_active', true)
@@ -844,6 +852,8 @@ class IntegrationController extends Controller
             $toursWithDepartures = 0;
             $totalDepartures = 0;
             $countries = [];
+            $samplePeriodsCount = 0; // สำหรับ Two-Phase
+            $twoPhaseNote = null;
 
             // Helper function: Extract value from nested path
             $extractValue = function($data, $path) {
@@ -857,22 +867,77 @@ class IntegrationController extends Controller
                 return $value;
             };
 
-            foreach ($tours as $tour) {
-                // ใช้ mapping path หรือ fallback to common names
-                $departures = [];
-                if ($departureArrayPath && isset($tour[$departureArrayPath])) {
-                    $departures = $tour[$departureArrayPath];
+            // Two-Phase Sync: ดึง periods จาก API แยกสำหรับ sample tours
+            if ($isTwoPhase && $periodsEndpoint && $adapter instanceof \App\Services\WholesalerAdapters\Adapters\GenericRestAdapter) {
+                // Sample 3 tours เพื่อประมาณจำนวน periods
+                $sampleTours = array_slice($tours, 0, 3);
+                $totalSamplePeriods = 0;
+                $sampledCount = 0;
+                
+                foreach ($sampleTours as $sampleTour) {
+                    // Build the periods endpoint URL
+                    $endpoint = $periodsEndpoint;
+                    
+                    if (preg_match_all('/\{([^}]+)\}/', $periodsEndpoint, $matches)) {
+                        foreach ($matches[1] as $fieldName) {
+                            $value = $sampleTour[$fieldName] ?? null;
+                            if ($value === null) {
+                                $value = $sampleTour['id'] ?? $sampleTour['tour_id'] ?? $sampleTour['external_id'] ?? $sampleTour['code'] ?? null;
+                            }
+                            if ($value !== null) {
+                                $endpoint = str_replace('{' . $fieldName . '}', $value, $endpoint);
+                            }
+                        }
+                    }
+                    
+                    // Check if all placeholders were replaced
+                    if (!preg_match('/\{[^}]+\}/', $endpoint)) {
+                        try {
+                            $periodsResult = $adapter->fetchPeriods($endpoint);
+                            if ($periodsResult->success && !empty($periodsResult->periods)) {
+                                $totalSamplePeriods += count($periodsResult->periods);
+                                $sampledCount++;
+                                $toursWithDepartures++;
+                            }
+                        } catch (\Exception $e) {
+                            Log::warning('checkTourCount: Failed to fetch periods', [
+                                'endpoint' => $endpoint,
+                                'error' => $e->getMessage(),
+                            ]);
+                        }
+                    }
+                }
+                
+                // ประมาณจำนวน periods ทั้งหมดจาก sample
+                if ($sampledCount > 0) {
+                    $avgPeriodsPerTour = $totalSamplePeriods / $sampledCount;
+                    $totalDepartures = (int) round($avgPeriodsPerTour * $tourCount);
+                    $samplePeriodsCount = $totalSamplePeriods;
+                    $twoPhaseNote = "ประมาณจาก sample {$sampledCount} ทัวร์ (พบ {$totalSamplePeriods} periods, เฉลี่ย " . round($avgPeriodsPerTour, 1) . " periods/tour)";
                 } else {
-                    // Fallback: ลองหลาย field names ที่เป็นไปได้
-                    $departures = $tour['Periods'] ?? $tour['departures'] ?? $tour['programdepartures'] ?? $tour['schedules'] ?? [];
+                    $twoPhaseNote = "ไม่สามารถดึง periods จาก API แยกได้";
                 }
-                
-                if (is_array($departures) && count($departures) > 0) {
-                    $toursWithDepartures++;
-                    $totalDepartures += count($departures);
+            } else {
+                // Single-Phase: นับ departures จาก response โดยตรง
+                foreach ($tours as $tour) {
+                    // ใช้ mapping path หรือ fallback to common names
+                    $departures = [];
+                    if ($departureArrayPath && isset($tour[$departureArrayPath])) {
+                        $departures = $tour[$departureArrayPath];
+                    } else {
+                        // Fallback: ลองหลาย field names ที่เป็นไปได้
+                        $departures = $tour['Periods'] ?? $tour['departures'] ?? $tour['programdepartures'] ?? $tour['schedules'] ?? [];
+                    }
+                    
+                    if (is_array($departures) && count($departures) > 0) {
+                        $toursWithDepartures++;
+                        $totalDepartures += count($departures);
+                    }
                 }
-                
-                // รวบรวมประเทศ - ใช้ mapping path หรือ fallback
+            }
+
+            // รวบรวมประเทศ (ทำทั้ง single และ two-phase)
+            foreach ($tours as $tour) {
                 $country = null;
                 if ($countryFieldPath) {
                     $country = $extractValue($tour, $countryFieldPath);
@@ -887,19 +952,31 @@ class IntegrationController extends Controller
                 }
             }
 
+            $responseData = [
+                'tour_count' => $tourCount,
+                'tours_with_departures' => $toursWithDepartures,
+                'total_departures' => $totalDepartures,
+                'countries' => array_slice($countries, 0, 10), // แสดงแค่ 10 ประเทศแรก
+                'countries_count' => count($countries),
+                'response_time_ms' => $responseTimeMs,
+                'api_url' => $config->api_base_url,
+                'wholesaler_name' => $wholesaler->name,
+                'sync_mode' => $isTwoPhase ? 'two_phase' : 'single',
+            ];
+            
+            // เพิ่มข้อมูล Two-Phase
+            if ($isTwoPhase) {
+                $responseData['two_phase_info'] = [
+                    'periods_endpoint' => $periodsEndpoint,
+                    'sample_periods_count' => $samplePeriodsCount,
+                    'note' => $twoPhaseNote,
+                ];
+            }
+
             return response()->json([
                 'success' => true,
-                'message' => "พบทัวร์ทั้งหมด {$tourCount} ทัวร์",
-                'data' => [
-                    'tour_count' => $tourCount,
-                    'tours_with_departures' => $toursWithDepartures,
-                    'total_departures' => $totalDepartures,
-                    'countries' => array_slice($countries, 0, 10), // แสดงแค่ 10 ประเทศแรก
-                    'countries_count' => count($countries),
-                    'response_time_ms' => $responseTimeMs,
-                    'api_url' => $config->api_base_url,
-                    'wholesaler_name' => $wholesaler->name,
-                ],
+                'message' => "พบทัวร์ทั้งหมด {$tourCount} ทัวร์" . ($isTwoPhase ? ' (Two-Phase Sync)' : ''),
+                'data' => $responseData,
             ]);
 
         } catch (\Exception $e) {
@@ -1984,7 +2061,7 @@ class IntegrationController extends Controller
             $syncType = $request->sync_type ?? ($transformedData ? 'manual' : 'incremental');
             $limit = $request->limit ? (int) $request->limit : null;
 
-            // Dispatch job
+            // Dispatch job to queue (background processing)
             \App\Jobs\SyncToursJob::dispatch(
                 $config->wholesaler_id,
                 $transformedData,
@@ -2349,6 +2426,1127 @@ class IntegrationController extends Controller
                 'fixed_count' => $fixed,
             ],
         ]);
+    }
+
+    /**
+     * Clear all failed jobs from the queue
+     */
+    public function clearFailedJobs(): JsonResponse
+    {
+        $count = DB::table('failed_jobs')->count();
+        DB::table('failed_jobs')->truncate();
+        
+        return response()->json([
+            'success' => true,
+            'message' => "Cleared {$count} failed jobs",
+            'data' => [
+                'cleared_count' => $count,
+            ],
+        ]);
+    }
+
+    /**
+     * Sync selected tours from search results (Mass Sync)
+     * 
+     * This allows users to sync specific tours from the search page
+     * without waiting for scheduled sync.
+     * Uses the same mapping logic as SyncToursJob.
+     */
+    public function syncSelectedTours(int $id, Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'tours' => 'required|array|min:1|max:5',
+            'tours.*._raw' => 'required|array',
+            'tours.*._wholesaler_id' => 'required|integer',
+        ], [
+            'tours.required' => 'กรุณาเลือกทัวร์ที่ต้องการ sync',
+            'tours.min' => 'กรุณาเลือกอย่างน้อย 1 ทัวร์',
+            'tours.max' => 'สามารถ sync ได้สูงสุด 5 ทัวร์ต่อครั้ง',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $config = WholesalerApiConfig::where('wholesaler_id', $id)->firstOrFail();
+        $wholesalerId = $config->wholesaler_id;
+        $wholesalerCode = $config->wholesaler?->code ?? 'default';
+
+        // Check sync mode (single or two_phase)
+        $syncMode = $config->sync_mode ?? 'single';
+        $credentials = $config->auth_credentials ?? [];
+        $endpoints = $credentials['endpoints'] ?? [];
+
+        // Initialize PDF branding service if configured (same as SyncToursJob)
+        $pdfBranding = null;
+        if ($config->pdf_header_image || $config->pdf_footer_image) {
+            $pdfBranding = new \App\Services\PdfBrandingService();
+            $pdfBranding->setHeader($config->pdf_header_image, $config->pdf_header_height);
+            $pdfBranding->setFooter($config->pdf_footer_image, $config->pdf_footer_height);
+        }
+
+        // Create adapter for two-phase API calls
+        $adapter = null;
+        if ($syncMode === 'two_phase') {
+            $adapter = \App\Services\WholesalerAdapters\AdapterFactory::create($wholesalerId);
+        }
+
+        // Load field mappings (same as SyncToursJob)
+        $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)
+            ->where('is_active', true)
+            ->get()
+            ->groupBy('section_name');
+
+        $results = [
+            'total' => count($request->tours),
+            'success' => 0,
+            'failed' => 0,
+            'skipped' => 0,
+            'details' => [],
+        ];
+
+        foreach ($request->tours as $index => $tourData) {
+            $raw = $tourData['_raw'] ?? [];
+            $externalId = $tourData['external_id'] ?? $raw['ProductId'] ?? $raw['id'] ?? $raw['code'] ?? null;
+
+            if (!$externalId) {
+                $results['failed']++;
+                $results['details'][] = [
+                    'index' => $index,
+                    'status' => 'failed',
+                    'error' => 'ไม่พบ external_id',
+                ];
+                continue;
+            }
+
+            try {
+                DB::beginTransaction();
+
+                // Transform raw data using mappings (same logic as SyncToursJob)
+                $transformed = $this->transformTourDataForSync($raw, $mappings);
+                
+                // Extract tour data (merge tour + content + media sections)
+                $tourFields = array_merge(
+                    $transformed['tour'] ?? [],
+                    $transformed['content'] ?? [],
+                    $transformed['media'] ?? [],
+                    $transformed['seo'] ?? []
+                );
+                $tourFields['external_id'] = $externalId;
+
+                // Process PDF if exists - upload to Cloudflare R2 (with branding if configured)
+                // Same logic as SyncToursJob
+                $pdfUrl = $tourFields['pdf_url'] ?? null;
+                if ($pdfUrl && str_starts_with($pdfUrl, 'http') && !str_contains($pdfUrl, env('R2_URL', ''))) {
+                    try {
+                        if ($pdfBranding) {
+                            // Download, add header/footer, then upload to R2
+                            $brandedPdfUrl = $pdfBranding->processAndUpload($pdfUrl, $wholesalerCode);
+                            if ($brandedPdfUrl) {
+                                $tourFields['pdf_url'] = $brandedPdfUrl;
+                            }
+                        } else {
+                            // No branding - still upload to R2
+                            $filename = pathinfo(parse_url($pdfUrl, PHP_URL_PATH), PATHINFO_FILENAME);
+                            $filename = preg_replace('/[^a-zA-Z0-9_-]/', '_', $filename) . '_' . uniqid() . '.pdf';
+                            $r2Path = "pdfs/{$wholesalerCode}/" . date('Y/m') . "/{$filename}";
+                            
+                            // Download and upload to R2
+                            $pdfContent = @file_get_contents($pdfUrl);
+                            if ($pdfContent) {
+                                $disk = \Storage::disk('r2');
+                                $disk->put($r2Path, $pdfContent, 'public');
+                                $r2Url = env('R2_URL');
+                                if ($r2Url) {
+                                    $tourFields['pdf_url'] = rtrim($r2Url, '/') . '/' . $r2Path;
+                                } else {
+                                    $tourFields['pdf_url'] = $disk->url($r2Path);
+                                }
+                            }
+                        }
+                    } catch (\Exception $e) {
+                        Log::warning('Mass Sync: Failed to upload PDF to R2', [
+                            'url' => $pdfUrl,
+                            'error' => $e->getMessage(),
+                        ]);
+                        // Keep original URL if upload fails
+                    }
+                }
+
+                // Process cover image - upload to Cloudflare (same as SyncToursJob)
+                $coverImageUrl = $tourFields['cover_image_url'] ?? null;
+                if ($coverImageUrl && str_starts_with($coverImageUrl, 'http') && !str_contains($coverImageUrl, 'imagedelivery.net')) {
+                    try {
+                        $cloudflare = app(\App\Services\CloudflareImagesService::class);
+                        if ($cloudflare->isConfigured()) {
+                            $uploadResult = $cloudflare->uploadFromUrl($coverImageUrl, 'tour-cover-' . uniqid());
+                            if ($uploadResult && isset($uploadResult['id'])) {
+                                $tourFields['cover_image_url'] = $cloudflare->getDisplayUrl($uploadResult['id']);
+                            }
+                        }
+                    } catch (\Exception $e) {
+                        Log::warning('Mass Sync: Failed to upload cover image', [
+                            'url' => $coverImageUrl,
+                            'error' => $e->getMessage(),
+                        ]);
+                        // Keep original URL if upload fails
+                    }
+                }
+                
+                // Auto-calculate duration_nights from duration_days if not provided
+                if (empty($tourFields['duration_nights']) && !empty($tourFields['duration_days'])) {
+                    $tourFields['duration_nights'] = max(0, (int)$tourFields['duration_days'] - 1);
+                }
+                
+                // Ensure duration_nights has a value (required field)
+                if (!isset($tourFields['duration_nights']) || $tourFields['duration_nights'] === null) {
+                    $tourFields['duration_nights'] = 0;
+                }
+
+                // Find or create tour
+                $tour = \App\Models\Tour::where('wholesaler_id', $wholesalerId)
+                    ->where('external_id', $externalId)
+                    ->first();
+
+                $isNew = !$tour;
+
+                if ($isNew) {
+                    $tour = new \App\Models\Tour();
+                    $tour->wholesaler_id = $wholesalerId;
+                    $tour->external_id = $externalId;
+                    $tour->tour_code = \App\Models\Tour::generateTourCode();
+                    $tour->data_source = 'api';
+                    $tour->status = 'draft';
+                } else {
+                    // Skip if tour was created manually
+                    if ($tour->data_source === 'manual') {
+                        $results['skipped']++;
+                        $results['details'][] = [
+                            'index' => $index,
+                            'external_id' => $externalId,
+                            'status' => 'skipped',
+                            'reason' => 'manual_tour',
+                        ];
+                        DB::rollBack();
+                        continue;
+                    }
+                }
+
+                // Fill tour data
+                $tour->fill($this->filterFillable($tour, $tourFields));
+                $tour->sync_status = 'active';
+                $tour->last_synced_at = now();
+                $tour->save();
+
+                // Sync primary country to tour_countries pivot table (same as SyncToursJob)
+                if (!empty($tourFields['primary_country_id'])) {
+                    $countryId = $tourFields['primary_country_id'];
+                    $currentPrimary = $tour->countries()->wherePivot('is_primary', true)->first();
+                    if ($currentPrimary && $currentPrimary->id !== $countryId) {
+                        $tour->countries()->detach($currentPrimary->id);
+                    }
+                    $exists = $tour->countries()->where('country_id', $countryId)->exists();
+                    if (!$exists) {
+                        $tour->countries()->attach($countryId, ['is_primary' => true, 'sort_order' => 1]);
+                    } else {
+                        $tour->countries()->updateExistingPivot($countryId, ['is_primary' => true]);
+                    }
+                }
+
+                // Sync transport to tour_transports table (same as SyncToursJob)
+                if (!empty($tourFields['transport_id'])) {
+                    $transportId = $tourFields['transport_id'];
+                    $transport = \App\Models\Transport::find($transportId);
+                    if ($transport) {
+                        $exists = $tour->transports()->where('transport_id', $transportId)->exists();
+                        if (!$exists) {
+                            $tour->transports()->create([
+                                'transport_id' => $transportId,
+                                'transport_code' => $transport->code ?? '',
+                                'transport_name' => $transport->name ?? '',
+                                'transport_type' => 'outbound',
+                                'sort_order' => 1,
+                            ]);
+                        }
+                    }
+                }
+
+                // Process periods/departures
+                // Two Phase: Periods MUST be fetched from separate Periods Endpoint
+                // Single Phase: Use periods from Tours response
+                $periodsResult = ['created' => 0, 'updated' => 0, 'skipped_past' => 0];
+                
+                if ($syncMode === 'two_phase') {
+                    // Two-Phase: MUST fetch periods from separate API endpoint
+                    if (!empty($endpoints['periods']) && $adapter) {
+                        try {
+                            $periodsResult = $this->fetchAndSyncPeriodsFromApi(
+                                $tour, $adapter, $endpoints, $wholesalerId
+                            );
+                        } catch (\Exception $e) {
+                            Log::error('Mass Sync: Failed to fetch periods from API', [
+                                'tour_id' => $tour->id,
+                                'endpoint' => $endpoints['periods'] ?? 'N/A',
+                                'error' => $e->getMessage(),
+                            ]);
+                        }
+                    } else {
+                        Log::warning('Mass Sync: Two-phase mode but no periods endpoint configured', [
+                            'tour_id' => $tour->id,
+                        ]);
+                    }
+                } else {
+                    // Single-Phase: Use periods from Tours response
+                    $departures = $transformed['departure'] ?? [];
+                    if (!empty($departures)) {
+                        $periodsResult = $this->processDeparturesForSync($tour, $departures);
+                    }
+                }
+
+                // Process itineraries
+                // Two Phase: If Itineraries Endpoint is set → fetch from it, otherwise use Tours response
+                // Single Phase: Use itineraries from Tours response
+                $itineraries = $transformed['itinerary'] ?? [];
+                
+                Log::debug('Mass Sync: Processing itineraries', [
+                    'tour_id' => $tour->id,
+                    'sync_mode' => $syncMode,
+                    'has_itineraries_endpoint' => !empty($endpoints['itineraries']),
+                    'has_adapter' => $adapter !== null,
+                    'transformed_itineraries_count' => count($itineraries),
+                ]);
+                
+                if ($syncMode === 'two_phase' && !empty($endpoints['itineraries']) && $adapter) {
+                    // Two-Phase with Itineraries Endpoint: fetch from separate API
+                    try {
+                        $this->fetchAndSyncItinerariesFromApi(
+                            $tour, $adapter, $endpoints, $wholesalerId
+                        );
+                    } catch (\Exception $e) {
+                        Log::error('Mass Sync: Failed to fetch itineraries from API', [
+                            'tour_id' => $tour->id,
+                            'endpoint' => $endpoints['itineraries'] ?? 'N/A',
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                } else {
+                    // Single-Phase OR Two-Phase without Itineraries Endpoint: use Tours response
+                    if (!empty($itineraries)) {
+                        foreach ($itineraries as $itin) {
+                            $this->processItineraryForSync($tour, $itin);
+                        }
+                    }
+                }
+
+                DB::commit();
+
+                // Recalculate aggregates (outside transaction to not fail the sync)
+                try {
+                    $tour->recalculateAggregates();
+                } catch (\Exception $e) {
+                    Log::warning('recalculateAggregates failed (may need migration)', [
+                        'tour_id' => $tour->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+
+                $results['success']++;
+                $results['details'][] = [
+                    'index' => $index,
+                    'external_id' => $externalId,
+                    'tour_id' => $tour->id,
+                    'tour_code' => $tour->tour_code,
+                    'status' => 'success',
+                    'is_new' => $isNew,
+                    'periods' => $periodsResult,
+                ];
+
+            } catch (\Exception $e) {
+                DB::rollBack();
+                Log::error('Sync selected tour failed', [
+                    'index' => $index,
+                    'external_id' => $externalId,
+                    'error' => $e->getMessage(),
+                ]);
+
+                $results['failed']++;
+                $results['details'][] = [
+                    'index' => $index,
+                    'external_id' => $externalId,
+                    'status' => 'failed',
+                    'error' => $e->getMessage(),
+                ];
+            }
+        }
+
+        // Cleanup PDF branding service (same as SyncToursJob)
+        if ($pdfBranding) {
+            $pdfBranding->cleanup();
+        }
+
+        return response()->json([
+            'success' => $results['failed'] === 0,
+            'message' => "Sync สำเร็จ {$results['success']}/{$results['total']} ทัวร์",
+            'data' => $results,
+        ]);
+    }
+
+    /**
+     * Transform raw tour data using mappings (same logic as SyncToursJob)
+     */
+    protected function transformTourDataForSync(array $rawTour, $mappings): array
+    {
+        $result = [
+            'tour' => [],
+            'departure' => [],
+            'itinerary' => [],
+            'content' => [],
+            'media' => [],
+        ];
+
+        // Helper to extract value from nested path
+        $extractValue = function($data, $path) {
+            if (empty($path)) return null;
+            
+            // Handle array notation like "Periods[]"
+            if (strpos($path, '[]') !== false) {
+                $parts = explode('[].', $path);
+                $arrayKey = $parts[0];
+                $fieldPath = $parts[1] ?? null;
+                
+                if (!isset($data[$arrayKey]) || !is_array($data[$arrayKey])) return null;
+                if (empty($data[$arrayKey])) return null;
+                
+                if ($fieldPath && isset($data[$arrayKey][0])) {
+                    return $data[$arrayKey][0][$fieldPath] ?? null;
+                }
+                return null;
+            }
+            
+            // Normal dot notation path
+            $keys = explode('.', $path);
+            $value = $data;
+            
+            foreach ($keys as $key) {
+                if (!is_array($value) || !isset($value[$key])) return null;
+                $value = $value[$key];
+            }
+            
+            return $value;
+        };
+
+        // Helper to apply transforms
+        $applyTransform = function($value, $mapping, $rawData) {
+            if (empty($mapping->transform_type) || $mapping->transform_type === 'direct') {
+                return $value;
+            }
+            
+            $config = $mapping->transform_config ?? [];
+            
+            switch ($mapping->transform_type) {
+                case 'lookup':
+                    if ($value === null || $value === '') return null;
+                    
+                    $lookupTable = $config['lookup_table'] ?? null;
+                    $lookupBy = $config['lookup_by'] ?? 'name';
+                    
+                    if (!$lookupTable) {
+                        $ourField = $mapping->our_field;
+                        if (str_ends_with($ourField, '_id')) {
+                            $baseName = substr($ourField, 0, -3);
+                            if (str_contains($baseName, '_')) {
+                                $parts = explode('_', $baseName);
+                                $baseName = end($parts);
+                            }
+                            $lookupTable = str($baseName)->plural()->toString();
+                        }
+                    }
+                    
+                    if (!$lookupTable) return $value;
+                    
+                    $modelClass = 'App\\Models\\' . str($lookupTable)->singular()->studly()->toString();
+                    if (!class_exists($modelClass)) return $value;
+                    
+                    $record = $modelClass::where($lookupBy, $value)->first();
+                    return $record?->id;
+                    
+                case 'value_map':
+                    $map = $config['map'] ?? null;
+                    if ($map === null && isset($config['value_map'])) {
+                        $map = [];
+                        foreach ($config['value_map'] as $item) {
+                            $fromVal = $item['from'] ?? null;
+                            if ($fromVal === '__EMPTY__') $fromVal = '';
+                            if ($fromVal !== null) {
+                                $map[$fromVal] = $item['to'] ?? null;
+                            }
+                        }
+                    }
+                    if ($map === null) return $value;
+                    
+                    $lookupKey = ($value === '' || $value === null) ? '' : $value;
+                    $mappedValue = $map[$lookupKey] ?? ($config['default'] ?? null);
+                    
+                    if ($mappedValue === 'true') return 1;
+                    if ($mappedValue === 'false') return 0;
+                    return $mappedValue;
+                    
+                default:
+                    return $value;
+            }
+        };
+
+        // Map single-value sections (tour, content, media, seo)
+        foreach (['tour', 'content', 'media', 'seo'] as $section) {
+            if (!isset($mappings[$section])) continue;
+            
+            foreach ($mappings[$section] as $mapping) {
+                $fieldName = $mapping->our_field;
+                $path = $mapping->their_field_path ?? $mapping->their_field;
+
+                $value = $extractValue($rawTour, $path);
+                $value = $applyTransform($value, $mapping, $rawTour);
+                
+                if ($value === null && !empty($mapping->default_value)) {
+                    $value = $mapping->default_value;
+                }
+                
+                $result[$section][$fieldName] = $value;
+            }
+        }
+
+        // Map departures (from Periods/periods/schedules/departures array)
+        $periods = $rawTour['Periods'] ?? $rawTour['periods'] ?? $rawTour['schedules'] ?? $rawTour['departures'] ?? [];
+        if (isset($mappings['departure']) && !empty($periods) && is_array($periods)) {
+            foreach ($periods as $period) {
+                if (!is_array($period)) continue; // Skip if not an array
+                $dep = [];
+                foreach ($mappings['departure'] as $mapping) {
+                    $fieldName = $mapping->our_field;
+                    $path = $mapping->their_field_path ?? $mapping->their_field;
+                    
+                    $cleanPath = preg_replace('/^(Periods|periods|schedules|departures)\[\]\\./', '', $path);
+                    
+                    $value = $period[$cleanPath] ?? null;
+                    $value = $applyTransform($value, $mapping, $period);
+                    
+                    if ($value === null && !empty($mapping->default_value)) {
+                        $value = $mapping->default_value;
+                    }
+                    
+                    $dep[$fieldName] = $value;
+                }
+                $result['departure'][] = $dep;
+            }
+        }
+
+        // Map itineraries (from Itinerary/itinerary/itineraries/days/programs array)
+        $itineraries = $rawTour['Itinerary'] ?? $rawTour['itinerary'] ?? $rawTour['itineraries'] ?? $rawTour['days'] ?? $rawTour['programs'] ?? [];
+        if (isset($mappings['itinerary']) && !empty($itineraries) && is_array($itineraries)) {
+            foreach ($itineraries as $itin) {
+                if (!is_array($itin)) continue; // Skip if not an array
+                $it = [];
+                foreach ($mappings['itinerary'] as $mapping) {
+                    $fieldName = $mapping->our_field;
+                    $path = $mapping->their_field_path ?? $mapping->their_field;
+                    
+                    $cleanPath = preg_replace('/^(Itinerary|itinerary|itineraries|days|programs)\[\]\\./', '', $path);
+                    
+                    $value = $itin[$cleanPath] ?? null;
+                    $value = $applyTransform($value, $mapping, $itin);
+                    
+                    if ($value === null && !empty($mapping->default_value)) {
+                        $value = $mapping->default_value;
+                    }
+                    
+                    $it[$fieldName] = $value;
+                }
+                $result['itinerary'][] = $it;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Process departures for sync (same logic as SyncToursJob)
+     */
+    protected function processDeparturesForSync(\App\Models\Tour $tour, array $departures): array
+    {
+        $result = ['created' => 0, 'updated' => 0, 'skipped_past' => 0];
+
+        // Get sync settings
+        $syncSettings = \App\Models\Setting::get('sync_settings', [
+            'skip_past_periods' => true,
+            'past_period_threshold_days' => 0,
+        ]);
+        
+        $skipPastPeriods = $syncSettings['skip_past_periods'] ?? true;
+        $thresholdDays = $syncSettings['past_period_threshold_days'] ?? 0;
+        $thresholdDate = now()->subDays($thresholdDays)->toDateString();
+
+        foreach ($departures as $dep) {
+            $departureDate = $dep['departure_date'] ?? $dep['start_date'] ?? null;
+            if (!$departureDate) continue;
+            
+            // Skip past periods if enabled
+            if ($skipPastPeriods && $departureDate < $thresholdDate) {
+                $result['skipped_past']++;
+                continue;
+            }
+
+            $externalId = $dep['external_id'] ?? null;
+
+            // Find existing period
+            $period = \App\Models\Period::where('tour_id', $tour->id)
+                ->where(function ($q) use ($externalId, $departureDate) {
+                    if ($externalId) {
+                        $q->where('external_id', $externalId);
+                    } else {
+                        $q->where('start_date', $departureDate);
+                    }
+                })
+                ->first();
+
+            $isNew = !$period;
+
+            if ($isNew) {
+                $period = new \App\Models\Period();
+                $period->tour_id = $tour->id;
+            }
+
+            // Fill period fields from transformed data (same as SyncToursJob - no hardcode)
+            $fillableFields = $period->getFillable();
+            $periodFields = [];
+            
+            // Map departure_date to start_date if needed
+            if (isset($dep['departure_date']) && !isset($dep['start_date'])) {
+                $dep['start_date'] = $dep['departure_date'];
+            }
+            
+            foreach ($dep as $field => $value) {
+                if ($value === null) continue;
+                if (in_array($field, $fillableFields) || empty($fillableFields)) {
+                    $periodFields[$field] = $value;
+                }
+            }
+            
+            // Auto-generate period_code if not provided
+            if (empty($periodFields['period_code']) && empty($period->period_code) && $departureDate) {
+                $periodFields['period_code'] = 'P' . date('ymd', strtotime($departureDate));
+            }
+            
+            // Map status if provided
+            if (isset($dep['status'])) {
+                $periodFields['status'] = $this->mapPeriodStatus($dep['status']);
+            }
+            
+            // Sanitize: available/capacity cannot be negative
+            if (isset($periodFields['available']) && $periodFields['available'] < 0) {
+                $periodFields['available'] = 0;
+            }
+            if (isset($periodFields['capacity']) && $periodFields['capacity'] < 0) {
+                $periodFields['capacity'] = 0;
+            }
+
+            $period->fill($periodFields);
+            $period->save();
+
+            // Create/update offer for pricing (same as SyncToursJob)
+            if (isset($dep['price_adult'])) {
+                $this->processOfferForSync($period, $dep);
+            }
+
+            $isNew ? $result['created']++ : $result['updated']++;
+        }
+
+        return $result;
+    }
+
+    /**
+     * Process offer/pricing for a period (same logic as SyncToursJob)
+     */
+    protected function processOfferForSync(\App\Models\Period $period, array $depData): void
+    {
+        $offer = \App\Models\Offer::firstOrNew(['period_id' => $period->id]);
+        
+        // Fill offer fields from transformed data (no hardcode - same as SyncToursJob)
+        $fillableFields = $offer->getFillable();
+        $offerFields = [];
+        
+        foreach ($depData as $field => $value) {
+            if ($value === null) continue;
+            if (in_array($field, $fillableFields) || empty($fillableFields)) {
+                $offerFields[$field] = $value;
+            }
+        }
+        
+        // Default currency if not provided
+        if (empty($offerFields['currency']) && empty($offer->currency)) {
+            $offerFields['currency'] = 'THB';
+        }
+        
+        $offer->fill($offerFields);
+        $offer->save();
+    }
+
+    /**
+     * Process itinerary for sync (same logic as SyncToursJob)
+     */
+    protected function processItineraryForSync(\App\Models\Tour $tour, array $itinData): void
+    {
+        $dayNumber = $itinData['day_number'] ?? null;
+        $externalId = $itinData['external_id'] ?? null;
+
+        if (!$dayNumber && !$externalId) {
+            return;
+        }
+
+        // Find existing itinerary
+        $itinerary = \App\Models\TourItinerary::where('tour_id', $tour->id)
+            ->where(function ($q) use ($dayNumber, $externalId) {
+                if ($externalId) {
+                    $q->where('external_id', $externalId);
+                } else {
+                    $q->where('day_number', $dayNumber);
+                }
+            })
+            ->first();
+
+        if (!$itinerary) {
+            $itinerary = new \App\Models\TourItinerary();
+            $itinerary->tour_id = $tour->id;
+        }
+
+        // Fill itinerary fields from transformed data (no hardcode - same as SyncToursJob)
+        $fillableFields = $itinerary->getFillable();
+        $itinFields = [];
+        
+        // Fields that should skip when empty (numeric fields)
+        $numericFields = ['hotel_star', 'day_number', 'sort_order'];
+        
+        foreach ($itinData as $field => $value) {
+            if ($value === null) continue;
+            if ($value === '' && in_array($field, $numericFields)) {
+                continue;
+            }
+            if (in_array($field, $fillableFields) || empty($fillableFields)) {
+                $itinFields[$field] = $value;
+            }
+        }
+        
+        // Set data_source
+        $itinFields['data_source'] = 'api';
+        
+        // Auto-set sort_order from day_number if not provided
+        if (empty($itinFields['sort_order']) && !empty($itinFields['day_number'])) {
+            $itinFields['sort_order'] = $itinFields['day_number'];
+        }
+        
+        // Ensure description has a value (required field, NOT NULL)
+        if (empty($itinFields['description']) && empty($itinerary->description)) {
+            $itinFields['description'] = $itinFields['title'] ?? 'Day ' . ($itinFields['day_number'] ?? '');
+        }
+        
+        $itinerary->fill($itinFields);
+        $itinerary->save();
+    }
+
+    /**
+     * Map period status to valid enum value (same as SyncToursJob)
+     */
+    protected function mapPeriodStatus(?string $status): string
+    {
+        if (!$status) {
+            return \App\Models\Period::STATUS_OPEN;
+        }
+
+        $statusMap = [
+            'open' => \App\Models\Period::STATUS_OPEN,
+            'available' => \App\Models\Period::STATUS_OPEN,
+            'active' => \App\Models\Period::STATUS_OPEN,
+            'closed' => \App\Models\Period::STATUS_CLOSED,
+            'inactive' => \App\Models\Period::STATUS_CLOSED,
+            'sold_out' => \App\Models\Period::STATUS_SOLD_OUT,
+            'full' => \App\Models\Period::STATUS_SOLD_OUT,
+            'cancelled' => \App\Models\Period::STATUS_CANCELLED,
+            'canceled' => \App\Models\Period::STATUS_CANCELLED,
+        ];
+
+        return $statusMap[strtolower($status)] ?? \App\Models\Period::STATUS_OPEN;
+    }
+
+    /**
+     * Resolve lookup fields (country code → ID, transport code → ID)
+     */
+    protected function resolveLookups(array $data): array
+    {
+        // Resolve country
+        if (isset($data['primary_country_id']) && !is_numeric($data['primary_country_id'])) {
+            $country = \App\Models\Country::where('iso2', $data['primary_country_id'])
+                ->orWhere('iso3', $data['primary_country_id'])
+                ->orWhere('name', $data['primary_country_id'])
+                ->orWhere('name_th', $data['primary_country_id'])
+                ->first();
+            $data['primary_country_id'] = $country?->id;
+        }
+
+        // Resolve transport
+        if (isset($data['transport_id']) && !is_numeric($data['transport_id'])) {
+            $transport = \App\Models\Transport::where('code', $data['transport_id'])
+                ->orWhere('name', $data['transport_id'])
+                ->first();
+            $data['transport_id'] = $transport?->id;
+        }
+
+        return $data;
+    }
+
+    /**
+     * Filter data to only include fillable fields
+     */
+    protected function filterFillable($model, array $data): array
+    {
+        $fillable = $model->getFillable();
+        $filtered = [];
+
+        foreach ($data as $key => $value) {
+            if ($value === null) continue;
+            if ($value === '' && in_array($key, ['hotel_star', 'duration_days', 'duration_nights', 'primary_country_id', 'transport_id'])) {
+                continue;
+            }
+            if (in_array($key, $fillable) || empty($fillable)) {
+                $filtered[$key] = $value;
+            }
+        }
+
+        return $filtered;
+    }
+
+    /**
+     * Fetch and sync periods from separate API endpoint (Two-Phase Sync)
+     * Based on SyncPeriodsJob logic
+     */
+    protected function fetchAndSyncPeriodsFromApi(
+        \App\Models\Tour $tour, 
+        $adapter, 
+        array $endpoints, 
+        int $wholesalerId
+    ): array {
+        $result = ['created' => 0, 'updated' => 0, 'skipped' => 0];
+        
+        $periodsEndpoint = $endpoints['periods'] ?? null;
+        if (!$periodsEndpoint) {
+            Log::warning('Two-Phase Sync: No periods endpoint configured', [
+                'tour_id' => $tour->id,
+                'wholesaler_id' => $wholesalerId,
+            ]);
+            return $result;
+        }
+
+        // Build URL - replace placeholders
+        $url = str_replace(
+            ['{external_id}', '{tour_code}', '{wholesaler_tour_code}'],
+            [$tour->external_id ?? '', $tour->tour_code ?? '', $tour->wholesaler_tour_code ?? ''],
+            $periodsEndpoint
+        );
+
+        try {
+            // Fetch periods from API
+            $fetchResult = $adapter->fetchPeriods($url);
+
+            if (!$fetchResult->success) {
+                Log::error('Two-Phase Sync: Failed to fetch periods', [
+                    'tour_id' => $tour->id,
+                    'url' => $url,
+                    'error' => $fetchResult->errorMessage ?? 'Unknown error',
+                ]);
+                return $result;
+            }
+
+            Log::info('Two-Phase Sync: Fetched periods from API', [
+                'tour_id' => $tour->id,
+                'url' => $url,
+                'periods_count' => count($fetchResult->periods ?? []),
+            ]);
+
+            // Get field mappings for periods (departure section)
+            $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)
+                ->where('section_name', 'departure')
+                ->where('is_active', true)
+                ->get();
+            
+            Log::debug('Two-Phase Sync: Got departure mappings', [
+                'tour_id' => $tour->id,
+                'mappings_count' => $mappings->count(),
+            ]);
+
+            // Get sync settings
+            $syncSettings = \App\Models\Setting::get('sync_settings', [
+                'skip_past_periods' => true,
+                'past_period_threshold_days' => 0,
+            ]);
+            $skipPastPeriods = $syncSettings['skip_past_periods'] ?? true;
+            $thresholdDays = $syncSettings['past_period_threshold_days'] ?? 0;
+            $thresholdDate = now()->subDays($thresholdDays)->toDateString();
+
+            // Process each period
+            foreach ($fetchResult->periods ?? [] as $rawPeriod) {
+                try {
+                    // Transform period data using mappings
+                    $periodData = [];
+                    foreach ($mappings as $mapping) {
+                        $fieldPath = $mapping->their_field_path ?? $mapping->their_field ?? null;
+                        if (empty($fieldPath)) {
+                            continue;
+                        }
+                        
+                        // Strip array prefix like "periods[]." or "Periods[]." since we're already iterating over the array
+                        $cleanPath = preg_replace('/^[Pp]eriods\[\]\./', '', $fieldPath);
+                        $cleanPath = preg_replace('/^[Ss]chedules\[\]\./', '', $cleanPath);
+                        $cleanPath = preg_replace('/^[Dd]epartures\[\]\./', '', $cleanPath);
+                        
+                        $value = $this->extractValueFromPath($rawPeriod, $cleanPath);
+                        if ($value !== null) {
+                            $value = $this->applyTransformForSync($value, $mapping->transform_type, $mapping->transform_config);
+                        }
+                        $periodData[$mapping->our_field] = $value;
+                    }
+
+                    // Map departure_date to start_date if needed
+                    if (!empty($periodData['departure_date']) && empty($periodData['start_date'])) {
+                        $periodData['start_date'] = $periodData['departure_date'];
+                    }
+
+                    // Skip if no start date
+                    if (empty($periodData['start_date'])) {
+                        $result['skipped']++;
+                        continue;
+                    }
+
+                    // Skip past periods if enabled
+                    if ($skipPastPeriods && $periodData['start_date'] < $thresholdDate) {
+                        $result['skipped']++;
+                        continue;
+                    }
+
+                    // Generate period code if not provided
+                    $periodCode = $periodData['period_code'] ?? $periodData['external_id'] ?? null;
+                    if (!$periodCode) {
+                        $periodCode = $tour->tour_code . '-' . date('Ymd', strtotime($periodData['start_date']));
+                    }
+
+                    // Find or create period
+                    $period = \App\Models\Period::where('tour_id', $tour->id)
+                        ->where(function($q) use ($periodCode, $periodData) {
+                            $q->where('period_code', $periodCode)
+                              ->orWhere('start_date', $periodData['start_date']);
+                        })
+                        ->first();
+
+                    $isNew = !$period;
+                    if (!$period) {
+                        $period = new \App\Models\Period();
+                    }
+
+                    $fillData = [
+                        'tour_id' => $tour->id,
+                        'external_id' => $periodData['external_id'] ?? null,
+                        'period_code' => $periodCode,
+                        'start_date' => $periodData['start_date'],
+                        'end_date' => $periodData['end_date'] ?? $periodData['start_date'],
+                        'capacity' => $periodData['capacity'] ?? 30,
+                        'booked' => $periodData['booked'] ?? 0,
+                        'available' => $periodData['available'] ?? ($periodData['capacity'] ?? 30) - ($periodData['booked'] ?? 0),
+                        'status' => $this->mapPeriodStatus($periodData['status'] ?? null),
+                        'is_visible' => $periodData['is_visible'] ?? true,
+                        'sale_status' => $periodData['sale_status'] ?? 'available',
+                    ];
+
+                    $period->fill($fillData);
+                    $period->save();
+
+                    // Sync offer (pricing)
+                    if (!empty($periodData['price_adult']) || !empty($periodData['price'])) {
+                        $this->processOfferForSync($period, $periodData);
+                    }
+
+                    $isNew ? $result['created']++ : $result['updated']++;
+
+                } catch (\Exception $e) {
+                    Log::error('Two-Phase Sync: Error processing period', [
+                        'tour_id' => $tour->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                    $result['skipped']++;
+                }
+            }
+
+        } catch (\Exception $e) {
+            Log::error('Two-Phase Sync: Exception fetching periods', [
+                'tour_id' => $tour->id,
+                'url' => $url ?? 'N/A',
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Fetch and sync itineraries from separate API endpoint (Two-Phase Sync)
+     */
+    protected function fetchAndSyncItinerariesFromApi(
+        \App\Models\Tour $tour, 
+        $adapter, 
+        array $endpoints, 
+        int $wholesalerId
+    ): void {
+        $itinerariesEndpoint = $endpoints['itineraries'] ?? null;
+        if (!$itinerariesEndpoint) {
+            Log::debug('Two-Phase Sync: No itineraries endpoint configured', [
+                'tour_id' => $tour->id,
+                'wholesaler_id' => $wholesalerId,
+            ]);
+            return;
+        }
+
+        // Build URL - replace placeholders
+        $url = str_replace(
+            ['{external_id}', '{tour_code}', '{wholesaler_tour_code}'],
+            [$tour->external_id ?? '', $tour->tour_code ?? '', $tour->wholesaler_tour_code ?? ''],
+            $itinerariesEndpoint
+        );
+
+        try {
+            // Fetch itineraries from API
+            $fetchResult = $adapter->fetchItineraries($url);
+
+            Log::info('Two-Phase Sync: Fetched itineraries from API', [
+                'tour_id' => $tour->id,
+                'url' => $url,
+                'success' => $fetchResult->success,
+                'itineraries_count' => count($fetchResult->itineraries ?? []),
+            ]);
+
+            if (!$fetchResult->success) {
+                Log::error('Two-Phase Sync: Failed to fetch itineraries', [
+                    'tour_id' => $tour->id,
+                    'url' => $url,
+                    'error' => $fetchResult->error ?? 'Unknown error',
+                ]);
+                return;
+            }
+
+            // Get field mappings for itineraries
+            $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)
+                ->where('section_name', 'itinerary')
+                ->where('is_active', true)
+                ->get();
+
+            // Process each itinerary
+            foreach ($fetchResult->itineraries ?? [] as $rawItinerary) {
+                try {
+                    // Transform itinerary data using mappings
+                    $itinData = [];
+                    foreach ($mappings as $mapping) {
+                        $fieldPath = $mapping->their_field_path ?? $mapping->their_field ?? null;
+                        if (empty($fieldPath)) {
+                            continue;
+                        }
+                        
+                        // Strip array prefix like "itinerary[]." or "Itinerary[]." since we're already iterating over the array
+                        $cleanPath = preg_replace('/^[Ii]tinerary\[\]\./', '', $fieldPath);
+                        $cleanPath = preg_replace('/^[Ii]tineraries\[\]\./', '', $cleanPath);
+                        $cleanPath = preg_replace('/^[Dd]ays\[\]\./', '', $cleanPath);
+                        $cleanPath = preg_replace('/^[Pp]rograms\[\]\./', '', $cleanPath);
+                        
+                        $value = $this->extractValueFromPath($rawItinerary, $cleanPath);
+                        if ($value !== null) {
+                            $value = $this->applyTransformForSync($value, $mapping->transform_type, $mapping->transform_config);
+                        }
+                        $itinData[$mapping->our_field] = $value;
+                    }
+                    
+                    Log::debug('Two-Phase Sync: Transformed itinerary', [
+                        'tour_id' => $tour->id,
+                        'raw_keys' => array_keys($rawItinerary),
+                        'itinData' => $itinData,
+                    ]);
+
+                    // Process itinerary (create/update)
+                    $this->processItineraryForSync($tour, $itinData);
+
+                } catch (\Exception $e) {
+                    Log::error('Two-Phase Sync: Error processing itinerary', [
+                        'tour_id' => $tour->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
+        } catch (\Exception $e) {
+            Log::error('Two-Phase Sync: Exception fetching itineraries', [
+                'tour_id' => $tour->id,
+                'url' => $url ?? 'N/A',
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Extract value from nested array using dot notation path
+     */
+    protected function extractValueFromPath(array $data, ?string $path): mixed
+    {
+        if (empty($path)) {
+            return null;
+        }
+        
+        $parts = explode('.', $path);
+        $value = $data;
+
+        foreach ($parts as $part) {
+            if (is_array($value) && isset($value[$part])) {
+                $value = $value[$part];
+            } else {
+                return null;
+            }
+        }
+
+        return $value;
+    }
+
+    /**
+     * Apply transformation to value (same as SyncPeriodsJob)
+     */
+    protected function applyTransformForSync(mixed $value, ?string $type, ?array $config): mixed
+    {
+        if (!$type || $type === 'direct') {
+            return $value;
+        }
+
+        switch ($type) {
+            case 'date':
+                return date('Y-m-d', strtotime($value));
+            case 'datetime':
+                return date('Y-m-d H:i:s', strtotime($value));
+            case 'number':
+                return is_numeric($value) ? (float) $value : 0;
+            case 'integer':
+                return (int) $value;
+            case 'boolean':
+                return filter_var($value, FILTER_VALIDATE_BOOLEAN);
+            case 'map':
+                $mapping = $config['mapping'] ?? [];
+                return $mapping[$value] ?? $value;
+            default:
+                return $value;
+        }
     }
 
     /**

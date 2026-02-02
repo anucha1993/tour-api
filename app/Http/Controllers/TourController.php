@@ -466,6 +466,70 @@ class TourController extends Controller
     }
 
     /**
+     * Mass delete multiple tours.
+     */
+    public function massDelete(Request $request): JsonResponse
+    {
+        $request->validate([
+            'ids' => 'required|array|min:1|max:50',
+            'ids.*' => 'integer|exists:tours,id',
+        ], [
+            'ids.required' => 'กรุณาเลือกทัวร์ที่ต้องการลบ',
+            'ids.min' => 'กรุณาเลือกอย่างน้อย 1 ทัวร์',
+            'ids.max' => 'สามารถลบได้สูงสุด 50 ทัวร์ต่อครั้ง',
+        ]);
+
+        $ids = $request->input('ids');
+        $deleted = 0;
+        $failed = 0;
+
+        foreach ($ids as $id) {
+            try {
+                $tour = Tour::find($id);
+                if (!$tour) {
+                    $failed++;
+                    continue;
+                }
+
+                // Delete PDF file from R2 if exists
+                if ($tour->pdf_url && str_contains($tour->pdf_url, 'r2.dev')) {
+                    $this->deleteR2File($tour->pdf_url, 'pdf', $tour->id);
+                }
+
+                // Delete cover image from Cloudflare if exists
+                if ($tour->cover_image_url && str_contains($tour->cover_image_url, 'imagedelivery.net')) {
+                    $this->deleteCloudflareImage($tour->cover_image_url, 'cover', $tour->id);
+                }
+
+                // Delete gallery images from Cloudflare
+                foreach ($tour->gallery as $galleryItem) {
+                    if ($galleryItem->url && str_contains($galleryItem->url, 'imagedelivery.net')) {
+                        $this->deleteCloudflareImage($galleryItem->url, 'gallery', $galleryItem->id);
+                    }
+                }
+
+                $tour->delete();
+                $deleted++;
+            } catch (\Exception $e) {
+                Log::error('Mass delete tour failed', [
+                    'tour_id' => $id,
+                    'error' => $e->getMessage(),
+                ]);
+                $failed++;
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => "ลบสำเร็จ {$deleted} ทัวร์" . ($failed > 0 ? ", ล้มเหลว {$failed} ทัวร์" : ''),
+            'data' => [
+                'deleted' => $deleted,
+                'failed' => $failed,
+            ],
+        ]);
+    }
+
+    /**
      * Delete file from R2 storage by URL
      */
     protected function deleteR2File(string $url, string $type, int $id): void

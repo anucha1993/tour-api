@@ -429,8 +429,8 @@ class SyncToursJob implements ShouldQueue
             }
         }
 
-        // Map departures (from Periods array)
-        $periods = $rawTour['Periods'] ?? [];
+        // Map departures (from Periods array) - support multiple keys
+        $periods = $rawTour['Periods'] ?? $rawTour['periods'] ?? $rawTour['Schedules'] ?? $rawTour['schedules'] ?? $rawTour['Departures'] ?? $rawTour['departures'] ?? [];
         if (isset($mappings['departure']) && !empty($periods)) {
             foreach ($periods as $period) {
                 $dep = [];
@@ -438,9 +438,11 @@ class SyncToursJob implements ShouldQueue
                     $fieldName = $mapping->our_field;
                     $path = $mapping->their_field_path ?? $mapping->their_field;
                     
-                    // Remove prefix
-                    $cleanPath = preg_replace('/^Periods\[\]\\./', '', $path);
-                    $cleanPath = preg_replace('/^Flights\[\]\\./', '', $cleanPath);
+                    // Remove prefix (case-insensitive)
+                    $cleanPath = preg_replace('/^[Pp]eriods\[\]\./', '', $path);
+                    $cleanPath = preg_replace('/^[Ss]chedules\[\]\./', '', $cleanPath);
+                    $cleanPath = preg_replace('/^[Dd]epartures\[\]\./', '', $cleanPath);
+                    $cleanPath = preg_replace('/^[Ff]lights\[\]\./', '', $cleanPath);
                     
                     $value = $period[$cleanPath] ?? null;
                     $value = $applyTransform($value, $mapping, $period);
@@ -455,8 +457,17 @@ class SyncToursJob implements ShouldQueue
             }
         }
 
-        // Map itinerary (from Itinerary array)
-        $itineraries = $rawTour['Itinerary'] ?? [];
+        // Map itinerary (from Itinerary array) - support multiple keys
+        // Note: 'days' might be an integer (number of days), not an array - check is_array
+        $itineraries = [];
+        $itinCandidates = ['Itinerary', 'itinerary', 'Itineraries', 'itineraries', 'Days', 'days', 'Programs', 'programs'];
+        foreach ($itinCandidates as $key) {
+            if (isset($rawTour[$key]) && is_array($rawTour[$key])) {
+                $itineraries = $rawTour[$key];
+                break;
+            }
+        }
+        
         if (isset($mappings['itinerary']) && !empty($itineraries)) {
             foreach ($itineraries as $itin) {
                 $it = [];
@@ -464,7 +475,11 @@ class SyncToursJob implements ShouldQueue
                     $fieldName = $mapping->our_field;
                     $path = $mapping->their_field_path ?? $mapping->their_field;
                     
-                    $cleanPath = preg_replace('/^Itinerary\[\]\\./', '', $path);
+                    // Remove prefix (case-insensitive)
+                    $cleanPath = preg_replace('/^[Ii]tinerary\[\]\./', '', $path);
+                    $cleanPath = preg_replace('/^[Ii]tineraries\[\]\./', '', $cleanPath);
+                    $cleanPath = preg_replace('/^[Dd]ays\[\]\./', '', $cleanPath);
+                    $cleanPath = preg_replace('/^[Pp]rograms\[\]\./', '', $cleanPath);
                     
                     $value = $itin[$cleanPath] ?? null;
                     $value = $applyTransform($value, $mapping, $itin);
@@ -597,42 +612,41 @@ class SyncToursJob implements ShouldQueue
             return $result;
         }
 
-        // Process PDF if exists - save to public folder (with branding if configured)
+        // Process PDF if exists - upload to Cloudflare R2 (with branding if configured)
         $pdfUrl = $tourSection['pdf_url'] ?? null;
-        if ($pdfUrl && str_starts_with($pdfUrl, 'http') && !str_contains($pdfUrl, url('/'))) {
+        if ($pdfUrl && str_starts_with($pdfUrl, 'http') && !str_contains($pdfUrl, env('R2_URL', ''))) {
             try {
                 if ($pdfBranding) {
-                    // Download, add header/footer, then save to public folder
+                    // Download, add header/footer, then upload to R2
                     $brandedPdfUrl = $pdfBranding->processAndUpload($pdfUrl, $wholesalerCode);
                     if ($brandedPdfUrl) {
                         $tourSection['pdf_url'] = $brandedPdfUrl;
                     }
                 } else {
-                    // No branding - just download and save to public folder
+                    // No branding - still upload to R2
                     $filename = pathinfo(parse_url($pdfUrl, PHP_URL_PATH), PATHINFO_FILENAME);
                     $filename = preg_replace('/[^a-zA-Z0-9_-]/', '_', $filename) . '_' . uniqid() . '.pdf';
-                    $relativePath = "pdfs/{$wholesalerCode}/" . date('Y/m') . "/{$filename}";
-                    $publicPath = public_path($relativePath);
+                    $r2Path = "pdfs/{$wholesalerCode}/" . date('Y/m') . "/{$filename}";
                     
-                    // Create directory if not exists
-                    $dir = dirname($publicPath);
-                    if (!is_dir($dir)) {
-                        mkdir($dir, 0755, true);
-                    }
-                    
-                    // Download and save
+                    // Download and upload to R2
                     $pdfContent = file_get_contents($pdfUrl);
                     if ($pdfContent) {
-                        file_put_contents($publicPath, $pdfContent);
-                        $tourSection['pdf_url'] = url($relativePath);
+                        $disk = \Storage::disk('r2');
+                        $disk->put($r2Path, $pdfContent, 'public');
+                        $r2Url = env('R2_URL');
+                        if ($r2Url) {
+                            $tourSection['pdf_url'] = rtrim($r2Url, '/') . '/' . $r2Path;
+                        } else {
+                            $tourSection['pdf_url'] = $disk->url($r2Path);
+                        }
                     }
                 }
             } catch (\Exception $e) {
-                Log::warning('SyncToursJob: Failed to save PDF', [
+                Log::warning('SyncToursJob: Failed to upload PDF to R2', [
                     'url' => $pdfUrl,
                     'error' => $e->getMessage(),
                 ]);
-                // Keep original URL if save fails
+                // Keep original URL if upload fails
             }
         }
         
@@ -818,9 +832,21 @@ class SyncToursJob implements ShouldQueue
             }
         }
 
-        // Process itineraries
-        foreach ($itineraries as $itin) {
-            $this->processItinerary($tour, $itin);
+        // Process itineraries - check sync_mode
+        if ($syncMode === 'two_phase') {
+            // Two-Phase Sync: fetch itineraries from separate API endpoint
+            $credentials = $config->auth_credentials ?? [];
+            $endpoints = $credentials['endpoints'] ?? [];
+            $itinerariesEndpoint = $endpoints['itineraries'] ?? null;
+            
+            if ($itinerariesEndpoint && ($tour->external_id || $tour->wholesaler_tour_code)) {
+                $this->fetchAndSyncItineraries($tour, $config, $itinerariesEndpoint);
+            }
+        } else {
+            // Single-Phase: process itineraries from same API response
+            foreach ($itineraries as $itin) {
+                $this->processItinerary($tour, $itin);
+            }
         }
 
         // Recalculate aggregates (min_price, max_price, hotel_star_min/max, etc.)
@@ -834,8 +860,13 @@ class SyncToursJob implements ShouldQueue
      */
     protected function processPeriod(Tour $tour, array $depData): string
     {
+        // Map departure_date → start_date if needed
+        if (!empty($depData['departure_date']) && empty($depData['start_date'])) {
+            $depData['start_date'] = $depData['departure_date'];
+        }
+        
         $externalId = $depData['external_id'] ?? null;
-        $departureDate = $depData['departure_date'] ?? null;
+        $departureDate = $depData['start_date'] ?? $depData['departure_date'] ?? null;
 
         if (!$departureDate) {
             return 'skipped';
@@ -981,6 +1012,11 @@ class SyncToursJob implements ShouldQueue
             $itinFields['sort_order'] = $itinFields['day_number'];
         }
         
+        // Ensure description has a value (required field, NOT NULL)
+        if (empty($itinFields['description']) && empty($itinerary->description)) {
+            $itinFields['description'] = $itinFields['title'] ?? 'Day ' . ($itinFields['day_number'] ?? '');
+        }
+        
         $itinerary->fill($itinFields);
         $itinerary->save();
     }
@@ -1031,5 +1067,155 @@ class SyncToursJob implements ShouldQueue
         
         // NT + YYMM + 3-digit sequence (e.g., NT202601001)
         return $prefix . $yearMonth . str_pad($seq, 3, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * Fetch and sync itineraries from separate API endpoint (Two-Phase Sync)
+     */
+    protected function fetchAndSyncItineraries(Tour $tour, WholesalerApiConfig $config, string $itinerariesEndpoint): void
+    {
+        // Build URL - replace placeholders
+        $url = str_replace(
+            ['{external_id}', '{tour_code}', '{wholesaler_tour_code}'],
+            [$tour->external_id ?? '', $tour->tour_code ?? '', $tour->wholesaler_tour_code ?? ''],
+            $itinerariesEndpoint
+        );
+
+        try {
+            $adapter = AdapterFactory::create($config->wholesaler_id);
+            $fetchResult = $adapter->fetchItineraries($url);
+
+            if (!$fetchResult->success) {
+                Log::warning('SyncToursJob: Failed to fetch itineraries', [
+                    'tour_id' => $tour->id,
+                    'url' => $url,
+                    'error' => $fetchResult->error ?? 'Unknown error',
+                ]);
+                return;
+            }
+
+            Log::info('SyncToursJob: Fetched itineraries', [
+                'tour_id' => $tour->id,
+                'count' => count($fetchResult->itineraries ?? []),
+            ]);
+
+            // Get field mappings for itineraries
+            $mappings = WholesalerFieldMapping::where('wholesaler_id', $config->wholesaler_id)
+                ->where('section_name', 'itinerary')
+                ->where('is_active', true)
+                ->get();
+
+            // Process each itinerary
+            foreach ($fetchResult->itineraries ?? [] as $rawItinerary) {
+                $itinData = $this->transformItineraryData($rawItinerary, $mappings);
+                $this->processItinerary($tour, $itinData);
+            }
+
+        } catch (\Exception $e) {
+            Log::error('SyncToursJob: Exception fetching itineraries', [
+                'tour_id' => $tour->id,
+                'url' => $url,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Transform raw itinerary data using mappings
+     */
+    protected function transformItineraryData(array $rawItinerary, $mappings): array
+    {
+        $itinData = [];
+        
+        foreach ($mappings as $mapping) {
+            $fieldPath = $mapping->their_field_path ?? $mapping->their_field ?? null;
+            if (empty($fieldPath)) {
+                continue;
+            }
+            
+            // Strip array prefix since we're already iterating over the array
+            $cleanPath = preg_replace('/^[Ii]tinerary\[\]\./', '', $fieldPath);
+            $cleanPath = preg_replace('/^[Ii]tineraries\[\]\./', '', $cleanPath);
+            $cleanPath = preg_replace('/^[Dd]ays\[\]\./', '', $cleanPath);
+            $cleanPath = preg_replace('/^[Pp]rograms\[\]\./', '', $cleanPath);
+            
+            $value = $this->extractValue($rawItinerary, $cleanPath);
+            
+            if ($value !== null && $mapping->transform_type) {
+                $value = $this->applyTransformValue($value, $mapping);
+            }
+            
+            if ($value === null && !empty($mapping->default_value)) {
+                $value = $mapping->default_value;
+            }
+            
+            $itinData[$mapping->our_field] = $value;
+        }
+        
+        return $itinData;
+    }
+
+    /**
+     * Extract value from nested array using dot notation
+     */
+    protected function extractValue(array $data, string $path): mixed
+    {
+        $parts = explode('.', $path);
+        $value = $data;
+
+        foreach ($parts as $part) {
+            if (!is_array($value) || !isset($value[$part])) {
+                return null;
+            }
+            $value = $value[$part];
+        }
+
+        return $value;
+    }
+
+    /**
+     * Apply transform to value based on mapping config
+     */
+    protected function applyTransformValue(mixed $value, WholesalerFieldMapping $mapping): mixed
+    {
+        $type = $mapping->transform_type;
+        $config = $mapping->transform_config ?? [];
+
+        if (!$type || $type === 'direct') {
+            return $value;
+        }
+
+        switch ($type) {
+            case 'value_map':
+                $map = $config['map'] ?? [];
+                if (isset($config['value_map'])) {
+                    foreach ($config['value_map'] as $item) {
+                        $fromVal = $item['from'] ?? null;
+                        if ($fromVal === '__EMPTY__') $fromVal = '';
+                        if ($fromVal !== null) {
+                            $map[$fromVal] = $item['to'] ?? null;
+                        }
+                    }
+                }
+                $lookupKey = ($value === '' || $value === null) ? '' : $value;
+                $mappedValue = $map[$lookupKey] ?? $config['default'] ?? null;
+                if ($mappedValue === 'true') return 1;
+                if ($mappedValue === 'false') return 0;
+                return $mappedValue ?? $value;
+
+            case 'date_format':
+                if ($value) {
+                    try {
+                        $format = $config['output_format'] ?? 'Y-m-d';
+                        return \Carbon\Carbon::parse($value)->format($format);
+                    } catch (\Exception $e) {
+                        return $value;
+                    }
+                }
+                return $value;
+
+            default:
+                return $value;
+        }
     }
 }

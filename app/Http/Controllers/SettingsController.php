@@ -140,6 +140,13 @@ class SettingsController extends Controller
             'normal_promo_min_percent' => 1, // โปรธรรมดา >= 1% (และ < fire_sale)
         ]);
         
+        // Get sync settings
+        $syncSettings = Setting::get('sync_settings', [
+            'skip_past_periods' => true,           // ข้าม Period ที่วันออกเดินทางเป็นอดีต
+            'past_period_threshold_days' => 0,     // จำนวนวันก่อนวันปัจจุบัน (0 = วันนี้)
+            'auto_close_past_periods' => false,    // ปิด Period ที่ผ่านไปแล้วอัตโนมัติ
+        ]);
+        
         // Get all api config overrides
         $apiConfigOverrides = \App\Models\WholesalerApiConfig::whereNotNull('aggregation_config')
             ->with('wholesaler:id,name,code')
@@ -160,6 +167,7 @@ class SettingsController extends Controller
             'data' => [
                 'global' => $globalConfig,
                 'promotion_thresholds' => $promotionThresholds,
+                'sync_settings' => $syncSettings,
                 'options' => ['min', 'max', 'avg', 'first'],
                 'fields' => [
                     'price_adult' => 'ราคาผู้ใหญ่',
@@ -190,6 +198,10 @@ class SettingsController extends Controller
             'promotion_thresholds' => 'sometimes|array',
             'promotion_thresholds.fire_sale_min_percent' => 'sometimes|numeric|min:1|max:100',
             'promotion_thresholds.normal_promo_min_percent' => 'sometimes|numeric|min:0|max:100',
+            'sync_settings' => 'sometimes|array',
+            'sync_settings.skip_past_periods' => 'sometimes|boolean',
+            'sync_settings.past_period_threshold_days' => 'sometimes|integer|min:0|max:365',
+            'sync_settings.auto_close_past_periods' => 'sometimes|boolean',
         ]);
         
         if (isset($validated['config'])) {
@@ -204,12 +216,19 @@ class SettingsController extends Controller
             Setting::set('promotion_thresholds', $newThresholds, 'aggregation', 'json');
         }
         
+        if (isset($validated['sync_settings'])) {
+            $currentSyncSettings = Setting::get('sync_settings', []);
+            $newSyncSettings = array_merge($currentSyncSettings, $validated['sync_settings']);
+            Setting::set('sync_settings', $newSyncSettings, 'aggregation', 'json');
+        }
+        
         return response()->json([
             'success' => true,
             'message' => 'Settings updated successfully',
             'data' => [
                 'tour_aggregations' => Setting::get('tour_aggregations'),
                 'promotion_thresholds' => Setting::get('promotion_thresholds'),
+                'sync_settings' => Setting::get('sync_settings'),
             ],
         ]);
     }

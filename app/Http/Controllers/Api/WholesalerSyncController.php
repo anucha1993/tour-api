@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Country;
 use App\Models\Offer;
 use App\Models\Period;
+use App\Models\Setting;
 use App\Models\Tour;
 use App\Models\TourItinerary;
 use App\Models\Transport;
@@ -252,11 +253,27 @@ class WholesalerSyncController extends Controller
      */
     protected function processDepartures(Tour $tour, array $departures): array
     {
-        $result = ['created' => 0, 'updated' => 0];
+        $result = ['created' => 0, 'updated' => 0, 'skipped_past' => 0];
+        
+        // Get sync settings
+        $syncSettings = Setting::get('sync_settings', [
+            'skip_past_periods' => true,
+            'past_period_threshold_days' => 0,
+        ]);
+        
+        $skipPastPeriods = $syncSettings['skip_past_periods'] ?? true;
+        $thresholdDays = $syncSettings['past_period_threshold_days'] ?? 0;
+        $thresholdDate = now()->subDays($thresholdDays)->toDateString();
 
         foreach ($departures as $dep) {
             $departureDate = $dep['departure_date'] ?? $dep['start_date'] ?? null;
             if (!$departureDate) continue;
+            
+            // Skip past periods if enabled
+            if ($skipPastPeriods && $departureDate < $thresholdDate) {
+                $result['skipped_past']++;
+                continue;
+            }
 
             $externalId = $dep['external_id'] ?? null;
 
