@@ -85,6 +85,9 @@ class UnifiedSearchService
 
         // Get transform service
         $transformService = new TourTransformService($wholesalerId);
+        
+        // Get periods array key from mapping (e.g., "Periods" or "periods")
+        $periodsArrayKey = $this->getPeriodsArrayKey($wholesalerId);
 
         // Get adapter
         $adapter = AdapterFactory::create($wholesalerId);
@@ -109,13 +112,13 @@ class UnifiedSearchService
             $transformed['_wholesaler_id'] = $wholesalerId;
             $transformed['_wholesaler_name'] = $config->wholesaler?->name;
 
-            // Check if sync mode is NOT two-phase - Zego has periods inline
+            // Check if sync mode is NOT two-phase - periods are inline in tour data
             if ($config->sync_mode !== 'two_phase') {
-                // Zego: Periods are already in the tour data
-                $rawPeriods = $tour['Periods'] ?? [];
+                // Get periods array using mapped key (not hardcoded)
+                $rawPeriods = $tour[$periodsArrayKey] ?? [];
                 if (!empty($rawPeriods)) {
                     $transformed['periods'] = array_map(
-                        fn($p) => $transformService->transformToUnified($p, 'departure'), // ใช้ 'departure' ไม่ใช่ 'period'
+                        fn($p) => $transformService->transformToUnified($p, 'departure'),
                         $rawPeriods
                     );
                 }
@@ -196,21 +199,54 @@ class UnifiedSearchService
         return array_filter($tours, function ($tour) use ($searchParams) {
             $raw = $tour['_raw'] ?? [];
 
-            // Filter by country - check unified field and raw field
+            // Filter by country - check both code (iso2) and name
             if (!empty($searchParams['country'])) {
                 $searchCountry = strtoupper($searchParams['country']);
                 
-                // Check unified field
-                $tourCountry = $tour['primary_country_id'] ?? $tour['country'] ?? null;
+                // Expand search terms using country aliases
+                $searchTerms = $this->expandCountrySearch($searchCountry);
                 
-                // Fallback to raw fields
-                if (!$tourCountry) {
-                    $tourCountry = $raw['CountryName'] ?? $raw['countryName'] ?? $raw['country'] ?? null;
+                // Collect all country identifiers for matching
+                $countryValues = [];
+                
+                // From unified field (could be code or name)
+                if (!empty($tour['primary_country_id'])) {
+                    $countryValues[] = strtoupper($tour['primary_country_id']);
                 }
                 
-                if ($tourCountry) {
-                    $tourCountry = strtoupper($tourCountry);
-                    if (stripos($tourCountry, $searchCountry) === false && stripos($searchCountry, $tourCountry) === false) {
+                // From raw countries array - get both code AND name
+                $rawCountries = $raw['countries'] ?? $raw['Countries'] ?? [];
+                if (!empty($rawCountries) && is_array($rawCountries)) {
+                    foreach ($rawCountries as $country) {
+                        if (!empty($country['code'])) {
+                            $countryValues[] = strtoupper($country['code']);
+                        }
+                        if (!empty($country['name'])) {
+                            $countryValues[] = strtoupper($country['name']);
+                        }
+                    }
+                }
+                
+                // Fallback to legacy raw fields
+                if (empty($countryValues)) {
+                    $legacy = $raw['CountryName'] ?? $raw['countryName'] ?? $raw['country'] ?? null;
+                    if ($legacy) {
+                        $countryValues[] = strtoupper($legacy);
+                    }
+                }
+                
+                // Check if any country value matches any search term
+                if (!empty($countryValues)) {
+                    $matched = false;
+                    foreach ($searchTerms as $term) {
+                        foreach ($countryValues as $countryVal) {
+                            if (stripos($countryVal, $term) !== false || stripos($term, $countryVal) !== false) {
+                                $matched = true;
+                                break 2;
+                            }
+                        }
+                    }
+                    if (!$matched) {
                         return false;
                     }
                 }
@@ -361,6 +397,36 @@ class UnifiedSearchService
     }
 
     /**
+     * Expand country search term to include aliases
+     * Loads from countries table in database
+     */
+    protected function expandCountrySearch(string $searchCountry): array
+    {
+        $searchCountry = strtoupper(trim($searchCountry));
+        $terms = [$searchCountry];
+        
+        // Search in countries table for matching country
+        $country = \App\Models\Country::where(function ($q) use ($searchCountry) {
+            $q->whereRaw('UPPER(iso2) = ?', [$searchCountry])
+              ->orWhereRaw('UPPER(iso3) = ?', [$searchCountry])
+              ->orWhereRaw('UPPER(name_en) = ?', [$searchCountry])
+              ->orWhereRaw('UPPER(name_th) = ?', [$searchCountry])
+              ->orWhereRaw('UPPER(name_en) LIKE ?', ['%' . $searchCountry . '%'])
+              ->orWhereRaw('UPPER(name_th) LIKE ?', ['%' . $searchCountry . '%']);
+        })->first();
+        
+        if ($country) {
+            // Add all identifiers for this country
+            if ($country->iso2) $terms[] = strtoupper($country->iso2);
+            if ($country->iso3) $terms[] = strtoupper($country->iso3);
+            if ($country->name_en) $terms[] = strtoupper($country->name_en);
+            if ($country->name_th) $terms[] = strtoupper($country->name_th);
+        }
+        
+        return array_unique($terms);
+    }
+
+    /**
      * Sort results
      */
     protected function sortResults(array $tours, ?string $sortBy): array
@@ -500,5 +566,25 @@ class UnifiedSearchService
             $tour['periods'] = array_values($filteredPeriods);
             return $tour;
         }, $tours);
+    }
+
+    /**
+     * Get periods array key from mapping
+     * 
+     * Looks at departure section mapping to find the array key (e.g., "Periods", "periods", "departures")
+     */
+    protected function getPeriodsArrayKey(int $wholesalerId): string
+    {
+        $mapping = \App\Models\WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)
+            ->where('section_name', 'departure')
+            ->whereNotNull('their_field_path')
+            ->first(['their_field_path']);
+
+        if ($mapping && preg_match('/^(\w+)\[\]/', $mapping->their_field_path, $matches)) {
+            return $matches[1]; // e.g., "Periods", "periods", "departures"
+        }
+
+        // Fallback to common names
+        return 'periods';
     }
 }

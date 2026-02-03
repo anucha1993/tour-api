@@ -225,3 +225,13 @@ php artisan queue:work database --queue=default,periods --stop-when-empty --max-
 ```bash
 php artisan queue:work database --queue=default,periods --sleep=3 --tries=3 --max-time=3600
 ```
+### สรุปคำสั่งสำหรับ Production (Plesk)
+cd /var/www/vhosts/yourdomain.com/httpdocs/tour-api && /usr/bin/php artisan queue:work database --queue=default,periods --stop-when-empty --max-time=55
+### ตั้งค่า Scheduled Task ใน Plesk
+### Cron style:
+
+### Command:
+### อธิบาย Parameters
+### Parameter	ความหมาย	ทำไมต้องใช้
+### --stop-when-empty	หยุดเมื่อ queue ว่าง	ไม่ให้ process ค้าง
+### --max-time=55	หยุดหลัง 55 วินาที	ให้ทันก่อน cron รอบถัดไป (60 วิ)

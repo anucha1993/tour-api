@@ -357,13 +357,13 @@ class IntegrationController extends Controller
         $validator = Validator::make($request->all(), [
             'api_base_url' => 'required|url',
             'auth_type' => 'required|in:api_key,oauth2,basic,bearer,custom',
-            'auth_credentials' => 'required|array',
+            'auth_credentials' => 'nullable|array',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Validation failed',
+                'message' => 'Validation failed: ' . $validator->errors()->first(),
                 'errors' => $validator->errors(),
             ], 422);
         }
@@ -2843,10 +2843,22 @@ class IntegrationController extends Controller
         ];
 
         // Helper to extract value from nested path
-        $extractValue = function($data, $path) {
+        $extractValue = function($data, $path) use (&$extractValue) {
             if (empty($path)) return null;
             
-            // Handle array notation like "Periods[]"
+            // Handle fallback paths with | separator (e.g., "countries[].code|countries[].name")
+            if (strpos($path, '|') !== false) {
+                $paths = explode('|', $path);
+                foreach ($paths as $singlePath) {
+                    $value = $extractValue($data, trim($singlePath));
+                    if ($value !== null && $value !== '') {
+                        return $value;
+                    }
+                }
+                return null;
+            }
+            
+            // Handle array notation like "Periods[]" or "countries[].code"
             if (strpos($path, '[]') !== false) {
                 $parts = explode('[].', $path);
                 $arrayKey = $parts[0];
@@ -2855,10 +2867,15 @@ class IntegrationController extends Controller
                 if (!isset($data[$arrayKey]) || !is_array($data[$arrayKey])) return null;
                 if (empty($data[$arrayKey])) return null;
                 
-                if ($fieldPath && isset($data[$arrayKey][0])) {
-                    return $data[$arrayKey][0][$fieldPath] ?? null;
+                // Get first element from array
+                $firstItem = $data[$arrayKey][0] ?? null;
+                if (!$firstItem) return null;
+                
+                if ($fieldPath) {
+                    // Recursively get nested field from first item
+                    return $extractValue($firstItem, $fieldPath);
                 }
-                return null;
+                return $firstItem;
             }
             
             // Normal dot notation path
@@ -2886,7 +2903,7 @@ class IntegrationController extends Controller
                     if ($value === null || $value === '') return null;
                     
                     $lookupTable = $config['lookup_table'] ?? null;
-                    $lookupBy = $config['lookup_by'] ?? 'name';
+                    $lookupBy = $config['lookup_by'] ?? 'id';
                     
                     if (!$lookupTable) {
                         $ourField = $mapping->our_field;
@@ -2905,7 +2922,48 @@ class IntegrationController extends Controller
                     $modelClass = 'App\\Models\\' . str($lookupTable)->singular()->studly()->toString();
                     if (!class_exists($modelClass)) return $value;
                     
+                    // Try exact match first
                     $record = $modelClass::where($lookupBy, $value)->first();
+                    
+                    // If not found, try fuzzy matching for transport and country
+                    if (!$record && in_array($lookupTable, ['transports', 'countries'])) {
+                        $searchValue = trim((string) $value);
+                        
+                        // For transports - first try to extract code from parentheses like "CHINA SOUTHERN AIRLINE (CZ)"
+                        if ($lookupTable === 'transports' && preg_match('/\(([A-Z0-9]{2,3})\)/', $searchValue, $matches)) {
+                            $code = $matches[1];
+                            $record = $modelClass::where('code', $code)
+                                ->orWhere('code1', $code)
+                                ->first();
+                        }
+                        
+                        // If still not found, try LIKE match on name (without parentheses part)
+                        if (!$record) {
+                            // Remove parentheses and content for cleaner LIKE match
+                            $cleanName = preg_replace('/\s*\([^)]+\)\s*/', '', $searchValue);
+                            $cleanName = trim($cleanName);
+                            
+                            if (!empty($cleanName)) {
+                                // Use correct column name for each table
+                                if ($lookupTable === 'countries') {
+                                    $record = $modelClass::where('name_en', 'LIKE', '%' . $cleanName . '%')
+                                        ->orWhere('name_th', 'LIKE', '%' . $cleanName . '%')
+                                        ->first();
+                                } else {
+                                    $record = $modelClass::where('name', 'LIKE', '%' . $cleanName . '%')->first();
+                                }
+                            }
+                        }
+                        
+                        // For countries, also try ISO codes
+                        if (!$record && $lookupTable === 'countries') {
+                            $record = $modelClass::where('iso2', strtoupper($searchValue))
+                                ->orWhere('iso3', strtoupper($searchValue))
+                                ->orWhere('name_en', 'LIKE', '%' . $searchValue . '%')
+                                ->orWhere('name_th', 'LIKE', '%' . $searchValue . '%')
+                                ->first();
+                        }
+                    }
                     return $record?->id;
                     
                 case 'value_map':

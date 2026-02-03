@@ -73,9 +73,10 @@ class TourTransformService
      * 
      * @param array $apiData Raw data from wholesaler API
      * @param string $section Section to transform (tour, period, itinerary)
+     * @param bool $applyLookup Whether to apply lookup transforms (for display)
      * @return array Transformed data with unified field names
      */
-    public function transformToUnified(array $apiData, string $section = 'tour'): array
+    public function transformToUnified(array $apiData, string $section = 'tour', bool $applyLookup = true): array
     {
         $result = [];
         $sectionMappings = $this->mappings[$section] ?? [];
@@ -92,6 +93,17 @@ class TourTransformService
             // Apply string transform if exists
             if ($value !== null && !empty($mapping['string_transform'])) {
                 $value = $this->applyStringTransform($value, $mapping['string_transform']);
+            }
+            
+            // Apply lookup transform if enabled (converts code to display name)
+            if ($value !== null && $applyLookup && $mapping['transform_type'] === 'lookup') {
+                $displayName = $this->getDisplayName($value, $targetField, $mapping['transform_config']);
+                if ($displayName !== null && $displayName !== $value) {
+                    // Store both: original value and display name
+                    $result[$targetField] = $value; // Keep original (e.g., "CN")
+                    $result[$targetField . '_name'] = $displayName; // Add display name (e.g., "จีน")
+                    continue;
+                }
             }
 
             if ($value !== null) {
@@ -168,9 +180,43 @@ class TourTransformService
 
     /**
      * Get nested value from array using dot notation
+     * Supports array notation like "countries[].code" to get first item's code
+     * Supports fallback paths with | separator like "countries[].code|countries[].name"
      */
     protected function getNestedValue(array $data, string $path): mixed
     {
+        // Handle fallback paths with | separator
+        if (str_contains($path, '|')) {
+            $paths = explode('|', $path);
+            foreach ($paths as $singlePath) {
+                $value = $this->getNestedValue($data, trim($singlePath));
+                // Return first non-empty value
+                if ($value !== null && $value !== '') {
+                    return $value;
+                }
+            }
+            return null;
+        }
+        
+        // Handle array notation like "countries[].code"
+        if (preg_match('/^(\w+)\[\]\.(.+)$/', $path, $matches)) {
+            $arrayKey = $matches[1]; // e.g., "countries"
+            $fieldPath = $matches[2]; // e.g., "code"
+            
+            if (!isset($data[$arrayKey]) || !is_array($data[$arrayKey]) || empty($data[$arrayKey])) {
+                return null;
+            }
+            
+            // Get first item from array
+            $firstItem = $data[$arrayKey][0] ?? null;
+            if (!$firstItem) {
+                return null;
+            }
+            
+            // Get nested field from first item
+            return $this->getNestedValue($firstItem, $fieldPath);
+        }
+        
         $keys = explode('.', $path);
         $value = $data;
 
@@ -229,6 +275,179 @@ class TourTransformService
             default:
                 return $value;
         }
+    }
+
+    /**
+     * Get display name for lookup fields (for realtime search display)
+     * Converts code/id to human-readable name from database
+     */
+    protected function getDisplayName(mixed $value, string $targetField, array $config): ?string
+    {
+        if (empty($value) || !is_string($value)) {
+            return null;
+        }
+        
+        // Determine which table to lookup based on target field name
+        if (str_contains($targetField, 'country')) {
+            return $this->lookupCountryName($value, $config['lookup_by'] ?? null);
+        }
+        
+        if (str_contains($targetField, 'transport') || str_contains($targetField, 'airline')) {
+            return $this->lookupTransportName($value);
+        }
+        
+        if (str_contains($targetField, 'city')) {
+            return $this->lookupCityName($value, $config['lookup_by'] ?? null);
+        }
+        
+        return null;
+    }
+
+    /**
+     * Lookup country name from countries table
+     */
+    protected function lookupCountryName(string $value, ?string $lookupBy = null): ?string
+    {
+        $value = trim($value);
+        
+        // Try to find by iso2, iso3, name_en, or name_th
+        $country = \App\Models\Country::where(function ($q) use ($value) {
+            $q->where('iso2', $value)
+              ->orWhere('iso3', $value)
+              ->orWhereRaw('UPPER(name_en) = ?', [strtoupper($value)])
+              ->orWhereRaw('UPPER(name_th) = ?', [strtoupper($value)]);
+        })->first();
+        
+        if ($country) {
+            // Return Thai name preferably, fallback to English
+            return $country->name_th ?: $country->name_en;
+        }
+        
+        // If not found in DB, return original value
+        return $value;
+    }
+    
+    /**
+     * Lookup transport/airline name from transports table
+     */
+    protected function lookupTransportName(string $value): ?string
+    {
+        // Check if transport table exists and lookup
+        if (class_exists('\App\Models\Transport')) {
+            // Try exact match first
+            $transport = \App\Models\Transport::where('code', $value)
+                ->orWhere('name', $value)
+                ->first();
+            
+            if (!$transport) {
+                // Try extracting code from parentheses like "CHINA SOUTHERN AIRLINE (CZ)"
+                if (preg_match('/\(([A-Z0-9]{2,3})\)/', $value, $matches)) {
+                    $code = $matches[1];
+                    $transport = \App\Models\Transport::where('code', $code)
+                        ->orWhere('code1', $code)
+                        ->first();
+                }
+            }
+            
+            if (!$transport) {
+                // Try LIKE match on name
+                $transport = \App\Models\Transport::where('name', 'LIKE', "%{$value}%")
+                    ->first();
+            }
+            
+            if ($transport) {
+                return $transport->name;
+            }
+        }
+        
+        // Return original value if not found
+        return $value;
+    }
+    
+    /**
+     * Lookup city name from cities table
+     */
+    protected function lookupCityName(string $value, ?string $lookupBy = null): ?string
+    {
+        $city = \App\Models\City::where(function ($q) use ($value) {
+            $q->where('code', $value)
+              ->orWhereRaw('UPPER(name_en) = ?', [strtoupper($value)])
+              ->orWhereRaw('UPPER(name_th) = ?', [strtoupper($value)]);
+        })->first();
+        
+        if ($city) {
+            return $city->name_th ?: $city->name_en;
+        }
+        
+        return $value;
+    }
+
+    /**
+     * Apply lookup transform - find ID from related table with fuzzy matching
+     * Also returns display name for realtime search
+     */
+    protected function applyLookupTransform(mixed $value, string $targetField, array $config): mixed
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $lookupTable = $config['lookup_table'] ?? null;
+        $lookupBy = $config['lookup_by'] ?? 'id';
+
+        // Auto-infer lookup_table from target field if not specified
+        if (!$lookupTable) {
+            if (str_ends_with($targetField, '_id')) {
+                $baseName = substr($targetField, 0, -3);
+                if (str_contains($baseName, '_')) {
+                    $parts = explode('_', $baseName);
+                    $baseName = end($parts);
+                }
+                $lookupTable = str($baseName)->plural()->toString();
+            }
+        }
+
+        if (!$lookupTable) {
+            return $value;
+        }
+
+        // Build model class
+        $modelClass = 'App\\Models\\' . str($lookupTable)->singular()->studly()->toString();
+        if (!class_exists($modelClass)) {
+            return $value;
+        }
+
+        // Try exact match first
+        $record = $modelClass::where($lookupBy, $value)->first();
+
+        // If not found, try fuzzy matching for transport and country
+        if (!$record && in_array($lookupTable, ['transports', 'countries'])) {
+            $searchValue = trim((string) $value);
+
+            // For transports - try LIKE match on name field
+            if ($lookupTable === 'transports') {
+                $record = $modelClass::where('name', 'LIKE', '%' . $searchValue . '%')->first();
+
+                // Try extracting code from parentheses like "CHINA SOUTHERN AIRLINE (CZ)"
+                if (!$record && preg_match('/\(([A-Z0-9]{2,3})\)/', $searchValue, $matches)) {
+                    $code = $matches[1];
+                    $record = $modelClass::where('code', $code)
+                        ->orWhere('code1', $code)
+                        ->first();
+                }
+            }
+
+            // For countries - try ISO codes and name fields
+            if (!$record && $lookupTable === 'countries') {
+                $record = $modelClass::where('iso2', strtoupper($searchValue))
+                    ->orWhere('iso3', strtoupper($searchValue))
+                    ->orWhere('name_en', 'LIKE', '%' . $searchValue . '%')
+                    ->orWhere('name_th', 'LIKE', '%' . $searchValue . '%')
+                    ->first();
+            }
+        }
+
+        return $record?->id;
     }
 
     /**

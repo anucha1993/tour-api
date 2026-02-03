@@ -259,10 +259,22 @@ class SyncToursJob implements ShouldQueue
         ];
 
         // Helper to extract value from nested path
-        $extractValue = function($data, $path) {
+        $extractValue = function($data, $path) use (&$extractValue) {
             if (empty($path)) return null;
             
-            // Handle array notation like "Periods[]"
+            // Handle fallback paths with | separator (e.g., "countries[].code|countries[].name")
+            if (strpos($path, '|') !== false) {
+                $paths = explode('|', $path);
+                foreach ($paths as $singlePath) {
+                    $value = $extractValue($data, trim($singlePath));
+                    if ($value !== null && $value !== '') {
+                        return $value;
+                    }
+                }
+                return null;
+            }
+            
+            // Handle array notation like "Periods[]" or "countries[].code"
             if (strpos($path, '[]') !== false) {
                 $parts = explode('[].', $path);
                 $arrayKey = $parts[0];
@@ -271,10 +283,15 @@ class SyncToursJob implements ShouldQueue
                 if (!isset($data[$arrayKey]) || !is_array($data[$arrayKey])) return null;
                 if (empty($data[$arrayKey])) return null;
                 
-                if ($fieldPath && isset($data[$arrayKey][0])) {
-                    return $data[$arrayKey][0][$fieldPath] ?? null;
+                // Get first element from array
+                $firstItem = $data[$arrayKey][0] ?? null;
+                if (!$firstItem) return null;
+                
+                if ($fieldPath) {
+                    // Recursively get nested field from first item
+                    return $extractValue($firstItem, $fieldPath);
                 }
-                return null;
+                return $firstItem;
             }
             
             // Normal dot notation path
@@ -340,7 +357,49 @@ class SyncToursJob implements ShouldQueue
                         return $value;
                     }
                     
+                    // Try exact match first
                     $record = $modelClass::where($lookupBy, $value)->first();
+                    
+                    // If not found, try fuzzy matching for transport and country
+                    if (!$record && in_array($lookupTable, ['transports', 'countries'])) {
+                        $searchValue = trim((string) $value);
+                        
+                        // For transports - first try to extract code from parentheses like "CHINA SOUTHERN AIRLINE (CZ)"
+                        if ($lookupTable === 'transports' && preg_match('/\(([A-Z0-9]{2,3})\)/', $searchValue, $matches)) {
+                            $code = $matches[1];
+                            $record = $modelClass::where('code', $code)
+                                ->orWhere('code1', $code)
+                                ->first();
+                        }
+                        
+                        // If still not found, try LIKE match on name (without parentheses part)
+                        if (!$record) {
+                            // Remove parentheses and content for cleaner LIKE match
+                            $cleanName = preg_replace('/\s*\([^)]+\)\s*/', '', $searchValue);
+                            $cleanName = trim($cleanName);
+                            
+                            if (!empty($cleanName)) {
+                                // Use correct column name for each table
+                                if ($lookupTable === 'countries') {
+                                    $record = $modelClass::where('name_en', 'LIKE', '%' . $cleanName . '%')
+                                        ->orWhere('name_th', 'LIKE', '%' . $cleanName . '%')
+                                        ->first();
+                                } else {
+                                    $record = $modelClass::where('name', 'LIKE', '%' . $cleanName . '%')->first();
+                                }
+                            }
+                        }
+                        
+                        // For countries, also try ISO codes
+                        if (!$record && $lookupTable === 'countries') {
+                            $record = $modelClass::where('iso2', strtoupper($searchValue))
+                                ->orWhere('iso3', strtoupper($searchValue))
+                                ->orWhere('name_en', 'LIKE', '%' . $searchValue . '%')
+                                ->orWhere('name_th', 'LIKE', '%' . $searchValue . '%')
+                                ->first();
+                        }
+                    }
+                    
                     return $record?->id;
                     
                 case 'concat':
@@ -433,7 +492,26 @@ class SyncToursJob implements ShouldQueue
                 $path = $mapping->their_field_path ?? $mapping->their_field;
 
                 $value = $extractValue($rawTour, $path);
+                
+                // Debug log for key fields
+                if (in_array($fieldName, ['primary_country_id', 'transport_id'])) {
+                    Log::info('SyncToursJob: Transform field', [
+                        'field' => $fieldName,
+                        'path' => $path,
+                        'raw_value' => $value,
+                        'transform_type' => $mapping->transform_type,
+                    ]);
+                }
+                
                 $value = $applyTransform($value, $mapping, $rawTour);
+                
+                // Debug log after transform
+                if (in_array($fieldName, ['primary_country_id', 'transport_id'])) {
+                    Log::info('SyncToursJob: After transform', [
+                        'field' => $fieldName,
+                        'transformed_value' => $value,
+                    ]);
+                }
                 
                 if ($value === null && !empty($mapping->default_value)) {
                     $value = $mapping->default_value;
@@ -474,7 +552,7 @@ class SyncToursJob implements ShouldQueue
         // Map itinerary (from Itinerary array) - support multiple keys
         // Note: 'days' might be an integer (number of days), not an array - check is_array
         $itineraries = [];
-        $itinCandidates = ['Itinerary', 'itinerary', 'Itineraries', 'itineraries', 'Days', 'days', 'Programs', 'programs'];
+        $itinCandidates = ['Itinerary', 'itinerary', 'Itineraries', 'itineraries', 'Days', 'days', 'Programs', 'programs', 'plans', 'Plans'];
         foreach ($itinCandidates as $key) {
             if (isset($rawTour[$key]) && is_array($rawTour[$key])) {
                 $itineraries = $rawTour[$key];
@@ -483,6 +561,7 @@ class SyncToursJob implements ShouldQueue
         }
         
         if (isset($mappings['itinerary']) && !empty($itineraries)) {
+            $dayIndex = 1; // Auto-increment day_number
             foreach ($itineraries as $itin) {
                 $it = [];
                 foreach ($mappings['itinerary'] as $mapping) {
@@ -494,6 +573,7 @@ class SyncToursJob implements ShouldQueue
                     $cleanPath = preg_replace('/^[Ii]tineraries\[\]\./', '', $cleanPath);
                     $cleanPath = preg_replace('/^[Dd]ays\[\]\./', '', $cleanPath);
                     $cleanPath = preg_replace('/^[Pp]rograms\[\]\./', '', $cleanPath);
+                    $cleanPath = preg_replace('/^[Pp]lans\[\]\./', '', $cleanPath);
                     
                     $value = $itin[$cleanPath] ?? null;
                     $value = $applyTransform($value, $mapping, $itin);
@@ -504,6 +584,13 @@ class SyncToursJob implements ShouldQueue
                     
                     $it[$fieldName] = $value;
                 }
+                
+                // Auto-generate day_number if not mapped
+                if (empty($it['day_number'])) {
+                    $it['day_number'] = $dayIndex;
+                }
+                $dayIndex++;
+                
                 $result['itinerary'][] = $it;
             }
         }
@@ -732,6 +819,16 @@ class SyncToursJob implements ShouldQueue
         // Fill tour fields from transformed data (no hardcode - use mapping result)
         // Filter only fillable fields and merge with existing values
 
+        // Debug: Check what's in tourSection before processing
+        Log::info('SyncToursJob: tourSection before fill', [
+            'tour_code' => $tourSection['tour_code'] ?? $tourSection['wholesaler_tour_code'] ?? 'N/A',
+            'has_primary_country_id' => array_key_exists('primary_country_id', $tourSection),
+            'primary_country_id' => $tourSection['primary_country_id'] ?? 'NOT_SET',
+            'has_transport_id' => array_key_exists('transport_id', $tourSection),
+            'transport_id' => $tourSection['transport_id'] ?? 'NOT_SET',
+            'tourSection_keys' => array_keys($tourSection),
+        ]);
+
         $fillableFields = $tour->getFillable();
         $tourFields = []; //
         // Fields that should be null when empty (numeric fields)
@@ -765,6 +862,16 @@ class SyncToursJob implements ShouldQueue
         // Set sync metadata (system fields, not from mapping)
         $tourFields['sync_status'] = 'active';
         $tourFields['last_synced_at'] = now();
+        
+        // Debug: Log tourFields before save
+        Log::info('SyncToursJob: tourFields before save', [
+            'tour_code' => $tourFields['tour_code'] ?? $tour->tour_code ?? 'N/A',
+            'has_primary_country_id' => array_key_exists('primary_country_id', $tourFields),
+            'primary_country_id' => $tourFields['primary_country_id'] ?? 'NOT_IN_FIELDS',
+            'has_transport_id' => array_key_exists('transport_id', $tourFields),
+            'transport_id' => $tourFields['transport_id'] ?? 'NOT_IN_FIELDS',
+        ]);
+        
         $tour->fill($tourFields);
         $tour->save();
         
@@ -877,6 +984,11 @@ class SyncToursJob implements ShouldQueue
         // Map departure_date → start_date if needed
         if (!empty($depData['departure_date']) && empty($depData['start_date'])) {
             $depData['start_date'] = $depData['departure_date'];
+        }
+        
+        // Map return_date → end_date if needed
+        if (!empty($depData['return_date']) && empty($depData['end_date'])) {
+            $depData['end_date'] = $depData['return_date'];
         }
         
         $externalId = $depData['external_id'] ?? null;

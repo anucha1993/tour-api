@@ -9,6 +9,7 @@ use App\Models\Setting;
 use App\Models\WholesalerApiConfig;
 use App\Models\WholesalerFieldMapping;
 use App\Models\SyncLog;
+use App\Services\NotificationService;
 use App\Services\WholesalerAdapters\AdapterFactory;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -140,6 +141,22 @@ class SyncPeriodsJob implements ShouldQueue
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
+
+            // Send notification
+            try {
+                $notificationService = app(NotificationService::class);
+                $notificationService->notifyIntegration($config->id, 'sync_error', [
+                    'error' => $e->getMessage(),
+                    'tour_id' => $this->tourId,
+                    'external_id' => $this->externalId,
+                    'sync_type' => 'periods',
+                ]);
+            } catch (\Exception $notifyError) {
+                Log::warning('SyncPeriodsJob: Failed to send notification', [
+                    'error' => $notifyError->getMessage(),
+                ]);
+            }
+
             throw $e;
         }
     }
