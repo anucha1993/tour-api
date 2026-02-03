@@ -1511,6 +1511,20 @@ class SyncToursJob implements ShouldQueue
             'tour_conditions',
         ];
         
+        // Fields that are arrays of strings - need to filter empty/short items after cleaning
+        $arrayStringFields = [
+            'highlights',
+            'shopping_highlights',
+            'food_highlights',
+            'themes',
+            'suitable_for',
+            'keywords',
+            'hashtags',
+            'places',
+            'gallery',
+            'images',
+        ];
+        
         $skipFields = array_merge($defaultSkipFields, $skipFields);
         
         foreach ($data as $key => $value) {
@@ -1522,7 +1536,36 @@ class SyncToursJob implements ShouldQueue
             if (is_string($value)) {
                 $data[$key] = $this->cleanText($value);
             } elseif (is_array($value)) {
-                $data[$key] = $this->removeEmojisFromArray($value, $skipFields);
+                // Check if this is an array of strings that needs filtering
+                if (in_array($key, $arrayStringFields)) {
+                    // Clean each string in array
+                    $cleaned = [];
+                    foreach ($value as $item) {
+                        if (is_string($item)) {
+                            $cleanedItem = $this->cleanText($item);
+                            // Only keep items with meaningful content (more than 5 chars or contains Thai)
+                            if ($cleanedItem !== null && $cleanedItem !== '') {
+                                $trimmed = trim($cleanedItem);
+                                // Keep if: has Thai text OR length > 5 chars OR is a URL
+                                $hasThai = preg_match('/[\x{0E00}-\x{0E7F}]/u', $trimmed);
+                                $isUrl = preg_match('/^https?:\/\//i', $trimmed);
+                                $isLongEnough = mb_strlen($trimmed) > 5;
+                                
+                                if ($hasThai || $isUrl || $isLongEnough) {
+                                    $cleaned[] = $trimmed;
+                                }
+                            }
+                        } elseif (is_array($item)) {
+                            // Nested array
+                            $cleaned[] = $this->removeEmojisFromArray($item, $skipFields);
+                        } else {
+                            $cleaned[] = $item;
+                        }
+                    }
+                    $data[$key] = $cleaned;
+                } else {
+                    $data[$key] = $this->removeEmojisFromArray($value, $skipFields);
+                }
             }
         }
         return $data;
