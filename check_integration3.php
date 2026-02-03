@@ -5,19 +5,47 @@ $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
 use Illuminate\Support\Facades\DB;
 
-// Check jobs in queue
-$jobs = DB::table('jobs')->get();
-echo "=== Jobs in Queue: " . $jobs->count() . " ===\n";
-foreach ($jobs as $job) {
-    echo "- ID: " . $job->id . " | Queue: " . $job->queue . " | Created: " . date('Y-m-d H:i:s', $job->created_at) . "\n";
-    $payload = json_decode($job->payload, true);
-    echo "  Job: " . ($payload['displayName'] ?? 'Unknown') . "\n";
+$wholesalerId = isset($argv[1]) ? (int)$argv[1] : 3;
+
+// Get Wholesaler info
+$ws = DB::table('wholesalers')->where('id', $wholesalerId)->first();
+echo "=== Wholesaler #$wholesalerId ===\n";
+if ($ws) {
+    echo "Name: " . $ws->name . "\n";
+    echo "Code: " . $ws->code . "\n";
 }
 
-// Check tours from wholesaler 3
-echo "\n=== Tours from Wholesaler #3 ===\n";
-$tours = DB::table('tours')->where('wholesaler_id', 3)->get();
-echo "Count: " . $tours->count() . "\n";
+// Recent sync_logs
+echo "\n=== Recent Sync Logs ===\n";
+$logs = DB::table('sync_logs')
+    ->where('wholesaler_id', $wholesalerId)
+    ->orderBy('created_at', 'desc')
+    ->limit(3)
+    ->get();
+
+foreach ($logs as $log) {
+    echo "- " . $log->created_at . " | Status: " . $log->status . " | Tours: " . $log->tours_received . "/" . $log->tours_created . "/" . $log->tours_updated . "\n";
+    if ($log->error_summary) {
+        echo "  Error: " . substr($log->error_summary, 0, 200) . "\n";
+    }
+}
+
+// Sync error logs
+echo "\n=== Recent Error Logs ===\n";
+$errors = DB::table('sync_error_logs')
+    ->where('wholesaler_id', $wholesalerId)
+    ->orderBy('created_at', 'desc')
+    ->limit(5)
+    ->get();
+
+foreach ($errors as $err) {
+    echo "- " . ($err->created_at ?? '') . ": " . ($err->error_message ?? json_encode($err)) . "\n";
+}
+
+// Tours from this wholesaler
+echo "\n=== Tours from Wholesaler #$wholesalerId ===\n";
+$tours = DB::table('tours')->where('wholesaler_id', $wholesalerId)->limit(5)->get();
+echo "Count: " . DB::table('tours')->where('wholesaler_id', $wholesalerId)->count() . "\n";
 foreach ($tours as $tour) {
     echo "- ID: " . $tour->id . " | Code: " . ($tour->code ?? 'N/A') . " | transport_id: " . ($tour->transport_id ?? 'NULL') . " | country_id: " . ($tour->primary_country_id ?? 'NULL') . "\n";
 }

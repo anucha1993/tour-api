@@ -7,11 +7,13 @@ $app->make('Illuminate\Contracts\Console\Kernel')->bootstrap();
 use App\Jobs\SyncToursJob;
 use Illuminate\Support\Facades\Bus;
 
-echo "=== Test Sync Wholesaler #3 (1 record) ===\n";
+$wholesalerId = isset($argv[1]) ? (int)$argv[1] : 3;
+
+echo "=== Test Sync Wholesaler #$wholesalerId (1 record) ===\n";
 
 // Dispatch and run synchronously
 try {
-    $job = new SyncToursJob(3, null, 'incremental', 1);
+    $job = new SyncToursJob($wholesalerId, null, 'incremental', 1);
     Bus::dispatchSync($job);
     echo "\n✅ Sync completed successfully!\n";
 } catch (\Exception $e) {
@@ -20,7 +22,7 @@ try {
 }
 
 // Check latest sync log
-$log = \App\Models\SyncLog::where('wholesaler_id', 3)
+$log = \App\Models\SyncLog::where('wholesaler_id', $wholesalerId)
     ->orderBy('id', 'desc')
     ->first();
 

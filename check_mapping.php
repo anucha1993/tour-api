@@ -48,7 +48,9 @@ if ($mappings->isEmpty()) {
         echo "\n[{$section}] - {$sectionMappings->count()} fields\n";
         foreach ($sectionMappings as $m) {
             $status = $m->is_active ? '✓' : '✗';
-            echo "  {$status} {$m->our_field} ← {$m->their_field_path}\n";
+            $transform = $m->transform_type ? " [{$m->transform_type}]" : "";
+            $config = $m->transform_config ? " config=" . json_encode($m->transform_config) : "";
+            echo "  {$status} {$m->our_field} ← {$m->their_field_path}{$transform}{$config}\n";
         }
     }
 }
