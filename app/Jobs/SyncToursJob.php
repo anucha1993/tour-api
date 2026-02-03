@@ -1404,13 +1404,18 @@ class SyncToursJob implements ShouldQueue
         // Step 1: Convert <br>, <br/>, <br /> to newline first
         $cleaned = preg_replace('/<br\s*\/?>/i', "\n", $text);
         
-        // Step 2: Remove all HTML tags
+        // Step 2: Remove all HTML tags (including malformed ones)
+        $cleaned = preg_replace('/<[^>]*>/', '', $cleaned);
         $cleaned = strip_tags($cleaned);
         
-        // Step 3: Decode HTML entities
+        // Step 3: Remove any remaining HTML fragments like /> or <
+        $cleaned = preg_replace('/\s*\/?>/', '', $cleaned);
+        $cleaned = str_replace(['<', '>'], '', $cleaned);
+        
+        // Step 4: Decode HTML entities
         $cleaned = html_entity_decode($cleaned, ENT_QUOTES | ENT_HTML5, 'UTF-8');
         
-        // Step 4: Remove emojis - Comprehensive emoji removal pattern
+        // Step 5: Remove emojis - Comprehensive emoji removal pattern
         $emojiPatterns = [
             // Emoji presentation sequences (emoji + variation selector)
             '/[\x{1F000}-\x{1FFFF}]/u',
