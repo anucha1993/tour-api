@@ -1502,14 +1502,8 @@ class SyncToursJob implements ShouldQueue
     protected function removeEmojisFromArray(array $data, array $skipFields = []): array
     {
         // Fields to skip cleaning (keep original HTML formatting)
-        $defaultSkipFields = [
-            'inclusions',
-            'exclusions', 
-            'conditions',
-            'tour_inclusions',
-            'tour_exclusions',
-            'tour_conditions',
-        ];
+        // Currently empty - all fields will be cleaned
+        $defaultSkipFields = [];
         
         // Fields that are arrays of strings - need to filter empty/short items after cleaning
         $arrayStringFields = [
