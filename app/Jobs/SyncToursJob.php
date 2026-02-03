@@ -12,6 +12,7 @@ use App\Models\Tour;
 use App\Models\TourItinerary;
 use App\Models\WholesalerApiConfig;
 use App\Models\WholesalerFieldMapping;
+use App\Services\CityExtractorService;
 use App\Services\CloudflareImagesService;
 use App\Services\NotificationService;
 use App\Services\PdfBrandingService;
@@ -635,6 +636,9 @@ class SyncToursJob implements ShouldQueue
             try {
                 DB::beginTransaction();
 
+                // Remove emojis from all text fields
+                $tourData = $this->removeEmojisFromArray($tourData);
+
                 $result = $this->processSingleTour($tourData, $config, $pdfBranding, $wholesalerCode, $syncLog);
                 
                 if ($result['action'] === 'created') {
@@ -893,6 +897,49 @@ class SyncToursJob implements ShouldQueue
             } else {
                 // Update existing to be primary
                 $tour->countries()->updateExistingPivot($countryId, ['is_primary' => true]);
+            }
+        }
+        
+        // Extract cities from tour title if enabled
+        $tourTitle = $tour->title ?? $tour->name ?? null;
+        if ($config->extract_cities_from_name && !empty($tourTitle)) {
+            $extractedCities = CityExtractorService::extract($tourTitle);
+            
+            if ($extractedCities->isNotEmpty()) {
+                // Get existing cities for this tour (Many-to-Many through tour_cities)
+                $existingCityIds = $tour->cities()->pluck('cities.id')->toArray();
+                
+                // Prepare cities to sync
+                $citiesToSync = [];
+                $sortOrder = $tour->cities()->max('tour_cities.sort_order') ?? 0;
+                
+                // Keep existing cities with their pivot data
+                foreach ($tour->cities as $existingCity) {
+                    $citiesToSync[$existingCity->id] = [
+                        'country_id' => $existingCity->pivot->country_id ?? $existingCity->country_id,
+                        'sort_order' => $existingCity->pivot->sort_order,
+                    ];
+                }
+                
+                // Add new extracted cities
+                foreach ($extractedCities as $city) {
+                    if (!in_array($city->id, $existingCityIds)) {
+                        $sortOrder++;
+                        $citiesToSync[$city->id] = [
+                            'country_id' => $city->country_id,
+                            'sort_order' => $sortOrder,
+                        ];
+                    }
+                }
+                
+                // Sync cities (Many-to-Many)
+                $tour->cities()->sync($citiesToSync);
+                
+                Log::info('SyncToursJob: Extracted cities from tour name', [
+                    'tour_id' => $tour->id,
+                    'tour_title' => $tourTitle,
+                    'cities_found' => $extractedCities->pluck('name_th')->toArray(),
+                ]);
             }
         }
         
@@ -1343,5 +1390,111 @@ class SyncToursJob implements ShouldQueue
             default:
                 return $value;
         }
+    }
+
+    /**
+     * Clean text: remove HTML tags and emojis
+     */
+    protected function cleanText(?string $text): ?string
+    {
+        if ($text === null) {
+            return null;
+        }
+
+        // Step 1: Convert <br>, <br/>, <br /> to newline first
+        $cleaned = preg_replace('/<br\s*\/?>/i', "\n", $text);
+        
+        // Step 2: Remove all HTML tags
+        $cleaned = strip_tags($cleaned);
+        
+        // Step 3: Decode HTML entities
+        $cleaned = html_entity_decode($cleaned, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        
+        // Step 4: Remove emojis - Comprehensive emoji removal pattern
+        $emojiPatterns = [
+            // Emoji presentation sequences (emoji + variation selector)
+            '/[\x{1F000}-\x{1FFFF}]/u',
+            // Miscellaneous Symbols and Pictographs
+            '/[\x{2600}-\x{27BF}]/u',
+            // Supplemental Symbols
+            '/[\x{1F900}-\x{1F9FF}]/u',
+            // Transport and Map Symbols  
+            '/[\x{1F680}-\x{1F6FF}]/u',
+            // Emoticons
+            '/[\x{1F600}-\x{1F64F}]/u',
+            // Misc Symbols
+            '/[\x{2300}-\x{23FF}]/u',
+            // Dingbats
+            '/[\x{2700}-\x{27BF}]/u',
+            // Regional Indicator Symbols (flags)
+            '/[\x{1F1E0}-\x{1F1FF}]/u',
+            // Variation Selectors
+            '/[\x{FE00}-\x{FE0F}]/u',
+            // Zero Width Joiner
+            '/[\x{200D}]/u',
+            // Geometric shapes
+            '/[\x{25A0}-\x{25FF}]/u',
+            // Arrows
+            '/[\x{2190}-\x{21FF}]/u',
+            // Enclosed Alphanumerics
+            '/[\x{2460}-\x{24FF}]/u',
+            // Box Drawing and Block Elements
+            '/[\x{2500}-\x{259F}]/u',
+            // CJK Symbols
+            '/[\x{3000}-\x{303F}]/u',
+            // Enclosed CJK Letters
+            '/[\x{3200}-\x{32FF}]/u',
+            // Red/black triangles and similar symbols
+            '/[\x{25B2}-\x{25BC}]/u',
+            '/[\x{25C6}-\x{25CF}]/u',
+            '/[\x{25EF}]/u',
+            // Tags block (E0000-E007F)
+            '/[\x{E0000}-\x{E007F}]/u',
+            // Skin tone modifiers
+            '/[\x{1F3FB}-\x{1F3FF}]/u',
+        ];
+
+        foreach ($emojiPatterns as $pattern) {
+            $cleaned = preg_replace($pattern, '', $cleaned);
+        }
+        
+        // Step 5: Remove \r\n and normalize whitespace
+        $cleaned = str_replace(["\r\n", "\r"], "\n", $cleaned);
+        
+        // Step 6: Clean up multiple newlines (keep max 2)
+        $cleaned = preg_replace('/\n{3,}/', "\n\n", $cleaned);
+        
+        // Step 7: Clean up multiple spaces (but preserve newlines)
+        $cleaned = preg_replace('/[ \t]+/', ' ', $cleaned);
+        
+        // Step 8: Trim each line
+        $lines = explode("\n", $cleaned);
+        $lines = array_map('trim', $lines);
+        $cleaned = implode("\n", $lines);
+        
+        return trim($cleaned);
+    }
+
+    /**
+     * Remove emojis from a string (alias for backward compatibility)
+     */
+    protected function removeEmojis(?string $text): ?string
+    {
+        return $this->cleanText($text);
+    }
+
+    /**
+     * Clean all string values in an array recursively (remove HTML and emojis)
+     */
+    protected function removeEmojisFromArray(array $data): array
+    {
+        foreach ($data as $key => $value) {
+            if (is_string($value)) {
+                $data[$key] = $this->cleanText($value);
+            } elseif (is_array($value)) {
+                $data[$key] = $this->removeEmojisFromArray($value);
+            }
+        }
+        return $data;
     }
 }

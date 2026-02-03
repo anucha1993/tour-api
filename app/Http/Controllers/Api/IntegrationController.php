@@ -206,6 +206,15 @@ class IntegrationController extends Controller
             'auth_credentials.token' => 'required_if:auth_type,bearer',
             'auth_credentials.username' => 'required_if:auth_type,basic',
             'auth_credentials.password' => 'required_if:auth_type,basic',
+            'auth_credentials.headers' => 'nullable|array', // For custom auth type
+            'auth_credentials.headers.*' => 'nullable|string',
+            'auth_credentials.token_url' => 'nullable|string|max:500', // For OAuth2
+            'auth_credentials.oauth_fields' => 'nullable|array',
+            'auth_credentials.response_token_field' => 'nullable|string|max:100',
+            'auth_credentials.two_phase_sync' => 'nullable|boolean',
+            'auth_credentials.periods_endpoint' => 'nullable|string|max:500',
+            'auth_credentials.tour_id_field' => 'nullable|string|max:100',
+            'auth_credentials.periods_field_name' => 'nullable|string|max:100',
             'rate_limit_per_minute' => 'nullable|integer|min:1|max:1000',
             'request_timeout_seconds' => 'nullable|integer|min:5|max:120',
             'sync_enabled' => 'nullable|boolean',
@@ -292,6 +301,8 @@ class IntegrationController extends Controller
             'notification_emails' => 'nullable|array',
             'notification_emails.*' => 'email',
             'notification_types' => 'nullable|array',
+            // City extraction
+            'extract_cities_from_name' => 'nullable|boolean',
         ]);
 
         if ($validator->fails()) {

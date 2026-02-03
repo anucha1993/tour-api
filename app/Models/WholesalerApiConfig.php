@@ -58,6 +58,8 @@ class WholesalerApiConfig extends Model
         'notifications_enabled',
         'notification_emails',
         'notification_types',
+        // City Extraction
+        'extract_cities_from_name',
     ];
 
     protected $casts = [
@@ -74,6 +76,7 @@ class WholesalerApiConfig extends Model
         'notifications_enabled' => 'boolean',
         'notification_emails' => 'array',
         'notification_types' => 'array',
+        'extract_cities_from_name' => 'boolean',
     ];
 
     /**
