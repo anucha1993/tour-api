@@ -1196,7 +1196,7 @@ class IntegrationController extends Controller
             $departures = $transformedData['departure'] ?? [];
             
             // กำหนด departureFields ก่อนใช้งาน
-            $departureFields = ['external_id', 'departure_date', 'return_date', 'capacity', 'available_seats', 'status', 'guarantee_status', 'currency', 'price_adult', 'discount_adult', 'price_child', 'discount_child_bed', 'price_child_nobed', 'discount_child_nobed', 'price_infant', 'price_joinland', 'price_single_surcharge', 'discount_single', 'deposit', 'commission_agent', 'commission_sale', 'cancellation_policy', 'refund_policy', 'notes', 'ttl_minutes'];
+            $departureFields = ['external_id', 'departure_date', 'return_date', 'capacity', 'available_seats', 'status', 'guarantee_status', 'currency', 'price_adult', 'discount_adult', 'price_child', 'discount_child_bed', 'price_child_nobed', 'discount_child_nobed', 'price_infant', 'price_joinland', 'price_single', 'discount_single', 'deposit', 'commission_agent', 'commission_sale', 'cancellation_policy', 'refund_policy', 'notes', 'ttl_minutes'];
             
             // รวบรวม fields ที่เปิดใช้งานใน departure section พร้อม mapping info
             $departureEnabledFields = [];

@@ -275,7 +275,7 @@
 | price_child_nobed | DECIMAL(10,2) | | เด็กไม่มีเตียง |
 | price_infant | DECIMAL(10,2) | | ทารก |
 | price_joinland | DECIMAL(10,2) | | ไม่รวมตั๋ว |
-| price_single_surcharge | DECIMAL(10,2) | | พักเดี่ยวเพิ่ม |
+| price_single | DECIMAL(10,2) | | พักเดี่ยวเพิ่ม |
 | deposit | DECIMAL(10,2) | | มัดจำ |
 | commission_agent | DECIMAL(10,2) | | ค่าคอมตัวแทน |
 | commission_sale | DECIMAL(10,2) | | ค่าคอมขาย |

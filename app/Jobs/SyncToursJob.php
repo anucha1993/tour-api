@@ -1463,19 +1463,26 @@ class SyncToursJob implements ShouldQueue
             $cleaned = preg_replace($pattern, '', $cleaned);
         }
         
-        // Step 5: Remove \r\n and normalize whitespace
+        // Step 6: Remove \r\n and normalize whitespace
         $cleaned = str_replace(["\r\n", "\r"], "\n", $cleaned);
         
-        // Step 6: Clean up multiple newlines (keep max 2)
+        // Step 7: Clean up multiple newlines (keep max 2)
         $cleaned = preg_replace('/\n{3,}/', "\n\n", $cleaned);
         
-        // Step 7: Clean up multiple spaces (but preserve newlines)
-        $cleaned = preg_replace('/[ \t]+/', ' ', $cleaned);
-        
-        // Step 8: Trim each line
+        // Step 8: Trim each line and remove leading spaces after emoji removal
         $lines = explode("\n", $cleaned);
         $lines = array_map('trim', $lines);
+        
+        // Step 9: Remove empty lines at start and end, but keep one empty line between paragraphs
+        $lines = array_filter($lines, fn($line, $index) => 
+            $line !== '' || ($index > 0 && $index < count($lines) - 1), 
+            ARRAY_FILTER_USE_BOTH
+        );
+        
         $cleaned = implode("\n", $lines);
+        
+        // Step 10: Clean up multiple spaces within text
+        $cleaned = preg_replace('/[ \t]+/', ' ', $cleaned);
         
         return trim($cleaned);
     }
@@ -1490,14 +1497,32 @@ class SyncToursJob implements ShouldQueue
 
     /**
      * Clean all string values in an array recursively (remove HTML and emojis)
+     * Skip certain fields that should keep their original formatting
      */
-    protected function removeEmojisFromArray(array $data): array
+    protected function removeEmojisFromArray(array $data, array $skipFields = []): array
     {
+        // Fields to skip cleaning (keep original HTML formatting)
+        $defaultSkipFields = [
+            'inclusions',
+            'exclusions', 
+            'conditions',
+            'tour_inclusions',
+            'tour_exclusions',
+            'tour_conditions',
+        ];
+        
+        $skipFields = array_merge($defaultSkipFields, $skipFields);
+        
         foreach ($data as $key => $value) {
+            // Skip specified fields - keep original value
+            if (in_array($key, $skipFields)) {
+                continue;
+            }
+            
             if (is_string($value)) {
                 $data[$key] = $this->cleanText($value);
             } elseif (is_array($value)) {
-                $data[$key] = $this->removeEmojisFromArray($value);
+                $data[$key] = $this->removeEmojisFromArray($value, $skipFields);
             }
         }
         return $data;

@@ -333,7 +333,7 @@ class WholesalerSyncController extends Controller
             'price_child' => $depData['price_child'] ?? null,
             'price_child_no_bed' => $depData['price_child_nobed'] ?? $depData['price_child_no_bed'] ?? null,
             'price_infant' => $depData['price_infant'] ?? null,
-            'price_single_supplement' => $depData['price_single_surcharge'] ?? $depData['price_single_supplement'] ?? null,
+            'price_single_supplement' => $depData['price_single'] ?? $depData['price_single_supplement'] ?? null,
             'currency' => $depData['currency'] ?? 'THB',
         ];
 

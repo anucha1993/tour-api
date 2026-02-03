@@ -66,7 +66,7 @@ class PeriodController extends Controller
             'discount_child_nobed' => 'nullable|numeric|min:0',
             'price_infant' => 'nullable|numeric|min:0',
             'price_joinland' => 'nullable|numeric|min:0',
-            'price_single_surcharge' => 'nullable|numeric|min:0',
+            'price_single' => 'nullable|numeric|min:0',
             'discount_single' => 'nullable|numeric|min:0',
             'deposit' => 'nullable|numeric|min:0',
             'cancellation_policy' => 'required|string',
@@ -102,7 +102,7 @@ class PeriodController extends Controller
             'discount_child_nobed' => $validated['discount_child_nobed'] ?? 0,
             'price_infant' => $validated['price_infant'] ?? null,
             'price_joinland' => $validated['price_joinland'] ?? null,
-            'price_single_surcharge' => $validated['price_single_surcharge'] ?? null,
+            'price_single' => $validated['price_single'] ?? null,
             'discount_single' => $validated['discount_single'] ?? 0,
             'deposit' => $validated['deposit'] ?? null,
             'cancellation_policy' => $validated['cancellation_policy'],
@@ -124,7 +124,7 @@ class PeriodController extends Controller
             $validated['discount_child_nobed'],
             $validated['price_infant'],
             $validated['price_joinland'],
-            $validated['price_single_surcharge'],
+            $validated['price_single'],
             $validated['discount_single'],
             $validated['deposit'],
             $validated['cancellation_policy'],
@@ -189,7 +189,7 @@ class PeriodController extends Controller
             'discount_child_nobed' => 'nullable|numeric|min:0',
             'price_infant' => 'nullable|numeric|min:0',
             'price_joinland' => 'nullable|numeric|min:0',
-            'price_single_surcharge' => 'nullable|numeric|min:0',
+            'price_single' => 'nullable|numeric|min:0',
             'discount_single' => 'nullable|numeric|min:0',
             'deposit' => 'nullable|numeric|min:0',
             'cancellation_policy' => 'nullable|string',
@@ -210,7 +210,7 @@ class PeriodController extends Controller
         }
 
         // Extract offer data
-        $offerFields = ['price_adult', 'discount_adult', 'price_child', 'discount_child_bed', 'price_child_nobed', 'discount_child_nobed', 'price_infant', 'price_joinland', 'price_single_surcharge', 'discount_single', 'deposit', 'cancellation_policy', 'notes', 'promo_name', 'promo_start_date', 'promo_end_date', 'promo_quota', 'promotion_id'];
+        $offerFields = ['price_adult', 'discount_adult', 'price_child', 'discount_child_bed', 'price_child_nobed', 'discount_child_nobed', 'price_infant', 'price_joinland', 'price_single', 'discount_single', 'deposit', 'cancellation_policy', 'notes', 'promo_name', 'promo_start_date', 'promo_end_date', 'promo_quota', 'promotion_id'];
         $offerData = [];
         foreach ($offerFields as $field) {
             if (array_key_exists($field, $validated)) {

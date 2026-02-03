@@ -353,7 +353,7 @@ class TourSeeder extends Seeder
                     'price_child' => round($periodPrice * 0.8, -2),
                     'price_child_nobed' => round($periodPrice * 0.7, -2),
                     'price_infant' => round($periodPrice * 0.3, -2),
-                    'price_single_surcharge' => round($periodPrice * 0.3, -2),
+                    'price_single' => round($periodPrice * 0.3, -2),
                     'deposit' => min(10000, round($periodPrice * 0.3, -2)),
                     'commission_agent' => round($periodPrice * 0.05, -2),
                     'commission_sale' => round($periodPrice * 0.02, -2),

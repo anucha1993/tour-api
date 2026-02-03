@@ -28,7 +28,7 @@ return new class extends Migration
         Schema::table('offers', function (Blueprint $table) {
             // ราคาลดสำหรับแต่ละประเภท (0 = ไม่มีส่วนลด)
             $table->decimal('discount_adult', 10, 2)->default(0)->after('price_adult')->comment('ส่วนลดผู้ใหญ่พัก 2-3');
-            $table->decimal('discount_single', 10, 2)->default(0)->after('price_single_surcharge')->comment('ส่วนลดพักเดี่ยว');
+            $table->decimal('discount_single', 10, 2)->default(0)->after('price_single')->comment('ส่วนลดพักเดี่ยว');
             $table->decimal('discount_child_bed', 10, 2)->default(0)->after('price_child')->comment('ส่วนลดเด็กมีเตียง');
             $table->decimal('discount_child_nobed', 10, 2)->default(0)->after('price_child_nobed')->comment('ส่วนลดเด็กไม่มีเตียง');
             

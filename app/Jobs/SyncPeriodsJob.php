@@ -328,7 +328,7 @@ class SyncPeriodsJob implements ShouldQueue
             'price_adult' => $data['price_adult'] ?? $data['price'] ?? 0,
             'price_child' => $data['price_child'] ?? null,
             'price_child_nobed' => $data['price_child_nobed'] ?? null,
-            'price_single_surcharge' => $data['price_single_surcharge'] ?? null,
+            'price_single' => $data['price_single'] ?? null,
             'discount_adult' => $data['discount_adult'] ?? 0,
             'discount_child_bed' => $data['discount_child_bed'] ?? 0,
             'discount_child_nobed' => $data['discount_child_nobed'] ?? 0,

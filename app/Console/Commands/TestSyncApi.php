@@ -47,7 +47,7 @@ class TestSyncApi extends Command
                     'price_adult' => 14990,
                     'price_child' => 14990,
                     'price_child_nobed' => 14990,
-                    'price_single_surcharge' => 4000
+                    'price_single' => 4000
                 ],
                 [
                     'external_id' => 2418,
@@ -59,7 +59,7 @@ class TestSyncApi extends Command
                     'price_adult' => 14990,
                     'price_child' => 14990,
                     'price_child_nobed' => 14990,
-                    'price_single_surcharge' => 4000
+                    'price_single' => 4000
                 ]
             ],
             'content' => [

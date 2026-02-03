@@ -207,7 +207,7 @@ return new class extends Migration
             $table->decimal('price_child_nobed', 10, 2)->nullable()->comment('เด็กไม่เสริมเตียง');
             $table->decimal('price_infant', 10, 2)->nullable()->comment('ทารก');
             $table->decimal('price_joinland', 10, 2)->nullable()->comment('ไม่รวมตั๋วเครื่องบิน');
-            $table->decimal('price_single_surcharge', 10, 2)->nullable()->comment('พักเดี่ยวเพิ่ม');
+            $table->decimal('price_single', 10, 2)->nullable()->comment('พักเดี่ยวเพิ่ม');
             $table->decimal('deposit', 10, 2)->nullable()->comment('มัดจำ');
             
             // Commissions
