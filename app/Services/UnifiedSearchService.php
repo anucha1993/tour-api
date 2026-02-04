@@ -111,6 +111,7 @@ class UnifiedSearchService
             $transformed = $transformService->transformToUnified($tour, 'tour');
             $transformed['_wholesaler_id'] = $wholesalerId;
             $transformed['_wholesaler_name'] = $config->wholesaler?->name;
+            $transformed['_integration_id'] = $config->id; // Add integration_id for frontend lookup
 
             // Extract airline from tour_airline if available (for APIs like GO365)
             if (!isset($transformed['transport_id']) && isset($tour['tour_airline'])) {
