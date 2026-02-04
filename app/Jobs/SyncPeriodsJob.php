@@ -6,6 +6,8 @@ use App\Models\Tour;
 use App\Models\Period;
 use App\Models\Offer;
 use App\Models\Setting;
+use App\Models\Transport;
+use App\Models\TourItinerary;
 use App\Models\WholesalerApiConfig;
 use App\Models\WholesalerFieldMapping;
 use App\Models\SyncLog;
@@ -131,19 +133,9 @@ class SyncPeriodsJob implements ShouldQueue
             // Process each period
             $stats = ['created' => 0, 'updated' => 0, 'skipped' => 0];
             
-            foreach ($periods as $index => $rawPeriod) {
+            foreach ($periods as $rawPeriod) {
                 try {
                     $periodData = $this->transformPeriodData($rawPeriod, $mappings, $departuresPath);
-                    
-                    // Log first period's transformed data
-                    if ($index === 0) {
-                        Log::debug('SyncPeriodsJob: Transformed period data', [
-                            'tour_id' => $this->tourId,
-                            'raw_keys' => array_keys($rawPeriod),
-                            'transformed_data' => $periodData,
-                        ]);
-                    }
-                    
                     $this->syncPeriod($tour, $periodData, $stats);
                 } catch (\Exception $e) {
                     Log::error('SyncPeriodsJob: Error processing period', [
@@ -154,12 +146,22 @@ class SyncPeriodsJob implements ShouldQueue
                 }
             }
 
+            // Sync Itinerary (from same API response)
+            $itinerariesPath = $dataStructure['itineraries']['path'] ?? null;
+            $rawData = $result->periods ?? [];
+            $itineraryStats = $this->syncItineraries($tour, $rawData, $itinerariesPath, $config);
+
+            // Sync Transport (from tour_airline in API response)
+            $transportStats = $this->syncTransport($tour, $rawData);
+
             // Update tour's aggregated fields
             $this->updateTourAggregates($tour);
 
             Log::info('SyncPeriodsJob: Completed', [
                 'tour_id' => $this->tourId,
                 'stats' => $stats,
+                'itineraries' => $itineraryStats,
+                'transport' => $transportStats,
             ]);
 
         } catch (\Exception $e) {
@@ -236,25 +238,12 @@ class SyncPeriodsJob implements ShouldQueue
                 continue;
             }
             
-            $originalPath = $fieldPath;
-            
             // Clean path if we have a base path
             if ($basePath) {
                 $fieldPath = $this->cleanNestedPath($fieldPath, $basePath);
             }
             
             $value = $this->extractValue($rawPeriod, $fieldPath);
-            
-            // Log for debugging
-            if (in_array($mapping->our_field, ['start_date', 'price_adult', 'external_id'])) {
-                Log::debug('SyncPeriodsJob: Extract field', [
-                    'field' => $mapping->our_field,
-                    'original_path' => $originalPath,
-                    'cleaned_path' => $fieldPath,
-                    'raw_keys' => array_keys($rawPeriod),
-                    'value' => $value,
-                ]);
-            }
             
             if ($value !== null) {
                 $value = $this->applyTransform($value, $mapping->transform_type, $mapping->transform_config);
@@ -540,5 +529,267 @@ class SyncPeriodsJob implements ShouldQueue
         ];
 
         return $statusMap[strtolower($status)] ?? Period::STATUS_OPEN;
+    }
+
+    /**
+     * Sync itineraries from API response
+     * 
+     * @param Tour $tour
+     * @param array $rawData Raw periods data from API
+     * @param string|null $itinerariesPath Path to itinerary data (e.g., "periods[].tour_daily[].day_list[]")
+     * @param WholesalerApiConfig $config
+     * @return array Stats
+     */
+    protected function syncItineraries(Tour $tour, array $rawData, ?string $itinerariesPath, WholesalerApiConfig $config): array
+    {
+        $stats = ['created' => 0, 'updated' => 0, 'skipped' => 0];
+        
+        if (empty($rawData) || !$itinerariesPath) {
+            return $stats;
+        }
+
+        // Get itinerary mappings
+        $mappings = WholesalerFieldMapping::where('wholesaler_id', $this->wholesalerId)
+            ->where('section_name', 'itinerary')
+            ->where('is_active', true)
+            ->get();
+
+        if ($mappings->isEmpty()) {
+            Log::debug('SyncPeriodsJob: No itinerary mappings configured', [
+                'tour_id' => $this->tourId,
+            ]);
+            return $stats;
+        }
+
+        // Flatten itinerary data from nested path
+        // For GO365: periods[].tour_daily[].day_list[] -> flatten tour_daily from each period
+        $itineraryItems = $this->flattenItineraryPath($rawData, $itinerariesPath);
+        
+        if (empty($itineraryItems)) {
+            Log::debug('SyncPeriodsJob: No itinerary items found', [
+                'tour_id' => $this->tourId,
+                'path' => $itinerariesPath,
+            ]);
+            return $stats;
+        }
+
+        Log::info('SyncPeriodsJob: Syncing itineraries', [
+            'tour_id' => $this->tourId,
+            'items_count' => count($itineraryItems),
+        ]);
+
+        // Delete existing itineraries for this tour (from API source)
+        TourItinerary::where('tour_id', $tour->id)
+            ->where('data_source', 'api')
+            ->delete();
+
+        // Process each itinerary item
+        $dayNumber = 1;
+        foreach ($itineraryItems as $item) {
+            try {
+                $itinData = $this->transformItineraryData($item, $mappings, $itinerariesPath);
+                
+                // Set day number if not in data
+                if (empty($itinData['day_number'])) {
+                    $itinData['day_number'] = $dayNumber;
+                }
+                
+                TourItinerary::create([
+                    'tour_id' => $tour->id,
+                    'data_source' => 'api',
+                    'day_number' => $itinData['day_number'] ?? $dayNumber,
+                    'title' => $itinData['title'] ?? "Day {$dayNumber}",
+                    'description' => $itinData['description'] ?? null,
+                    'places' => $itinData['places'] ?? null,
+                    'has_breakfast' => $this->parseMealFlag($itinData['has_breakfast'] ?? null, 'breakfast'),
+                    'has_lunch' => $this->parseMealFlag($itinData['has_lunch'] ?? null, 'lunch'),
+                    'has_dinner' => $this->parseMealFlag($itinData['has_dinner'] ?? null, 'dinner'),
+                    'meals_note' => $itinData['meals_note'] ?? null,
+                    'accommodation' => $itinData['accommodation'] ?? null,
+                    'hotel_star' => $itinData['hotel_star'] ?? null,
+                    'images' => $itinData['images'] ?? null,
+                    'sort_order' => $dayNumber,
+                ]);
+                
+                $stats['created']++;
+                $dayNumber++;
+            } catch (\Exception $e) {
+                Log::error('SyncPeriodsJob: Error creating itinerary', [
+                    'tour_id' => $this->tourId,
+                    'day_number' => $dayNumber,
+                    'error' => $e->getMessage(),
+                ]);
+                $stats['skipped']++;
+            }
+        }
+
+        return $stats;
+    }
+
+    /**
+     * Flatten itinerary path from nested structure
+     * e.g., "periods[].tour_daily[].day_list[]" -> get all day_list items
+     */
+    protected function flattenItineraryPath(array $data, string $path): array
+    {
+        // Remove "periods[]." prefix since we're already at periods level
+        $path = preg_replace('/^[Pp]eriods\[\]\./', '', $path);
+        
+        // Split remaining path: "tour_daily[].day_list[]"
+        $segments = preg_split('/\[\]\.?/', $path);
+        $segments = array_filter($segments, fn($s) => !empty($s));
+        
+        // Start with data
+        $result = $data;
+        
+        foreach ($segments as $segment) {
+            $newResult = [];
+            foreach ($result as $item) {
+                if (isset($item[$segment]) && is_array($item[$segment])) {
+                    foreach ($item[$segment] as $nested) {
+                        if (is_array($nested)) {
+                            $newResult[] = $nested;
+                        }
+                    }
+                }
+            }
+            $result = $newResult;
+        }
+        
+        return $result;
+    }
+
+    /**
+     * Transform raw itinerary data using field mappings
+     */
+    protected function transformItineraryData(array $rawItem, $mappings, ?string $basePath = null): array
+    {
+        $result = [];
+
+        foreach ($mappings as $mapping) {
+            $fieldPath = $mapping->their_field_path ?? $mapping->their_field ?? null;
+            if (empty($fieldPath)) {
+                continue;
+            }
+            
+            // Clean path - remove base path prefix
+            if ($basePath) {
+                $fieldPath = $this->cleanNestedPath($fieldPath, $basePath);
+            }
+            
+            $value = $this->extractValue($rawItem, $fieldPath);
+            
+            if ($value !== null) {
+                $value = $this->applyTransform($value, $mapping->transform_type, $mapping->transform_config);
+            }
+            
+            if ($value === null && !empty($mapping->default_value)) {
+                $value = $mapping->default_value;
+            }
+
+            $result[$mapping->our_field] = $value;
+        }
+
+        return $result;
+    }
+
+    /**
+     * Parse meal flag from various formats
+     */
+    protected function parseMealFlag($value, string $mealType): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+        
+        if (is_numeric($value)) {
+            return (bool) $value;
+        }
+        
+        if (is_string($value)) {
+            // Check if string contains meal keywords
+            $keywords = [
+                'breakfast' => ['breakfast', 'เช้า', 'อาหารเช้า', 'B'],
+                'lunch' => ['lunch', 'กลางวัน', 'อาหารกลางวัน', 'L'],
+                'dinner' => ['dinner', 'เย็น', 'อาหารเย็น', 'D'],
+            ];
+            
+            if (isset($keywords[$mealType])) {
+                foreach ($keywords[$mealType] as $keyword) {
+                    if (stripos($value, $keyword) !== false) {
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Sync transport from API response
+     * 
+     * @param Tour $tour
+     * @param array $rawData Raw periods data from API
+     * @return array Stats
+     */
+    protected function syncTransport(Tour $tour, array $rawData): array
+    {
+        $stats = ['updated' => false, 'airline' => null];
+        
+        if (empty($rawData)) {
+            return $stats;
+        }
+
+        // Look for tour_airline in the first period (tour-level data)
+        $firstPeriod = $rawData[0] ?? [];
+        $airlineData = $firstPeriod['tour_airline'] ?? null;
+
+        if (empty($airlineData)) {
+            // Try to get from period_airline in tour_period
+            $tourPeriods = $firstPeriod['tour_period'] ?? [];
+            if (!empty($tourPeriods)) {
+                $airlineData = $tourPeriods[0]['period_airline'] ?? null;
+            }
+        }
+
+        if (empty($airlineData)) {
+            return $stats;
+        }
+
+        // Get airline code (IATA)
+        $airlineCode = $airlineData['airline_iata'] ?? null;
+        $airlineName = $airlineData['airline_name'] ?? null;
+
+        if (!$airlineCode && !$airlineName) {
+            return $stats;
+        }
+
+        // Look up transport in database
+        $transport = null;
+        
+        if ($airlineCode) {
+            $transport = Transport::where('code', $airlineCode)->first();
+        }
+        
+        if (!$transport && $airlineName) {
+            $transport = Transport::where('name_en', 'LIKE', "%{$airlineName}%")
+                ->orWhere('name_th', 'LIKE', "%{$airlineName}%")
+                ->first();
+        }
+
+        if ($transport && $tour->transport_id !== $transport->id) {
+            $tour->update(['transport_id' => $transport->id]);
+            $stats['updated'] = true;
+            $stats['airline'] = $airlineCode ?? $airlineName;
+            
+            Log::info('SyncPeriodsJob: Updated transport', [
+                'tour_id' => $this->tourId,
+                'transport_id' => $transport->id,
+                'airline' => $stats['airline'],
+            ]);
+        }
+
+        return $stats;
     }
 }

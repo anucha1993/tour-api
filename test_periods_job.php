@@ -44,8 +44,13 @@ try {
 }
 
 // Check periods
-$periods = \App\Models\Period::where('tour_id', $tour->id)->get();
+$periods = \App\Models\Period::where('tour_id', $tour->id)
+    ->with('offer')
+    ->orderBy('start_date')
+    ->get();
+    
 echo "\nPeriods: " . $periods->count() . "\n";
-foreach ($periods->take(3) as $p) {
-    echo "  - {$p->departure_date} -> {$p->return_date} (Price: {$p->price_adult})\n";
+foreach ($periods->take(5) as $p) {
+    $price = $p->offer ? $p->offer->price_adult : 'N/A';
+    echo "  - {$p->start_date} -> {$p->end_date} (Price: {$price})\n";
 }
