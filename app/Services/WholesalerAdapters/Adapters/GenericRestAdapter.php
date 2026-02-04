@@ -87,7 +87,12 @@ class GenericRestAdapter extends BaseAdapter
     public function fetchTourDetail(string $code): ?array
     {
         try {
-            $endpoint = str_replace('{code}', $code, $this->endpoints['tour_detail']);
+            // Try tour_detail endpoint first, fallback to periods endpoint
+            $endpoint = $this->endpoints['tour_detail'] ?? $this->endpoints['periods'] ?? '/{code}';
+            
+            // Replace various placeholder formats
+            $endpoint = str_replace(['{code}', '{tour_id}', '{id}'], $code, $endpoint);
+            
             $response = $this->request('GET', $endpoint, [], 'fetch_detail');
 
             return $response['data'] ?? $response['tour'] ?? $response;
