@@ -226,12 +226,25 @@ class SyncPeriodsJob implements ShouldQueue
                 continue;
             }
             
+            $originalPath = $fieldPath;
+            
             // Clean path if we have a base path
             if ($basePath) {
                 $fieldPath = $this->cleanNestedPath($fieldPath, $basePath);
             }
             
             $value = $this->extractValue($rawPeriod, $fieldPath);
+            
+            // Log for debugging
+            if (in_array($mapping->our_field, ['start_date', 'price_adult', 'external_id'])) {
+                Log::debug('SyncPeriodsJob: Extract field', [
+                    'field' => $mapping->our_field,
+                    'original_path' => $originalPath,
+                    'cleaned_path' => $fieldPath,
+                    'raw_keys' => array_keys($rawPeriod),
+                    'value' => $value,
+                ]);
+            }
             
             if ($value !== null) {
                 $value = $this->applyTransform($value, $mapping->transform_type, $mapping->transform_config);
