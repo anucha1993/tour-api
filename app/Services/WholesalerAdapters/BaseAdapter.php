@@ -461,16 +461,33 @@ abstract class BaseAdapter implements AdapterInterface
      */
     protected function executeRequest(string $method, string $endpoint, array $data = []): Response
     {
-        $client = $this->httpClient();
+        // If endpoint is a full URL, use it directly without baseUrl
+        if (str_starts_with($endpoint, 'http://') || str_starts_with($endpoint, 'https://')) {
+            $client = Http::timeout($this->config->request_timeout_seconds)
+                ->connectTimeout($this->config->connect_timeout_seconds)
+                ->withHeaders($this->getDefaultHeaders());
+            
+            // Apply auth
+            $client = $this->applyAuth($client);
+            
+            // For full URL, pass the full URL directly
+            $url = $endpoint;
+        } else {
+            $client = $this->httpClient();
+            $url = $endpoint;
+        }
 
-        return match (strtoupper($method)) {
-            'GET' => $client->get($endpoint, $data),
-            'POST' => $client->post($endpoint, $data),
-            'PUT' => $client->put($endpoint, $data),
-            'PATCH' => $client->patch($endpoint, $data),
-            'DELETE' => $client->delete($endpoint, $data),
+        /** @var Response $response */
+        $response = match (strtoupper($method)) {
+            'GET' => $client->get($url, $data),
+            'POST' => $client->post($url, $data),
+            'PUT' => $client->put($url, $data),
+            'PATCH' => $client->patch($url, $data),
+            'DELETE' => $client->delete($url, $data),
             default => throw new \InvalidArgumentException("Unsupported method: $method"),
         };
+        
+        return $response;
     }
 
     // ═══════════════════════════════════════════════════════════
