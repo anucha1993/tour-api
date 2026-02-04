@@ -112,6 +112,13 @@ class UnifiedSearchService
             $transformed['_wholesaler_id'] = $wholesalerId;
             $transformed['_wholesaler_name'] = $config->wholesaler?->name;
 
+            // Extract airline from tour_airline if available (for APIs like GO365)
+            if (!isset($transformed['transport_id']) && isset($tour['tour_airline'])) {
+                $airline = $tour['tour_airline'];
+                $transformed['transport_id'] = $airline['airline_iata'] ?? $airline['airline_name'] ?? null;
+                $transformed['transport_id_name'] = $airline['airline_name'] ?? null;
+            }
+
             // Check if sync mode is NOT two-phase - periods are inline in tour data
             if ($config->sync_mode !== 'two_phase') {
                 // Get periods array using mapped key (not hardcoded)
@@ -148,6 +155,7 @@ class UnifiedSearchService
 
     /**
      * Fetch and transform periods for two-phase sync
+     * Supports nested path from aggregation_config.data_structure.departures.path
      */
     protected function fetchAndTransformPeriods(
         GenericRestAdapter $adapter,
@@ -164,10 +172,15 @@ class UnifiedSearchService
         }
 
         // Build endpoint with placeholders replaced
+        // Use transformed values first (from mapping), then fallback to raw
         $endpoint = $periodsEndpoint;
         if (preg_match_all('/\{([^}]+)\}/', $periodsEndpoint, $matches)) {
             foreach ($matches[1] as $fieldName) {
-                $value = $rawTour[$fieldName] ?? $rawTour['id'] ?? $rawTour['code'] ?? null;
+                // First try from transformed tour (uses mapping)
+                $value = $transformedTour[$fieldName] 
+                    ?? $rawTour[$fieldName]
+                    ?? $rawTour['tour_' . $fieldName]
+                    ?? null;
                 if ($value !== null) {
                     $endpoint = str_replace('{' . $fieldName . '}', $value, $endpoint);
                 }
@@ -178,16 +191,73 @@ class UnifiedSearchService
         if (!preg_match('/\{[^}]+\}/', $endpoint)) {
             $periodsResult = $adapter->fetchPeriods($endpoint);
             if ($periodsResult->success && !empty($periodsResult->periods)) {
-                // Transform periods
+                // Get nested path from aggregation_config
+                $aggregationConfig = $config->aggregation_config ?? [];
+                $dataStructure = $aggregationConfig['data_structure'] ?? [];
+                $departuresPath = $dataStructure['departures']['path'] ?? null;
+                
+                // Flatten nested periods if needed
+                $periods = $this->flattenNestedPeriods($periodsResult->periods, $departuresPath);
+                
+                // Transform periods (use 'departure' section as that's how mappings are stored)
                 $transformedPeriods = [];
-                foreach ($periodsResult->periods as $period) {
-                    $transformedPeriods[] = $transformService->transformToUnified($period, 'period');
+                foreach ($periods as $period) {
+                    $transformedPeriods[] = $transformService->transformToUnified($period, 'departure');
                 }
                 $transformedTour['periods'] = $transformedPeriods;
             }
         }
 
         return $transformedTour;
+    }
+
+    /**
+     * Flatten nested periods based on data_structure path
+     * e.g., "periods[].tour_period[]" means periods are inside tour_period array
+     */
+    protected function flattenNestedPeriods(array $rawPeriods, ?string $path): array
+    {
+        if (!$path || !str_contains($path, '[]')) {
+            return $rawPeriods;
+        }
+        
+        // Parse path segments: "periods[].tour_period[]" → ["periods", "tour_period"]
+        $segments = array_filter(
+            array_map(fn($s) => rtrim($s, '[]'), explode('.', $path))
+        );
+        
+        // Skip first segment (it's the root array we already have)
+        array_shift($segments);
+        
+        if (empty($segments)) {
+            return $rawPeriods;
+        }
+        
+        // Flatten nested structure
+        $flattened = [];
+        foreach ($rawPeriods as $item) {
+            $nested = $item;
+            foreach ($segments as $segment) {
+                if (isset($nested[$segment]) && is_array($nested[$segment])) {
+                    $nested = $nested[$segment];
+                } else {
+                    $nested = [];
+                    break;
+                }
+            }
+            
+            // If we found an array at the nested path, merge it
+            if (is_array($nested) && !empty($nested)) {
+                // Check if it's a list of items or a single item
+                if (isset($nested[0])) {
+                    $flattened = array_merge($flattened, $nested);
+                } else {
+                    $flattened[] = $nested;
+                }
+            }
+        }
+        
+        return $flattened;
     }
 
     /**
@@ -292,16 +362,12 @@ class UnifiedSearchService
                 $periods = array_map(fn($p) => ['_raw' => $p], $raw['Periods']);
             }
 
-            // Filter by date range
+            // Filter by date range - use unified field names from transform
             if (!empty($searchParams['departure_from'])) {
                 $hasValidPeriod = false;
                 foreach ($periods as $period) {
-                    $pRaw = $period['_raw'] ?? $period;
-                    $depDate = $period['departure_date'] 
-                        ?? $pRaw['PeriodStartDate'] 
-                        ?? $pRaw['departureDate'] 
-                        ?? $pRaw['start_date'] 
-                        ?? null;
+                    // Use unified fields (from transform mapping)
+                    $depDate = $period['start_date'] ?? $period['departure_date'] ?? null;
                     if ($depDate && $depDate >= $searchParams['departure_from']) {
                         $hasValidPeriod = true;
                         break;
@@ -315,12 +381,7 @@ class UnifiedSearchService
             if (!empty($searchParams['departure_to'])) {
                 $hasValidPeriod = false;
                 foreach ($periods as $period) {
-                    $pRaw = $period['_raw'] ?? $period;
-                    $depDate = $period['departure_date'] 
-                        ?? $pRaw['PeriodStartDate'] 
-                        ?? $pRaw['departureDate'] 
-                        ?? $pRaw['start_date'] 
-                        ?? null;
+                    $depDate = $period['start_date'] ?? $period['departure_date'] ?? null;
                     if ($depDate && $depDate <= $searchParams['departure_to']) {
                         $hasValidPeriod = true;
                         break;
@@ -331,17 +392,11 @@ class UnifiedSearchService
                 }
             }
 
-            // Filter by price range
+            // Filter by price range - use unified field names
             if (!empty($searchParams['min_price'])) {
                 $hasValidPeriod = false;
                 foreach ($periods as $period) {
-                    $pRaw = $period['_raw'] ?? $period;
-                    $price = $period['price_adult'] 
-                        ?? $period['price'] 
-                        ?? $pRaw['Price'] 
-                        ?? $pRaw['adultPrice'] 
-                        ?? $pRaw['salePrice'] 
-                        ?? 0;
+                    $price = $period['price_adult'] ?? $period['price'] ?? 0;
                     if ($price >= $searchParams['min_price']) {
                         $hasValidPeriod = true;
                         break;
@@ -355,13 +410,7 @@ class UnifiedSearchService
             if (!empty($searchParams['max_price'])) {
                 $hasValidPeriod = false;
                 foreach ($periods as $period) {
-                    $pRaw = $period['_raw'] ?? $period;
-                    $price = $period['price_adult'] 
-                        ?? $period['price'] 
-                        ?? $pRaw['Price'] 
-                        ?? $pRaw['adultPrice'] 
-                        ?? $pRaw['salePrice'] 
-                        ?? PHP_INT_MAX;
+                    $price = $period['price_adult'] ?? $period['price'] ?? PHP_INT_MAX;
                     if ($price <= $searchParams['max_price']) {
                         $hasValidPeriod = true;
                         break;
@@ -372,16 +421,11 @@ class UnifiedSearchService
                 }
             }
 
-            // Filter by available seats
+            // Filter by available seats - use unified field names
             if (!empty($searchParams['min_seats'])) {
                 $hasValidPeriod = false;
                 foreach ($periods as $period) {
-                    $pRaw = $period['_raw'] ?? $period;
-                    $seats = $period['available_seats'] 
-                        ?? $period['available'] 
-                        ?? $pRaw['Seat'] 
-                        ?? $pRaw['available'] 
-                        ?? 0;
+                    $seats = $period['available'] ?? $period['available_seats'] ?? $period['capacity'] ?? 0;
                     if ($seats >= $searchParams['min_seats']) {
                         $hasValidPeriod = true;
                         break;
@@ -510,14 +554,8 @@ class UnifiedSearchService
             }
 
             $filteredPeriods = array_filter($periods, function ($period) use ($departureFrom, $departureTo, $minPrice, $maxPrice, $minSeats) {
-                $pRaw = $period['_raw'] ?? $period;
-
-                // Get departure date
-                $depDate = $period['departure_date'] 
-                    ?? $pRaw['PeriodStartDate'] 
-                    ?? $pRaw['departureDate'] 
-                    ?? $pRaw['start_date'] 
-                    ?? null;
+                // Use unified field names (from transform mapping)
+                $depDate = $period['start_date'] ?? $period['departure_date'] ?? null;
 
                 // Filter by departure_from
                 if ($departureFrom && $depDate && $depDate < $departureFrom) {
@@ -529,13 +567,8 @@ class UnifiedSearchService
                     return false;
                 }
 
-                // Get price
-                $price = $period['price_adult'] 
-                    ?? $period['price'] 
-                    ?? $pRaw['Price'] 
-                    ?? $pRaw['adultPrice'] 
-                    ?? $pRaw['salePrice'] 
-                    ?? 0;
+                // Get price (unified field)
+                $price = $period['price_adult'] ?? $period['price'] ?? 0;
 
                 // Filter by min_price
                 if ($minPrice && $price < $minPrice) {
@@ -547,13 +580,8 @@ class UnifiedSearchService
                     return false;
                 }
 
-                // Get available seats
-                $seats = $period['available_seats'] 
-                    ?? $period['available'] 
-                    ?? $pRaw['Seat'] 
-                    ?? $pRaw['available'] 
-                    ?? $pRaw['AvailableSeats'] 
-                    ?? 0;
+                // Get available seats (unified field)
+                $seats = $period['available'] ?? $period['available_seats'] ?? $period['capacity'] ?? 0;
 
                 // Filter by min_seats
                 if ($minSeats && $seats < $minSeats) {

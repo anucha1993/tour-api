@@ -148,8 +148,13 @@ class SyncPeriodsJob implements ShouldQueue
 
             // Sync Itinerary (from same API response)
             $itinerariesPath = $dataStructure['itineraries']['path'] ?? null;
-            $rawData = $result->periods ?? [];
+            // Use rawData (full API response) for itineraries/cities, not periods array
+            $rawData = $result->rawData ?? [];
             $itineraryStats = $this->syncItineraries($tour, $rawData, $itinerariesPath, $config);
+
+            // Sync Cities (from same API response)
+            $citiesPath = $dataStructure['cities']['path'] ?? null;
+            $cityStats = $this->syncCities($tour, $rawData, $citiesPath, $config);
 
             // Sync Transport (from tour_airline in API response)
             $transportStats = $this->syncTransport($tour, $rawData);
@@ -161,6 +166,7 @@ class SyncPeriodsJob implements ShouldQueue
                 'tour_id' => $this->tourId,
                 'stats' => $stats,
                 'itineraries' => $itineraryStats,
+                'cities' => $cityStats,
                 'transport' => $transportStats,
             ]);
 
@@ -627,27 +633,46 @@ class SyncPeriodsJob implements ShouldQueue
 
     /**
      * Flatten itinerary path from nested structure
+     * e.g., "tour_daily[]" -> get all tour_daily items
      * e.g., "periods[].tour_daily[].day_list[]" -> get all day_list items
      */
     protected function flattenItineraryPath(array $data, string $path): array
     {
-        // Remove "periods[]." prefix since we're already at periods level
+        // Remove "periods[]." prefix if present (for backward compatibility)
         $path = preg_replace('/^[Pp]eriods\[\]\./', '', $path);
         
-        // Split remaining path: "tour_daily[].day_list[]"
+        // Split path by "[]." : "tour_daily[].day_list[]" -> ["tour_daily", "day_list"]
         $segments = preg_split('/\[\]\.?/', $path);
         $segments = array_filter($segments, fn($s) => !empty($s));
         
-        // Start with data
-        $result = $data;
+        if (empty($segments)) {
+            return is_array($data) ? $data : [];
+        }
+        
+        // Start with data wrapped in array if it's a single object
+        $result = [$data];
         
         foreach ($segments as $segment) {
             $newResult = [];
             foreach ($result as $item) {
                 if (isset($item[$segment]) && is_array($item[$segment])) {
-                    foreach ($item[$segment] as $nested) {
-                        if (is_array($nested)) {
-                            $newResult[] = $nested;
+                    // Check if it's an array of items or a single item
+                    if (isset($item[$segment][0]) && is_array($item[$segment][0])) {
+                        // Array of items - add each
+                        foreach ($item[$segment] as $nested) {
+                            if (is_array($nested)) {
+                                $newResult[] = $nested;
+                            }
+                        }
+                    } elseif (!isset($item[$segment][0])) {
+                        // Associative array / single item - add as-is
+                        $newResult[] = $item[$segment];
+                    } else {
+                        // Indexed array of scalar values - add as array
+                        foreach ($item[$segment] as $nested) {
+                            if (is_array($nested)) {
+                                $newResult[] = $nested;
+                            }
                         }
                     }
                 }
@@ -824,5 +849,149 @@ class SyncPeriodsJob implements ShouldQueue
                 'created_at' => now(),
             ]);
         }
+    }
+
+    /**
+     * Sync cities from API response
+     * 
+     * @param Tour $tour
+     * @param array $rawData Full API response data
+     * @param string|null $citiesPath Path to city data (e.g., "tour_city[]")
+     * @param WholesalerApiConfig $config
+     * @return array Stats
+     */
+    protected function syncCities(Tour $tour, array $rawData, ?string $citiesPath, WholesalerApiConfig $config): array
+    {
+        $stats = ['created' => 0, 'updated' => 0, 'skipped' => 0];
+        
+        if (empty($rawData) || !$citiesPath) {
+            return $stats;
+        }
+
+        // Get city mappings
+        $mappings = WholesalerFieldMapping::where('wholesaler_id', $this->wholesalerId)
+            ->where('section_name', 'city')
+            ->where('is_active', true)
+            ->get();
+
+        if ($mappings->isEmpty()) {
+            Log::debug('SyncPeriodsJob: No city mappings configured', [
+                'tour_id' => $this->tourId,
+            ]);
+            return $stats;
+        }
+
+        // Flatten city data from path
+        $cityItems = $this->flattenItineraryPath($rawData, $citiesPath);
+        
+        if (empty($cityItems)) {
+            Log::debug('SyncPeriodsJob: No city items found', [
+                'tour_id' => $this->tourId,
+                'path' => $citiesPath,
+            ]);
+            return $stats;
+        }
+
+        Log::info('SyncPeriodsJob: Syncing cities', [
+            'tour_id' => $this->tourId,
+            'items_count' => count($cityItems),
+        ]);
+
+        // Delete existing tour_cities for this tour (from API source)
+        DB::table('tour_cities')
+            ->where('tour_id', $tour->id)
+            ->delete();
+
+        // Process each city item
+        $sortOrder = 1;
+        foreach ($cityItems as $item) {
+            try {
+                $cityData = $this->transformCityData($item, $mappings, $citiesPath);
+                
+                // Try to find city in our cities table by name
+                $cityId = $this->findCityId($cityData);
+                
+                DB::table('tour_cities')->insert([
+                    'tour_id' => $tour->id,
+                    'city_id' => $cityId,
+                    'country_id' => $cityData['country_id'] ?? null,
+                    'sort_order' => $sortOrder,
+                    'days_in_city' => 1,
+                    'created_at' => now(),
+                ]);
+                
+                $stats['created']++;
+                $sortOrder++;
+            } catch (\Exception $e) {
+                Log::error('SyncPeriodsJob: Error syncing city', [
+                    'tour_id' => $this->tourId,
+                    'error' => $e->getMessage(),
+                ]);
+                $stats['skipped']++;
+            }
+        }
+
+        return $stats;
+    }
+
+    /**
+     * Transform raw city data using field mappings
+     */
+    protected function transformCityData(array $rawItem, $mappings, ?string $basePath = null): array
+    {
+        $result = [];
+
+        foreach ($mappings as $mapping) {
+            $fieldPath = $mapping->their_field_path ?? $mapping->their_field ?? null;
+            if (empty($fieldPath)) {
+                continue;
+            }
+            
+            // Clean path - remove base path prefix
+            if ($basePath) {
+                $fieldPath = $this->cleanNestedPath($fieldPath, $basePath);
+            }
+            
+            $value = $this->extractValue($rawItem, $fieldPath);
+            
+            if ($value !== null) {
+                $value = $this->applyTransform($value, $mapping->transform_type, $mapping->transform_config);
+            }
+            
+            if ($value === null && !empty($mapping->default_value)) {
+                $value = $mapping->default_value;
+            }
+
+            $result[$mapping->our_field] = $value;
+        }
+
+        return $result;
+    }
+
+    /**
+     * Find city ID in cities table by name
+     */
+    protected function findCityId(array $cityData): ?int
+    {
+        $nameTh = $cityData['name_th'] ?? null;
+        $nameEn = $cityData['name_en'] ?? null;
+        
+        if (!$nameTh && !$nameEn) {
+            return null;
+        }
+
+        $query = DB::table('cities');
+        
+        if ($nameTh) {
+            $query->where('name_th', 'LIKE', '%' . $nameTh . '%');
+        }
+        
+        if ($nameEn && !$nameTh) {
+            $query->where('name_en', 'LIKE', '%' . $nameEn . '%');
+        }
+        
+        $city = $query->first();
+        
+        return $city?->id;
     }
 }

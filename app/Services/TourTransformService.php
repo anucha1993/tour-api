@@ -47,11 +47,18 @@ class TourTransformService
                 continue;
             }
 
-            // For departure section, strip array prefix like "Periods[].PeriodStartDate" -> "PeriodStartDate"
+            // For departure section, strip array prefixes like:
+            // "Periods[].PeriodStartDate" -> "PeriodStartDate"
+            // "periods[].tour_period[].price" -> "price"
             // This is because when transforming individual period items, they don't have the array prefix
             $cleanApiField = $apiFieldPath;
-            if ($section === 'departure' && preg_match('/^(\w+)\[\]\.(.+)$/', $apiFieldPath, $matches)) {
-                $cleanApiField = $matches[2]; // Get the field name after []
+            if ($section === 'departure' || $section === 'period') {
+                // Remove all array path segments (e.g., "periods[].tour_period[].")
+                $cleanApiField = preg_replace('/^\w+\[\]\./', '', $apiFieldPath);
+                // Keep removing until no more array prefixes
+                while (preg_match('/^\w+\[\]\./', $cleanApiField)) {
+                    $cleanApiField = preg_replace('/^\w+\[\]\./', '', $cleanApiField);
+                }
             }
 
             // Forward mapping: API field → target field

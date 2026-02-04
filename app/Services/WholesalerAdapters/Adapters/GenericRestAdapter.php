@@ -111,6 +111,14 @@ class GenericRestAdapter extends BaseAdapter
             // Handle various response formats:
             // 1. Direct array: [{...}, {...}]
             // 2. Wrapped: { data: [...] } or { schedules: [...] } or { periods: [...] }
+            
+            // Determine raw data (full response or data wrapper)
+            $rawData = $response['data'] ?? $response;
+            if (!is_array($rawData)) {
+                $rawData = [];
+            }
+            
+            // Extract periods from various possible locations
             if (is_array($response) && isset($response[0]) && is_array($response[0])) {
                 // Direct array format
                 $periods = $response;
@@ -119,7 +127,7 @@ class GenericRestAdapter extends BaseAdapter
                 $periods = $response['data'] ?? $response['schedules'] ?? $response['periods'] ?? $response['departures'] ?? [];
             }
 
-            return PeriodsResult::success($periods);
+            return PeriodsResult::success($periods, $rawData);
 
         } catch (\Exception $e) {
             return PeriodsResult::failed($e->getMessage(), (string) $e->getCode());

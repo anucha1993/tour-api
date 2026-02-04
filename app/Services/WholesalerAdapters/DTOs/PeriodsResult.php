@@ -12,16 +12,18 @@ class PeriodsResult
         public readonly array $periods = [],
         public readonly ?string $error = null,
         public readonly ?string $errorCode = null,
+        public readonly array $rawData = [], // Full API response for itineraries, cities, etc.
     ) {}
 
     /**
      * Create a successful result
      */
-    public static function success(array $periods): self
+    public static function success(array $periods, array $rawData = []): self
     {
         return new self(
             success: true,
             periods: $periods,
+            rawData: $rawData,
         );
     }
 

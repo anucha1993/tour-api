@@ -1,56 +1,61 @@
 <?php
-/**
- * Test SyncPeriodsJob directly
- */
 
-// Force sync queue for immediate processing
-putenv('QUEUE_CONNECTION=sync');
+require 'vendor/autoload.php';
+$app = require_once 'bootstrap/app.php';
+$kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
+$kernel->bootstrap();
 
-require_once __DIR__ . '/vendor/autoload.php';
-
-$app = require_once __DIR__ . '/bootstrap/app.php';
-$app->make('Illuminate\Contracts\Console\Kernel')->bootstrap();
-
-// Override queue config to sync
-config(['queue.default' => 'sync']);
-
-use App\Jobs\SyncToursJob;
 use App\Jobs\SyncPeriodsJob;
-use App\Models\Tour;
-use App\Models\WholesalerApiConfig;
+use Illuminate\Support\Facades\DB;
 
-echo "=== Testing SyncPeriodsJob Directly ===\n\n";
+$tourId = $argv[1] ?? 294;
+$tour = DB::table('tours')->where('id', $tourId)->first();
 
-$tour = Tour::where('wholesaler_id', 6)->orderBy('id', 'desc')->first();
 if (!$tour) {
-    echo "No GO365 tour found!\n";
+    echo "Tour ID {$tourId} not found!\n";
     exit(1);
 }
 
-echo "Tour ID: {$tour->id}\n";
-echo "Title: {$tour->title}\n";
-echo "External ID: {$tour->external_id}\n\n";
+echo "=== Testing SyncPeriodsJob for Tour ID {$tourId} ===\n\n";
+echo "Tour: {$tour->title}\n";
+echo "External ID: {$tour->external_id}\n";
+echo "Wholesaler ID: {$tour->wholesaler_id}\n\n";
 
-echo "--- Calling SyncPeriodsJob directly ---\n";
+// Run SyncPeriodsJob
+echo "=== Running SyncPeriodsJob ===\n";
+$job = new SyncPeriodsJob($tourId, $tour->external_id, $tour->wholesaler_id);
+$job->handle();
 
-try {
-    $job = new SyncPeriodsJob($tour->id, $tour->external_id, 6);
-    $job->handle();
-    echo "\n✅ SyncPeriodsJob completed!\n";
-} catch (\Exception $e) {
-    echo "\n❌ Error: " . $e->getMessage() . "\n";
-    echo "File: " . $e->getFile() . ":" . $e->getLine() . "\n";
-    echo "\nTrace:\n" . $e->getTraceAsString() . "\n";
+// Check results
+echo "\n=== Results ===\n";
+$periodsCount = DB::table('periods')->where('tour_id', $tourId)->count();
+$itinCount = DB::table('tour_itineraries')->where('tour_id', $tourId)->count();
+$citiesCount = DB::table('tour_cities')->where('tour_id', $tourId)->count();
+$transportCount = DB::table('tour_transports')->where('tour_id', $tourId)->count();
+
+echo "Periods: {$periodsCount}\n";
+echo "Itineraries: {$itinCount}\n";
+echo "Cities: {$citiesCount}\n";
+echo "Transports: {$transportCount}\n";
+
+// Show sample itinerary
+if ($itinCount > 0) {
+    echo "\n=== Sample Itinerary ===\n";
+    $itin = DB::table('tour_itineraries')->where('tour_id', $tourId)->first();
+    echo "Day {$itin->day_number}: {$itin->title}\n";
 }
 
-// Check periods
-$periods = \App\Models\Period::where('tour_id', $tour->id)
-    ->with('offer')
-    ->orderBy('start_date')
-    ->get();
-    
-echo "\nPeriods: " . $periods->count() . "\n";
-foreach ($periods->take(5) as $p) {
-    $price = $p->offer ? $p->offer->price_adult : 'N/A';
-    echo "  - {$p->start_date} -> {$p->end_date} (Price: {$price})\n";
+// Show sample cities
+if ($citiesCount > 0) {
+    echo "\n=== Tour Cities ===\n";
+    $cities = DB::table('tour_cities')
+        ->leftJoin('cities', 'tour_cities.city_id', '=', 'cities.id')
+        ->where('tour_cities.tour_id', $tourId)
+        ->select('cities.name_th', 'cities.name_en', 'tour_cities.city_id')
+        ->get();
+    foreach ($cities as $city) {
+        echo "  - {$city->name_th} ({$city->name_en}) [ID: {$city->city_id}]\n";
+    }
 }
+
+echo "\n=== Done ===\n";

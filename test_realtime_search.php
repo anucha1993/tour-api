@@ -50,9 +50,15 @@ try {
         if (!empty($tour['periods'])) {
             echo "\n=== First Period ===\n";
             $period = $tour['periods'][0];
+            echo "Keys: " . implode(', ', array_keys($period)) . "\n";
             echo "Departure: " . ($period['departure_date'] ?? $period['start_date'] ?? 'N/A') . "\n";
             echo "Price: " . ($period['price_adult'] ?? 'N/A') . "\n";
             echo "Available: " . ($period['available'] ?? $period['available_seats'] ?? 'N/A') . "\n";
+            
+            // Show raw period for debugging
+            if (isset($period['_raw'])) {
+                echo "\nRaw period keys: " . implode(', ', array_keys($period['_raw'])) . "\n";
+            }
         }
     }
 } catch (\Exception $e) {
