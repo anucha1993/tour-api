@@ -113,7 +113,15 @@ class GenericRestAdapter extends BaseAdapter
             // 2. Wrapped: { data: [...] } or { schedules: [...] } or { periods: [...] }
             
             // Determine raw data (full response or data wrapper)
+            // API response: { status: ..., data: { tour_id: ..., tour_daily: [...], ... } }
+            // or: { status: ..., data: [{ tour_id: ..., tour_daily: [...], ... }] }
             $rawData = $response['data'] ?? $response;
+            
+            // If data is an indexed array with single item, unwrap it
+            if (is_array($rawData) && isset($rawData[0]) && is_array($rawData[0]) && count($rawData) === 1) {
+                $rawData = $rawData[0];
+            }
+            
             if (!is_array($rawData)) {
                 $rawData = [];
             }
