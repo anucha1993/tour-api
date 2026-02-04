@@ -154,8 +154,8 @@ class SyncPeriodsJob implements ShouldQueue
             // Sync Transport (from tour_airline in API response)
             $transportStats = $this->syncTransport($tour, $rawData);
 
-            // Update tour's aggregated fields
-            $this->updateTourAggregates($tour);
+            // Recalculate tour's aggregated fields (price, discount, hotel_star, etc.)
+            $tour->recalculateAggregates();
 
             Log::info('SyncPeriodsJob: Completed', [
                 'tour_id' => $this->tourId,
