@@ -131,9 +131,19 @@ class SyncPeriodsJob implements ShouldQueue
             // Process each period
             $stats = ['created' => 0, 'updated' => 0, 'skipped' => 0];
             
-            foreach ($periods as $rawPeriod) {
+            foreach ($periods as $index => $rawPeriod) {
                 try {
                     $periodData = $this->transformPeriodData($rawPeriod, $mappings, $departuresPath);
+                    
+                    // Log first period's transformed data
+                    if ($index === 0) {
+                        Log::debug('SyncPeriodsJob: Transformed period data', [
+                            'tour_id' => $this->tourId,
+                            'raw_keys' => array_keys($rawPeriod),
+                            'transformed_data' => $periodData,
+                        ]);
+                    }
+                    
                     $this->syncPeriod($tour, $periodData, $stats);
                 } catch (\Exception $e) {
                     Log::error('SyncPeriodsJob: Error processing period', [
