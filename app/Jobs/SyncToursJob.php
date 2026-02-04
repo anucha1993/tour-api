@@ -547,7 +547,12 @@ class SyncToursJob implements ShouldQueue
                 $dep = [];
                 foreach ($mappings['departure'] as $mapping) {
                     $fieldName = $mapping->our_field;
-                    $path = $mapping->their_field_path ?? $mapping->their_field;
+                    $path = $mapping->their_field_path ?? $mapping->their_field ?? '';
+                    
+                    // Skip if no path defined
+                    if (empty($path)) {
+                        continue;
+                    }
                     
                     // Remove all known array prefixes to get the final field key
                     $cleanPath = $this->cleanNestedPath($path, $departuresPath);
@@ -590,7 +595,12 @@ class SyncToursJob implements ShouldQueue
                 $it = [];
                 foreach ($mappings['itinerary'] as $mapping) {
                     $fieldName = $mapping->our_field;
-                    $path = $mapping->their_field_path ?? $mapping->their_field;
+                    $path = $mapping->their_field_path ?? $mapping->their_field ?? '';
+                    
+                    // Skip if no path defined
+                    if (empty($path)) {
+                        continue;
+                    }
                     
                     // Remove all known array prefixes to get the final field key
                     $cleanPath = $this->cleanNestedPath($path, $itinerariesPath);
@@ -662,12 +672,15 @@ class SyncToursJob implements ShouldQueue
      * e.g., "periods[].tour_period[].period_id" with base "periods[].tour_period[]"
      *       returns "period_id"
      * 
-     * @param string $fullPath Full field path from mapping
+     * @param string|null $fullPath Full field path from mapping
      * @param string|null $basePath Base path from aggregation_config (null = use default cleaning)
      * @return string Cleaned path relative to the nested item
      */
-    protected function cleanNestedPath(string $fullPath, ?string $basePath): string
+    protected function cleanNestedPath(?string $fullPath, ?string $basePath): string
     {
+        if (!$fullPath) {
+            return '';
+        }
         if ($basePath) {
             // Remove the base path prefix
             // e.g., "periods[].tour_period[].period_id" → "period_id"

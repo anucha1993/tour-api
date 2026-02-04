@@ -200,7 +200,6 @@ class SyncPeriodsJob implements ShouldQueue
         // e.g., "periods[].tour_period[]" -> need to extract "tour_period" from each period
         // But the API response for periods endpoint might already be at "periods" level
         // So we need to check for the nested part after "periods[]."
-        
         $path = preg_replace('/^[Pp]eriods\[\]\./', '', $path);
         
         // If path is like "tour_period[]", extract that nested array
