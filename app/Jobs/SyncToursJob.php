@@ -1087,6 +1087,11 @@ class SyncToursJob implements ShouldQueue
         $tourFields['sync_status'] = 'active';
         $tourFields['last_synced_at'] = now();
         
+        // Truncate title to fit varchar(255)
+        if (!empty($tourFields['title']) && mb_strlen($tourFields['title']) > 250) {
+            $tourFields['title'] = mb_substr($tourFields['title'], 0, 247) . '...';
+        }
+        
         // Debug: Log tourFields before save
         Log::info('SyncToursJob: tourFields before save', [
             'tour_code' => $tourFields['tour_code'] ?? $tour->tour_code ?? 'N/A',
