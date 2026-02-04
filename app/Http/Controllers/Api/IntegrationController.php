@@ -1043,8 +1043,10 @@ class IntegrationController extends Controller
     /**
      * Test mapping with dry run (validate without saving)
      * Simulates sync process and reports any issues
+     * 
+     * @param int $id Integration ID (WholesalerApiConfig primary key)
      */
-    public function testMapping(Request $request, int $wholesalerId): JsonResponse
+    public function testMapping(Request $request, int $id): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'sample_data' => 'required|array',
@@ -2508,6 +2510,8 @@ class IntegrationController extends Controller
      * This allows users to sync specific tours from the search page
      * without waiting for scheduled sync.
      * Uses the same mapping logic as SyncToursJob.
+     * 
+     * @param int $id Integration ID (WholesalerApiConfig primary key)
      */
     public function syncSelectedTours(int $id, Request $request): JsonResponse
     {
@@ -2529,7 +2533,8 @@ class IntegrationController extends Controller
             ], 422);
         }
 
-        $config = WholesalerApiConfig::where('wholesaler_id', $id)->firstOrFail();
+        // Use integration ID (primary key) instead of wholesaler_id
+        $config = WholesalerApiConfig::findOrFail($id);
         $wholesalerId = $config->wholesaler_id;
         $wholesalerCode = $config->wholesaler?->code ?? 'default';
 
