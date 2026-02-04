@@ -14,9 +14,13 @@ echo "=== Testing Transport Sync ===\n\n";
 DB::table('tour_transports')->where('tour_id', 272)->delete();
 echo "Cleared tour_transports for tour 272\n\n";
 
+// Get tour info
+$tour = DB::table('tours')->where('id', 272)->first();
+$externalId = $tour->external_id ?? '';
+
 // Run sync for tour 272
-echo "Running SyncPeriodsJob for tour 272...\n";
-$job = new SyncPeriodsJob(272, 6);
+echo "Running SyncPeriodsJob for tour 272 (external_id: {$externalId})...\n";
+$job = new SyncPeriodsJob(272, $externalId, 6);
 $job->handle();
 
 echo "\n=== Checking Results ===\n\n";
@@ -25,7 +29,7 @@ echo "\n=== Checking Results ===\n\n";
 $records = DB::table('tour_transports')->where('tour_id', 272)->get();
 echo "tour_transports for tour 272: " . count($records) . " records\n";
 foreach ($records as $r) {
-    echo "  - transport_id: {$r->transport_id}, is_primary: {$r->is_primary}\n";
+    echo "  - transport_id: {$r->transport_id}, code: {$r->transport_code}, name: {$r->transport_name}\n";
 }
 
 // Check tours.transport_id

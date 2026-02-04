@@ -805,6 +805,9 @@ class SyncPeriodsJob implements ShouldQueue
      */
     protected function syncTourTransport(Tour $tour, int $transportId): void
     {
+        // Get transport info
+        $transport = DB::table('transports')->where('id', $transportId)->first();
+        
         // Check if already exists
         $exists = DB::table('tour_transports')
             ->where('tour_id', $tour->id)
@@ -815,7 +818,10 @@ class SyncPeriodsJob implements ShouldQueue
             DB::table('tour_transports')->insert([
                 'tour_id' => $tour->id,
                 'transport_id' => $transportId,
-                'is_primary' => true,
+                'transport_code' => $transport->code ?? null,
+                'transport_name' => $transport->name ?? null,
+                'transport_type' => 'outbound',
+                'sort_order' => 0,
                 'created_at' => now(),
             ]);
         }
