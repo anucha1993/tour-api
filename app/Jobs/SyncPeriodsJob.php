@@ -917,17 +917,19 @@ class SyncPeriodsJob implements ShouldQueue
                 // Try to find city in our cities table by name
                 $cityId = $this->findCityId($cityData);
                 
-                // Get country_id from the city record (not from API)
-                $countryId = null;
-                if ($cityId) {
-                    $city = DB::table('cities')->where('id', $cityId)->first();
-                    $countryId = $city->country_id ?? null;
+                // Skip if city not found in our database
+                if (!$cityId) {
+                    Log::debug('SyncPeriodsJob: City not found in database', [
+                        'tour_id' => $this->tourId,
+                        'city_data' => $cityData,
+                    ]);
+                    $stats['skipped']++;
+                    continue;
                 }
                 
-                // Fallback to tour's primary_country_id if no city found
-                if (!$countryId) {
-                    $countryId = $tour->primary_country_id;
-                }
+                // Get country_id from the city record (not from API)
+                $city = DB::table('cities')->where('id', $cityId)->first();
+                $countryId = $city->country_id ?? $tour->primary_country_id;
                 
                 DB::table('tour_cities')->insert([
                     'tour_id' => $tour->id,
