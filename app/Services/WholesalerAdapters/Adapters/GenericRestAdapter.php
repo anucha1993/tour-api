@@ -87,8 +87,9 @@ class GenericRestAdapter extends BaseAdapter
     public function fetchTourDetail(string $code): ?array
     {
         try {
-            // Try tour_detail endpoint first, fallback to periods endpoint
-            $endpoint = $this->endpoints['tour_detail'] ?? $this->endpoints['periods'] ?? '/{code}';
+            // Try periods endpoint first (for two_phase mode with detail URL)
+            // Then tour_detail, then fallback to /{code}
+            $endpoint = $this->endpoints['periods'] ?? $this->endpoints['tour_detail'] ?? '/{code}';
             
             // Replace various placeholder formats
             $endpoint = str_replace(['{code}', '{tour_id}', '{id}'], $code, $endpoint);
