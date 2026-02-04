@@ -290,13 +290,16 @@ class TourSearchController extends Controller
             ],
         ];
 
-        // Get active wholesalers
-        $wholesalers = WholesalerApiConfig::where('is_active', true)
+        // Get active integrations (API configs) - one wholesaler may have multiple configs
+        $integrations = WholesalerApiConfig::where('is_active', true)
             ->with('wholesaler')
             ->get()
             ->map(fn($c) => [
-                'id' => $c->wholesaler_id,
+                'id' => $c->id, // Integration config ID for route /integrations/{id}/tours/search
                 'name' => $c->wholesaler?->name,
+                'wholesaler_id' => $c->wholesaler_id,
+                'api_version' => $c->api_version,
+                'label' => $c->wholesaler?->name . ($c->api_version ? " ({$c->api_version})" : ''),
             ]);
 
         // Predefined country list with codes
@@ -314,7 +317,8 @@ class TourSearchController extends Controller
         return response()->json([
             'success' => true,
             'filters' => $filters,
-            'wholesalers' => $wholesalers,
+            'integrations' => $integrations,
+            'wholesalers' => $integrations, // Backward compatible - deprecated, use integrations
             'countries' => $countries,
             'sort_options' => [
                 ['value' => 'price', 'label' => 'ราคาต่ำ → สูง'],

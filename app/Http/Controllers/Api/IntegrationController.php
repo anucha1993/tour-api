@@ -2589,7 +2589,8 @@ class IntegrationController extends Controller
                 DB::beginTransaction();
 
                 // Transform raw data using mappings (same logic as SyncToursJob)
-                $transformed = $this->transformTourDataForSync($raw, $mappings);
+                // Pass aggregation_config for nested data structure support
+                $transformed = $this->transformTourDataForSync($raw, $mappings, $config->aggregation_config ?? []);
                 
                 // Extract tour data (merge tour + content + media sections)
                 $tourFields = array_merge(
@@ -2859,8 +2860,9 @@ class IntegrationController extends Controller
 
     /**
      * Transform raw tour data using mappings (same logic as SyncToursJob)
+     * Supports nested data structures via aggregation_config
      */
-    protected function transformTourDataForSync(array $rawTour, $mappings): array
+    protected function transformTourDataForSync(array $rawTour, $mappings, array $dataStructure = []): array
     {
         $result = [
             'tour' => [],
@@ -3039,8 +3041,17 @@ class IntegrationController extends Controller
             }
         }
 
-        // Map departures (from Periods/periods/schedules/departures array)
-        $periods = $rawTour['Periods'] ?? $rawTour['periods'] ?? $rawTour['schedules'] ?? $rawTour['departures'] ?? [];
+        // Map departures - support nested paths from aggregation_config (same as SyncToursJob)
+        $departuresPath = $dataStructure['data_structure']['departures']['path'] ?? null;
+        
+        if ($departuresPath) {
+            // Use custom nested path (e.g., "periods[].tour_period[]" for GO365)
+            $periods = $this->flattenNestedPathForSync($rawTour, $departuresPath);
+        } else {
+            // Default: use standard periods/schedules/departures array
+            $periods = $rawTour['Periods'] ?? $rawTour['periods'] ?? $rawTour['schedules'] ?? $rawTour['departures'] ?? [];
+        }
+        
         if (isset($mappings['departure']) && !empty($periods) && is_array($periods)) {
             foreach ($periods as $period) {
                 if (!is_array($period)) continue; // Skip if not an array
@@ -3049,9 +3060,11 @@ class IntegrationController extends Controller
                     $fieldName = $mapping->our_field;
                     $path = $mapping->their_field_path ?? $mapping->their_field;
                     
-                    $cleanPath = preg_replace('/^(Periods|periods|schedules|departures)\[\]\\./', '', $path);
+                    // Remove all known array prefixes to get the final field key
+                    $cleanPath = $this->cleanNestedPathForSync($path, $departuresPath);
                     
-                    $value = $period[$cleanPath] ?? null;
+                    // Extract value - support nested fields within the item
+                    $value = $this->extractNestedValueForSync($period, $cleanPath);
                     $value = $applyTransform($value, $mapping, $period);
                     
                     if ($value === null && !empty($mapping->default_value)) {
@@ -3064,9 +3077,19 @@ class IntegrationController extends Controller
             }
         }
 
-        // Map itineraries (from Itinerary/itinerary/itineraries/days/programs array)
-        $itineraries = $rawTour['Itinerary'] ?? $rawTour['itinerary'] ?? $rawTour['itineraries'] ?? $rawTour['days'] ?? $rawTour['programs'] ?? [];
+        // Map itineraries - support nested paths from aggregation_config (same as SyncToursJob)
+        $itinerariesPath = $dataStructure['data_structure']['itineraries']['path'] ?? null;
+        
+        if ($itinerariesPath) {
+            // Use custom nested path (e.g., "periods[].tour_daily[].day_list[]" for GO365)
+            $itineraries = $this->flattenNestedPathForSync($rawTour, $itinerariesPath);
+        } else {
+            // Default: use standard itinerary arrays
+            $itineraries = $rawTour['Itinerary'] ?? $rawTour['itinerary'] ?? $rawTour['itineraries'] ?? $rawTour['days'] ?? $rawTour['programs'] ?? $rawTour['tour_daily'] ?? [];
+        }
+        
         if (isset($mappings['itinerary']) && !empty($itineraries) && is_array($itineraries)) {
+            $dayIndex = 1;
             foreach ($itineraries as $itin) {
                 if (!is_array($itin)) continue; // Skip if not an array
                 $it = [];
@@ -3074,9 +3097,11 @@ class IntegrationController extends Controller
                     $fieldName = $mapping->our_field;
                     $path = $mapping->their_field_path ?? $mapping->their_field;
                     
-                    $cleanPath = preg_replace('/^(Itinerary|itinerary|itineraries|days|programs)\[\]\\./', '', $path);
+                    // Remove all known array prefixes to get the final field key
+                    $cleanPath = $this->cleanNestedPathForSync($path, $itinerariesPath);
                     
-                    $value = $itin[$cleanPath] ?? null;
+                    // Extract value - support nested fields within the item
+                    $value = $this->extractNestedValueForSync($itin, $cleanPath);
                     $value = $applyTransform($value, $mapping, $itin);
                     
                     if ($value === null && !empty($mapping->default_value)) {
@@ -3085,11 +3110,141 @@ class IntegrationController extends Controller
                     
                     $it[$fieldName] = $value;
                 }
+                
+                // Auto-generate day_number if not mapped
+                if (empty($it['day_number'])) {
+                    $it['day_number'] = $dayIndex;
+                }
+                $dayIndex++;
+                
                 $result['itinerary'][] = $it;
             }
         }
 
         return $result;
+    }
+
+    /**
+     * Flatten nested path like "periods[].tour_period[]" into flat array
+     * Same logic as SyncToursJob::flattenNestedPath()
+     */
+    protected function flattenNestedPathForSync(array $data, string $path): array
+    {
+        $result = [];
+        
+        // Split path into segments (e.g., "periods[].tour_period[]" -> ["periods[]", "tour_period[]"])
+        $segments = preg_split('/\[\]\.?/', $path, -1, PREG_SPLIT_NO_EMPTY);
+        
+        // Recursive helper to traverse nested arrays
+        $traverse = function($currentData, $remainingSegments) use (&$traverse, &$result) {
+            if (empty($remainingSegments)) {
+                // We've reached the end, add to result
+                if (is_array($currentData)) {
+                    $result[] = $currentData;
+                }
+                return;
+            }
+            
+            $segment = array_shift($remainingSegments);
+            
+            if (!is_array($currentData) || !isset($currentData[$segment])) {
+                return;
+            }
+            
+            $nextData = $currentData[$segment];
+            
+            if (is_array($nextData)) {
+                // Check if it's an indexed array (list of items) or associative
+                if (array_keys($nextData) === range(0, count($nextData) - 1)) {
+                    // Indexed array - iterate each item
+                    foreach ($nextData as $item) {
+                        $traverse($item, $remainingSegments);
+                    }
+                } else {
+                    // Associative array - continue down
+                    $traverse($nextData, $remainingSegments);
+                }
+            }
+        };
+        
+        $traverse($data, $segments);
+        
+        return $result;
+    }
+
+    /**
+     * Clean nested path by removing known prefixes
+     * Same logic as SyncToursJob::cleanNestedPath()
+     */
+    protected function cleanNestedPathForSync(string $fieldPath, ?string $basePath): string
+    {
+        if (!$basePath) {
+            // Just remove common prefixes if no base path
+            return preg_replace('/^(Periods|periods|schedules|departures|Itinerary|itinerary|itineraries|days|programs|tour_daily|tour_period)\[\]\\.?/', '', $fieldPath);
+        }
+        
+        // Remove the base path prefix from field path
+        // e.g., base = "periods[].tour_period[]", field = "periods[].tour_period[].period_date"
+        // result = "period_date"
+        
+        // Escape special regex characters in base path
+        $escapedBase = preg_quote($basePath, '/');
+        // Replace \[\] with actual regex for []
+        $escapedBase = str_replace('\[\]', '\\[\\]', $escapedBase);
+        
+        // Add optional dot after the base path
+        $pattern = '/^' . $escapedBase . '\\.?/';
+        
+        $cleaned = preg_replace($pattern, '', $fieldPath);
+        
+        // Also handle case where field path uses different prefix format
+        // Remove any remaining array notation prefix
+        $cleaned = preg_replace('/^[a-zA-Z_]+\[\]\\.?/', '', $cleaned);
+        
+        return $cleaned ?: $fieldPath;
+    }
+
+    /**
+     * Extract nested value from data using dot notation
+     * Same logic as SyncToursJob::extractNestedValue()
+     */
+    protected function extractNestedValueForSync(array $data, string $path)
+    {
+        if (empty($path)) {
+            return null;
+        }
+        
+        // Handle simple direct field access
+        if (isset($data[$path])) {
+            return $data[$path];
+        }
+        
+        // Handle dot notation
+        $keys = explode('.', $path);
+        $value = $data;
+        
+        foreach ($keys as $key) {
+            if (!is_array($value)) {
+                return null;
+            }
+            
+            // Handle array notation like "field[]"
+            if (str_ends_with($key, '[]')) {
+                $arrayKey = substr($key, 0, -2);
+                if (!isset($value[$arrayKey]) || !is_array($value[$arrayKey])) {
+                    return null;
+                }
+                // Return first element of array
+                $value = $value[$arrayKey][0] ?? null;
+            } else {
+                if (!isset($value[$key])) {
+                    return null;
+                }
+                $value = $value[$key];
+            }
+        }
+        
+        return $value;
     }
 
     /**
