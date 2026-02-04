@@ -364,6 +364,12 @@ class TourSearchController extends Controller
      * 
      * Returns mapping of external_id to tour_code (null if not synced)
      */
+    /**
+     * Lookup tour sync status by wholesaler_tour_code (preferred) or external_id
+     * 
+     * Frontend sends: { integration_id, wholesaler_tour_code } or { integration_id, external_id }
+     * Returns: { synced, tour_id, tour_code, sync_status }
+     */
     public function lookupTourCodes(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -371,7 +377,9 @@ class TourSearchController extends Controller
             // Support both integration_id and wholesaler_id
             'external_ids.*.integration_id' => 'nullable|numeric',
             'external_ids.*.wholesaler_id' => 'nullable|numeric',
-            'external_ids.*.external_id' => 'required|string',
+            // Support both wholesaler_tour_code and external_id for lookup
+            'external_ids.*.wholesaler_tour_code' => 'nullable|string',
+            'external_ids.*.external_id' => 'nullable|string',
         ]);
 
         try {
@@ -381,7 +389,11 @@ class TourSearchController extends Controller
             foreach ($validated['external_ids'] as $item) {
                 $integrationId = $item['integration_id'] ?? null;
                 $wholesalerId = $item['wholesaler_id'] ?? null;
-                $externalId = $item['external_id'];
+                $wholesalerTourCode = $item['wholesaler_tour_code'] ?? null;
+                $externalId = $item['external_id'] ?? null;
+                
+                // Must have at least one lookup key
+                if (!$wholesalerTourCode && !$externalId) continue;
                 
                 // If integration_id is provided, convert to wholesaler_id
                 if ($integrationId && !$wholesalerId) {
@@ -393,13 +405,16 @@ class TourSearchController extends Controller
                 
                 if (!$wholesalerId) continue;
                 
-                // Use integration_id for key (since that's what frontend expects)
-                $key = $integrationId ? "{$integrationId}_{$externalId}" : "{$wholesalerId}_{$externalId}";
+                // Create lookup key - use external_id as primary key
+                $lookupValue = $externalId;
+                if (!$lookupValue) continue;
                 
-                // Query tour
+                $key = $integrationId ? "{$integrationId}_{$lookupValue}" : "{$wholesalerId}_{$lookupValue}";
+                
+                // Query tour by external_id
                 $tour = \App\Models\Tour::where('wholesaler_id', $wholesalerId)
                     ->where('external_id', $externalId)
-                    ->select('external_id', 'tour_code', 'id', 'title', 'sync_status')
+                    ->select('external_id', 'wholesaler_tour_code', 'tour_code', 'id', 'title', 'sync_status')
                     ->first();
                 
                 if ($tour) {
@@ -407,6 +422,7 @@ class TourSearchController extends Controller
                         'synced' => true,
                         'tour_id' => $tour->id,
                         'tour_code' => $tour->tour_code,
+                        'wholesaler_tour_code' => $tour->wholesaler_tour_code,
                         'sync_status' => $tour->sync_status,
                     ];
                 } else {
@@ -414,6 +430,7 @@ class TourSearchController extends Controller
                         'synced' => false,
                         'tour_id' => null,
                         'tour_code' => null,
+                        'wholesaler_tour_code' => null,
                         'sync_status' => null,
                     ];
                 }
