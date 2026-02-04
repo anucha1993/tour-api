@@ -328,6 +328,14 @@ class SyncToursJob implements ShouldQueue
                     // Lookup by field in related table
                     if ($value === null || $value === '') return null;
                     
+                    // If value is an array, skip lookup (can't lookup array values)
+                    if (is_array($value)) {
+                        Log::debug('SyncToursJob: lookup skipped - value is array', [
+                            'our_field' => $mapping->our_field,
+                        ]);
+                        return null;
+                    }
+                    
                     $lookupTable = $config['lookup_table'] ?? null;
                     $lookupBy = $config['lookup_by'] ?? 'id';
                     
@@ -1017,6 +1025,29 @@ class SyncToursJob implements ShouldQueue
         // Auto-calculate duration_nights from duration_days if not provided
         if (empty($tourFields['duration_nights']) && !empty($tourFields['duration_days'])) {
             $tourFields['duration_nights'] = max(0, (int)$tourFields['duration_days'] - 1);
+        }
+        
+        // Set default duration_days for new tours (required by DB, no default value)
+        if ($isNew && empty($tourFields['duration_days'])) {
+            // Try to calculate from duration_nights, otherwise default to 0
+            if (!empty($tourFields['duration_nights'])) {
+                $tourFields['duration_days'] = (int)$tourFields['duration_nights'] + 1;
+            } else {
+                $tourFields['duration_days'] = 0;
+            }
+        }
+        
+        // Ensure duration_nights has a value for new tours
+        if ($isNew && !isset($tourFields['duration_nights'])) {
+            $tourFields['duration_nights'] = 0;
+        }
+        
+        // Convert array fields to JSON string (highlights, hashtags, etc.)
+        $jsonFields = ['highlights', 'hashtags', 'themes', 'suitable_for', 'departure_airports'];
+        foreach ($jsonFields as $jsonField) {
+            if (isset($tourFields[$jsonField]) && is_array($tourFields[$jsonField])) {
+                $tourFields[$jsonField] = json_encode($tourFields[$jsonField], JSON_UNESCAPED_UNICODE);
+            }
         }
         
         // Set sync metadata (system fields, not from mapping)

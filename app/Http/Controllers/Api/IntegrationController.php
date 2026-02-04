@@ -2509,7 +2509,8 @@ class IntegrationController extends Controller
      * 
      * This allows users to sync specific tours from the search page
      * without waiting for scheduled sync.
-     * Uses the same mapping logic as SyncToursJob.
+     * 
+     * NEW: Uses SyncToursJob directly for 100% same logic as scheduled sync.
      * 
      * @param int $id Integration ID (WholesalerApiConfig primary key)
      */
@@ -2518,7 +2519,9 @@ class IntegrationController extends Controller
         $validator = Validator::make($request->all(), [
             'tours' => 'required|array|min:1|max:5',
             'tours.*._raw' => 'required|array',
-            'tours.*._wholesaler_id' => 'required|integer',
+            // Support both _wholesaler_id and _integration_id
+            'tours.*._wholesaler_id' => 'required_without:tours.*._integration_id|integer',
+            'tours.*._integration_id' => 'required_without:tours.*._wholesaler_id|integer',
         ], [
             'tours.required' => 'กรุณาเลือกทัวร์ที่ต้องการ sync',
             'tours.min' => 'กรุณาเลือกอย่างน้อย 1 ทัวร์',
@@ -2536,26 +2539,6 @@ class IntegrationController extends Controller
         // Use integration ID (primary key) instead of wholesaler_id
         $config = WholesalerApiConfig::findOrFail($id);
         $wholesalerId = $config->wholesaler_id;
-        $wholesalerCode = $config->wholesaler?->code ?? 'default';
-
-        // Check sync mode (single or two_phase)
-        $syncMode = $config->sync_mode ?? 'single';
-        $credentials = $config->auth_credentials ?? [];
-        $endpoints = $credentials['endpoints'] ?? [];
-
-        // Initialize PDF branding service if configured (same as SyncToursJob)
-        $pdfBranding = null;
-        if ($config->pdf_header_image || $config->pdf_footer_image) {
-            $pdfBranding = new \App\Services\PdfBrandingService();
-            $pdfBranding->setHeader($config->pdf_header_image, $config->pdf_header_height);
-            $pdfBranding->setFooter($config->pdf_footer_image, $config->pdf_footer_height);
-        }
-
-        // Create adapter for two-phase API calls
-        $adapter = null;
-        if ($syncMode === 'two_phase') {
-            $adapter = \App\Services\WholesalerAdapters\AdapterFactory::create($wholesalerId);
-        }
 
         // Load field mappings (same as SyncToursJob)
         $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)
@@ -2563,299 +2546,108 @@ class IntegrationController extends Controller
             ->get()
             ->groupBy('section_name');
 
-        $results = [
-            'total' => count($request->tours),
-            'success' => 0,
-            'failed' => 0,
-            'skipped' => 0,
-            'details' => [],
-        ];
+        // Get aggregation_config for nested data structure support
+        $dataStructure = $config->aggregation_config ?? [];
 
-        foreach ($request->tours as $index => $tourData) {
+        // Transform raw tours to the format expected by SyncToursJob
+        // SyncToursJob expects: [['tour' => [...], 'departure' => [...], 'itinerary' => [...]], ...]
+        $transformedTours = [];
+        $externalIds = [];
+
+        foreach ($request->tours as $tourData) {
             $raw = $tourData['_raw'] ?? [];
-            $externalId = $tourData['external_id'] ?? $raw['ProductId'] ?? $raw['id'] ?? $raw['code'] ?? null;
+            
+            // Determine external_id (same logic as SyncToursJob)
+            $externalId = $tourData['external_id'] 
+                ?? $raw['ProductId'] 
+                ?? $raw['tour_id']
+                ?? $raw['id'] 
+                ?? $raw['code'] 
+                ?? null;
 
             if (!$externalId) {
-                $results['failed']++;
-                $results['details'][] = [
-                    'index' => $index,
-                    'status' => 'failed',
-                    'error' => 'ไม่พบ external_id',
-                ];
                 continue;
             }
 
-            try {
-                DB::beginTransaction();
+            $externalIds[] = $externalId;
 
-                // Transform raw data using mappings (same logic as SyncToursJob)
-                // Pass aggregation_config for nested data structure support
-                $transformed = $this->transformTourDataForSync($raw, $mappings, $config->aggregation_config ?? []);
-                
-                // Extract tour data (merge tour + content + media sections)
-                $tourFields = array_merge(
-                    $transformed['tour'] ?? [],
-                    $transformed['content'] ?? [],
-                    $transformed['media'] ?? [],
-                    $transformed['seo'] ?? []
-                );
-                $tourFields['external_id'] = $externalId;
+            // Use SyncToursJob's transform logic via the job instance
+            // Create a temporary job to use its protected methods
+            $job = new \App\Jobs\SyncToursJob($wholesalerId);
+            
+            // Use reflection to call protected transformTourData method
+            $reflection = new \ReflectionClass($job);
+            $method = $reflection->getMethod('transformTourData');
+            $method->setAccessible(true);
+            
+            $transformed = $method->invoke($job, $raw, $mappings, $dataStructure);
+            
+            // Add external_id to tour section
+            $transformed['tour']['external_id'] = $externalId;
+            
+            $transformedTours[] = $transformed;
+        }
 
-                // Process PDF if exists - upload to Cloudflare R2 (with branding if configured)
-                // Same logic as SyncToursJob
-                $pdfUrl = $tourFields['pdf_url'] ?? null;
-                if ($pdfUrl && str_starts_with($pdfUrl, 'http') && !str_contains($pdfUrl, env('R2_URL', ''))) {
-                    try {
-                        if ($pdfBranding) {
-                            // Download, add header/footer, then upload to R2
-                            $brandedPdfUrl = $pdfBranding->processAndUpload($pdfUrl, $wholesalerCode);
-                            if ($brandedPdfUrl) {
-                                $tourFields['pdf_url'] = $brandedPdfUrl;
-                            }
-                        } else {
-                            // No branding - still upload to R2
-                            $filename = pathinfo(parse_url($pdfUrl, PHP_URL_PATH), PATHINFO_FILENAME);
-                            $filename = preg_replace('/[^a-zA-Z0-9_-]/', '_', $filename) . '_' . uniqid() . '.pdf';
-                            $r2Path = "pdfs/{$wholesalerCode}/" . date('Y/m') . "/{$filename}";
-                            
-                            // Download and upload to R2
-                            $pdfContent = @file_get_contents($pdfUrl);
-                            if ($pdfContent) {
-                                $disk = \Storage::disk('r2');
-                                $disk->put($r2Path, $pdfContent, 'public');
-                                $r2Url = env('R2_URL');
-                                if ($r2Url) {
-                                    $tourFields['pdf_url'] = rtrim($r2Url, '/') . '/' . $r2Path;
-                                } else {
-                                    $tourFields['pdf_url'] = $disk->url($r2Path);
-                                }
-                            }
-                        }
-                    } catch (\Exception $e) {
-                        Log::warning('Mass Sync: Failed to upload PDF to R2', [
-                            'url' => $pdfUrl,
-                            'error' => $e->getMessage(),
-                        ]);
-                        // Keep original URL if upload fails
-                    }
-                }
+        if (empty($transformedTours)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ไม่พบทัวร์ที่มี external_id ที่ถูกต้อง',
+            ], 422);
+        }
 
-                // Process cover image - upload to Cloudflare (same as SyncToursJob)
-                $coverImageUrl = $tourFields['cover_image_url'] ?? null;
-                if ($coverImageUrl && str_starts_with($coverImageUrl, 'http') && !str_contains($coverImageUrl, 'imagedelivery.net')) {
-                    try {
-                        $cloudflare = app(\App\Services\CloudflareImagesService::class);
-                        if ($cloudflare->isConfigured()) {
-                            $uploadResult = $cloudflare->uploadFromUrl($coverImageUrl, 'tour-cover-' . uniqid());
-                            if ($uploadResult && isset($uploadResult['id'])) {
-                                $tourFields['cover_image_url'] = $cloudflare->getDisplayUrl($uploadResult['id']);
-                            }
-                        }
-                    } catch (\Exception $e) {
-                        Log::warning('Mass Sync: Failed to upload cover image', [
-                            'url' => $coverImageUrl,
-                            'error' => $e->getMessage(),
-                        ]);
-                        // Keep original URL if upload fails
-                    }
-                }
-                
-                // Auto-calculate duration_nights from duration_days if not provided
-                if (empty($tourFields['duration_nights']) && !empty($tourFields['duration_days'])) {
-                    $tourFields['duration_nights'] = max(0, (int)$tourFields['duration_days'] - 1);
-                }
-                
-                // Ensure duration_nights has a value (required field)
-                if (!isset($tourFields['duration_nights']) || $tourFields['duration_nights'] === null) {
-                    $tourFields['duration_nights'] = 0;
-                }
+        // Dispatch SyncToursJob synchronously (same logic as scheduled sync)
+        // This ensures 100% same behavior: PDF branding, city extraction, emoji removal, etc.
+        try {
+            $job = new \App\Jobs\SyncToursJob(
+                $wholesalerId,
+                $transformedTours,
+                'manual', // sync_type
+                null // no limit
+            );
+            
+            // Run synchronously (not queued) - dispatchSync equivalent
+            $job->handle();
 
-                // Find or create tour
-                $tour = \App\Models\Tour::where('wholesaler_id', $wholesalerId)
-                    ->where('external_id', $externalId)
-                    ->first();
+            // Get the created/updated tours
+            $syncedTours = \App\Models\Tour::where('wholesaler_id', $wholesalerId)
+                ->whereIn('external_id', $externalIds)
+                ->get(['id', 'tour_code', 'external_id', 'title', 'created_at', 'updated_at']);
 
-                $isNew = !$tour;
-
-                if ($isNew) {
-                    $tour = new \App\Models\Tour();
-                    $tour->wholesaler_id = $wholesalerId;
-                    $tour->external_id = $externalId;
-                    $tour->tour_code = \App\Models\Tour::generateTourCode();
-                    $tour->data_source = 'api';
-                    $tour->status = 'draft';
-                } else {
-                    // Skip if tour was created manually
-                    if ($tour->data_source === 'manual') {
-                        $results['skipped']++;
-                        $results['details'][] = [
-                            'index' => $index,
-                            'external_id' => $externalId,
-                            'status' => 'skipped',
-                            'reason' => 'manual_tour',
-                        ];
-                        DB::rollBack();
-                        continue;
-                    }
-                }
-
-                // Fill tour data
-                $tour->fill($this->filterFillable($tour, $tourFields));
-                $tour->sync_status = 'active';
-                $tour->last_synced_at = now();
-                $tour->save();
-
-                // Sync primary country to tour_countries pivot table (same as SyncToursJob)
-                if (!empty($tourFields['primary_country_id'])) {
-                    $countryId = $tourFields['primary_country_id'];
-                    $currentPrimary = $tour->countries()->wherePivot('is_primary', true)->first();
-                    if ($currentPrimary && $currentPrimary->id !== $countryId) {
-                        $tour->countries()->detach($currentPrimary->id);
-                    }
-                    $exists = $tour->countries()->where('country_id', $countryId)->exists();
-                    if (!$exists) {
-                        $tour->countries()->attach($countryId, ['is_primary' => true, 'sort_order' => 1]);
-                    } else {
-                        $tour->countries()->updateExistingPivot($countryId, ['is_primary' => true]);
-                    }
-                }
-
-                // Sync transport to tour_transports table (same as SyncToursJob)
-                if (!empty($tourFields['transport_id'])) {
-                    $transportId = $tourFields['transport_id'];
-                    $transport = \App\Models\Transport::find($transportId);
-                    if ($transport) {
-                        $exists = $tour->transports()->where('transport_id', $transportId)->exists();
-                        if (!$exists) {
-                            $tour->transports()->create([
-                                'transport_id' => $transportId,
-                                'transport_code' => $transport->code ?? '',
-                                'transport_name' => $transport->name ?? '',
-                                'transport_type' => 'outbound',
-                                'sort_order' => 1,
-                            ]);
-                        }
-                    }
-                }
-
-                // Process periods/departures
-                // Two Phase: Periods MUST be fetched from separate Periods Endpoint
-                // Single Phase: Use periods from Tours response
-                $periodsResult = ['created' => 0, 'updated' => 0, 'skipped_past' => 0];
-                
-                if ($syncMode === 'two_phase') {
-                    // Two-Phase: MUST fetch periods from separate API endpoint
-                    if (!empty($endpoints['periods']) && $adapter) {
-                        try {
-                            $periodsResult = $this->fetchAndSyncPeriodsFromApi(
-                                $tour, $adapter, $endpoints, $wholesalerId
-                            );
-                        } catch (\Exception $e) {
-                            Log::error('Mass Sync: Failed to fetch periods from API', [
-                                'tour_id' => $tour->id,
-                                'endpoint' => $endpoints['periods'] ?? 'N/A',
-                                'error' => $e->getMessage(),
-                            ]);
-                        }
-                    } else {
-                        Log::warning('Mass Sync: Two-phase mode but no periods endpoint configured', [
-                            'tour_id' => $tour->id,
-                        ]);
-                    }
-                } else {
-                    // Single-Phase: Use periods from Tours response
-                    $departures = $transformed['departure'] ?? [];
-                    if (!empty($departures)) {
-                        $periodsResult = $this->processDeparturesForSync($tour, $departures);
-                    }
-                }
-
-                // Process itineraries
-                // Two Phase: If Itineraries Endpoint is set → fetch from it, otherwise use Tours response
-                // Single Phase: Use itineraries from Tours response
-                $itineraries = $transformed['itinerary'] ?? [];
-                
-                Log::debug('Mass Sync: Processing itineraries', [
-                    'tour_id' => $tour->id,
-                    'sync_mode' => $syncMode,
-                    'has_itineraries_endpoint' => !empty($endpoints['itineraries']),
-                    'has_adapter' => $adapter !== null,
-                    'transformed_itineraries_count' => count($itineraries),
-                ]);
-                
-                if ($syncMode === 'two_phase' && !empty($endpoints['itineraries']) && $adapter) {
-                    // Two-Phase with Itineraries Endpoint: fetch from separate API
-                    try {
-                        $this->fetchAndSyncItinerariesFromApi(
-                            $tour, $adapter, $endpoints, $wholesalerId
-                        );
-                    } catch (\Exception $e) {
-                        Log::error('Mass Sync: Failed to fetch itineraries from API', [
-                            'tour_id' => $tour->id,
-                            'endpoint' => $endpoints['itineraries'] ?? 'N/A',
-                            'error' => $e->getMessage(),
-                        ]);
-                    }
-                } else {
-                    // Single-Phase OR Two-Phase without Itineraries Endpoint: use Tours response
-                    if (!empty($itineraries)) {
-                        foreach ($itineraries as $itin) {
-                            $this->processItineraryForSync($tour, $itin);
-                        }
-                    }
-                }
-
-                DB::commit();
-
-                // Recalculate aggregates (outside transaction to not fail the sync)
-                try {
-                    $tour->recalculateAggregates();
-                } catch (\Exception $e) {
-                    Log::warning('recalculateAggregates failed (may need migration)', [
+            $results = [
+                'total' => count($transformedTours),
+                'success' => $syncedTours->count(),
+                'failed' => count($transformedTours) - $syncedTours->count(),
+                'skipped' => 0,
+                'details' => $syncedTours->map(function ($tour) {
+                    return [
+                        'external_id' => $tour->external_id,
                         'tour_id' => $tour->id,
-                        'error' => $e->getMessage(),
-                    ]);
-                }
+                        'tour_code' => $tour->tour_code,
+                        'title' => $tour->title,
+                        'status' => 'success',
+                        'is_new' => $tour->created_at->eq($tour->updated_at),
+                    ];
+                })->toArray(),
+            ];
 
-                $results['success']++;
-                $results['details'][] = [
-                    'index' => $index,
-                    'external_id' => $externalId,
-                    'tour_id' => $tour->id,
-                    'tour_code' => $tour->tour_code,
-                    'status' => 'success',
-                    'is_new' => $isNew,
-                    'periods' => $periodsResult,
-                ];
+            return response()->json([
+                'success' => true,
+                'message' => "Sync สำเร็จ {$results['success']}/{$results['total']} ทัวร์",
+                'data' => $results,
+            ]);
 
-            } catch (\Exception $e) {
-                DB::rollBack();
-                Log::error('Sync selected tour failed', [
-                    'index' => $index,
-                    'external_id' => $externalId,
-                    'error' => $e->getMessage(),
-                ]);
+        } catch (\Exception $e) {
+            Log::error('Mass Sync via SyncToursJob failed', [
+                'wholesaler_id' => $wholesalerId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
 
-                $results['failed']++;
-                $results['details'][] = [
-                    'index' => $index,
-                    'external_id' => $externalId,
-                    'status' => 'failed',
-                    'error' => $e->getMessage(),
-                ];
-            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Sync ล้มเหลว: ' . $e->getMessage(),
+            ], 500);
         }
-
-        // Cleanup PDF branding service (same as SyncToursJob)
-        if ($pdfBranding) {
-            $pdfBranding->cleanup();
-        }
-
-        return response()->json([
-            'success' => $results['failed'] === 0,
-            'message' => "Sync สำเร็จ {$results['success']}/{$results['total']} ทัวร์",
-            'data' => $results,
-        ]);
     }
 
     /**
