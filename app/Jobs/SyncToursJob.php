@@ -1426,6 +1426,11 @@ class SyncToursJob implements ShouldQueue
         // Set data_source (system field)
         $itinFields['data_source'] = 'api';
         
+        // Truncate title to fit varchar(255)
+        if (!empty($itinFields['title']) && mb_strlen($itinFields['title']) > 250) {
+            $itinFields['title'] = mb_substr($itinFields['title'], 0, 247) . '...';
+        }
+        
         // Auto-set sort_order from day_number if not provided
         if (empty($itinFields['sort_order']) && !empty($itinFields['day_number'])) {
             $itinFields['sort_order'] = $itinFields['day_number'];
