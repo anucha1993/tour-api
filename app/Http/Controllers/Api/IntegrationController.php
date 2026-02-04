@@ -2554,6 +2554,16 @@ class IntegrationController extends Controller
         $transformedTours = [];
         $externalIds = [];
 
+        // For two_phase mode, we need to fetch detail for each tour
+        // because the list endpoint doesn't include periods/itinerary
+        $isTwoPhase = $config->sync_mode === 'two_phase';
+        $adapter = null;
+        
+        if ($isTwoPhase) {
+            // Create adapter to fetch tour details
+            $adapter = \App\Services\WholesalerAdapters\AdapterFactory::create($wholesalerId);
+        }
+
         foreach ($request->tours as $tourData) {
             $raw = $tourData['_raw'] ?? [];
             
@@ -2570,6 +2580,27 @@ class IntegrationController extends Controller
             }
 
             $externalIds[] = $externalId;
+
+            // For two_phase mode, fetch the full tour detail
+            if ($isTwoPhase && $adapter) {
+                try {
+                    $detailData = $adapter->fetchTourDetail((string) $externalId);
+                    if (!empty($detailData)) {
+                        // Use detail data instead of list data
+                        $raw = $detailData;
+                        Log::info('Mass Sync: Fetched detail for tour', [
+                            'external_id' => $externalId,
+                            'periods_count' => count($raw['periods'] ?? []),
+                        ]);
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('Mass Sync: Failed to fetch tour detail', [
+                        'external_id' => $externalId,
+                        'error' => $e->getMessage(),
+                    ]);
+                    // Continue with list data
+                }
+            }
 
             // Use SyncToursJob's transform logic via the job instance
             // Create a temporary job to use its protected methods
