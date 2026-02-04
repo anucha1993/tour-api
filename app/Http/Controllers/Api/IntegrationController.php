@@ -2582,6 +2582,8 @@ class IntegrationController extends Controller
             $externalIds[] = $externalId;
 
             // For two_phase mode, fetch the full tour detail
+            // Detail response has different structure (flat) vs list response (nested)
+            $useDetailDataStructure = false;
             if ($isTwoPhase && $adapter) {
                 try {
                     $detailData = $adapter->fetchTourDetail((string) $externalId);
@@ -2592,6 +2594,7 @@ class IntegrationController extends Controller
                         }
                         // Use detail data instead of list data
                         $raw = $detailData;
+                        $useDetailDataStructure = true;
                         Log::info('Mass Sync: Fetched detail for tour', [
                             'external_id' => $externalId,
                             'tour_period_count' => count($raw['tour_period'] ?? []),
@@ -2607,6 +2610,20 @@ class IntegrationController extends Controller
                 }
             }
 
+            // For detail response, adjust dataStructure paths
+            // Detail response is flat (tour_period[], tour_daily[]) 
+            // vs List response is nested (periods[].tour_period[])
+            $effectiveDataStructure = $dataStructure;
+            if ($useDetailDataStructure) {
+                $effectiveDataStructure = [
+                    'data_structure' => [
+                        'departures' => ['path' => 'tour_period[]'],
+                        'itineraries' => ['path' => 'tour_daily[]'],
+                        'cities' => ['path' => 'tour_city[]'],
+                    ]
+                ];
+            }
+
             // Use SyncToursJob's transform logic via the job instance
             // Create a temporary job to use its protected methods
             $job = new \App\Jobs\SyncToursJob($wholesalerId);
@@ -2616,7 +2633,7 @@ class IntegrationController extends Controller
             $method = $reflection->getMethod('transformTourData');
             $method->setAccessible(true);
             
-            $transformed = $method->invoke($job, $raw, $mappings, $dataStructure);
+            $transformed = $method->invoke($job, $raw, $mappings, $effectiveDataStructure);
             
             // Add external_id to tour section
             $transformed['tour']['external_id'] = $externalId;

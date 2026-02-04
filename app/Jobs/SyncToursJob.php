@@ -695,6 +695,10 @@ class SyncToursJob implements ShouldQueue
      * e.g., "periods[].tour_period[].period_id" with base "periods[].tour_period[]"
      *       returns "period_id"
      * 
+     * Also handles partial matches:
+     * e.g., "periods[].tour_period[].period_id" with base "tour_period[]"
+     *       returns "period_id"
+     * 
      * @param string|null $fullPath Full field path from mapping
      * @param string|null $basePath Base path from aggregation_config (null = use default cleaning)
      * @return string Cleaned path relative to the nested item
@@ -705,14 +709,28 @@ class SyncToursJob implements ShouldQueue
             return '';
         }
         if ($basePath) {
-            // Remove the base path prefix
-            // e.g., "periods[].tour_period[].period_id" → "period_id"
+            // Method 1: Remove the full base path prefix
+            // e.g., "periods[].tour_period[].period_id" with base "periods[].tour_period[]" → "period_id"
             $basePattern = preg_quote(rtrim($basePath, '[]') . '.', '/');
             $cleanPath = preg_replace('/^' . $basePattern . '/', '', $fullPath);
             
             // Also try with [] at the end
             $basePatternWithBracket = preg_quote($basePath . '.', '/');
             $cleanPath = preg_replace('/^' . $basePatternWithBracket . '/', '', $cleanPath);
+            
+            // Method 2: If base path is a partial match (e.g., "tour_period[]" vs full "periods[].tour_period[]")
+            // Extract final segment and remove everything up to and including it
+            // e.g., base = "tour_period[]", full = "periods[].tour_period[].period_id"
+            //       We need to find "tour_period[]." in full path and remove everything before and including it
+            if (strpos($fullPath, $basePath) !== false) {
+                $pattern = '/^.*?' . preg_quote($basePath . '.', '/') . '/';
+                $cleanPath = preg_replace($pattern, '', $fullPath);
+            } elseif (strpos($fullPath, rtrim($basePath, '[]')) !== false) {
+                // Try without the brackets
+                $baseWithoutBrackets = rtrim($basePath, '[]');
+                $pattern = '/^.*?' . preg_quote($baseWithoutBrackets, '/') . '\[\]\./';
+                $cleanPath = preg_replace($pattern, '', $fullPath);
+            }
             
             return $cleanPath;
         }
@@ -1167,7 +1185,11 @@ class SyncToursJob implements ShouldQueue
         // Process departures/periods - check sync_mode
         $syncMode = $config->sync_mode ?? 'single';
         
-        if ($syncMode === 'two_phase') {
+        // For two_phase mode: if we already have departures data (from Mass Sync detail fetch),
+        // process them directly instead of dispatching SyncPeriodsJob
+        $hasDeparturesData = !empty($departures);
+        
+        if ($syncMode === 'two_phase' && !$hasDeparturesData) {
             // Two-Phase Sync: dispatch SyncPeriodsJob to fetch periods separately
             $externalId = $tour->external_id ?? $tour->wholesaler_tour_code;
             
@@ -1203,7 +1225,11 @@ class SyncToursJob implements ShouldQueue
         }
 
         // Process itineraries - check sync_mode
-        if ($syncMode === 'two_phase') {
+        // For two_phase mode: if we already have itineraries data (from Mass Sync detail fetch),
+        // process them directly
+        $hasItinerariesData = !empty($itineraries);
+        
+        if ($syncMode === 'two_phase' && !$hasItinerariesData) {
             // Two-Phase Sync: fetch itineraries from separate API endpoint
             $credentials = $config->auth_credentials ?? [];
             $endpoints = $credentials['endpoints'] ?? [];
@@ -1213,7 +1239,7 @@ class SyncToursJob implements ShouldQueue
                 $this->fetchAndSyncItineraries($tour, $config, $itinerariesEndpoint);
             }
         } else {
-            // Single-Phase: process itineraries from same API response
+            // Single-Phase or has data: process itineraries from API response
             foreach ($itineraries as $itin) {
                 $this->processItinerary($tour, $itin);
             }
@@ -1343,6 +1369,24 @@ class SyncToursJob implements ShouldQueue
 
         if (!$dayNumber && !$externalId) {
             return;
+        }
+
+        // Handle nested array fields - convert to string
+        // e.g., day_list: [{day_title, day_description}, ...] → concatenated string
+        if (isset($itinData['description']) && is_array($itinData['description'])) {
+            $descParts = [];
+            foreach ($itinData['description'] as $item) {
+                if (is_array($item)) {
+                    // Extract day_description or day_title from nested structure
+                    $text = $item['day_description'] ?? $item['description'] ?? $item['day_title'] ?? '';
+                    if (!empty($text)) {
+                        $descParts[] = $text;
+                    }
+                } elseif (is_string($item)) {
+                    $descParts[] = $item;
+                }
+            }
+            $itinData['description'] = implode("\n", $descParts);
         }
 
         // Find existing itinerary
