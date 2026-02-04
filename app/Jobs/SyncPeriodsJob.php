@@ -604,15 +604,21 @@ class SyncPeriodsJob implements ShouldQueue
                     'data_source' => 'api',
                     'day_number' => $itinData['day_number'] ?? $dayNumber,
                     'title' => $itinData['title'] ?? "Day {$dayNumber}",
-                    'description' => $itinData['description'] ?? null,
-                    'places' => $itinData['places'] ?? null,
+                    'description' => is_array($itinData['description'] ?? null) 
+                        ? json_encode($itinData['description'], JSON_UNESCAPED_UNICODE) 
+                        : ($itinData['description'] ?? null),
+                    'places' => is_array($itinData['places'] ?? null) 
+                        ? json_encode($itinData['places'], JSON_UNESCAPED_UNICODE) 
+                        : ($itinData['places'] ?? null),
                     'has_breakfast' => $this->parseMealFlag($itinData['has_breakfast'] ?? null, 'breakfast'),
                     'has_lunch' => $this->parseMealFlag($itinData['has_lunch'] ?? null, 'lunch'),
                     'has_dinner' => $this->parseMealFlag($itinData['has_dinner'] ?? null, 'dinner'),
                     'meals_note' => $itinData['meals_note'] ?? null,
                     'accommodation' => $itinData['accommodation'] ?? null,
                     'hotel_star' => $itinData['hotel_star'] ?? null,
-                    'images' => $itinData['images'] ?? null,
+                    'images' => is_array($itinData['images'] ?? null) 
+                        ? json_encode($itinData['images'], JSON_UNESCAPED_UNICODE) 
+                        : ($itinData['images'] ?? null),
                     'sort_order' => $dayNumber,
                 ]);
                 
@@ -911,10 +917,22 @@ class SyncPeriodsJob implements ShouldQueue
                 // Try to find city in our cities table by name
                 $cityId = $this->findCityId($cityData);
                 
+                // Get country_id from the city record (not from API)
+                $countryId = null;
+                if ($cityId) {
+                    $city = DB::table('cities')->where('id', $cityId)->first();
+                    $countryId = $city->country_id ?? null;
+                }
+                
+                // Fallback to tour's primary_country_id if no city found
+                if (!$countryId) {
+                    $countryId = $tour->primary_country_id;
+                }
+                
                 DB::table('tour_cities')->insert([
                     'tour_id' => $tour->id,
                     'city_id' => $cityId,
-                    'country_id' => $cityData['country_id'] ?? null,
+                    'country_id' => $countryId,
                     'sort_order' => $sortOrder,
                     'days_in_city' => 1,
                     'created_at' => now(),
