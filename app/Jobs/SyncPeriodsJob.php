@@ -105,6 +105,23 @@ class SyncPeriodsJob implements ShouldQueue
                 return;
             }
 
+            // Get aggregation config for nested data structure
+            $aggConfig = $config->aggregation_config ?? [];
+            $dataStructure = $aggConfig['data_structure'] ?? [];
+            $departuresPath = $dataStructure['departures']['path'] ?? null;
+
+            // Flatten nested periods if custom path is configured
+            $periods = $result->periods ?? [];
+            if ($departuresPath && !empty($periods)) {
+                $periods = $this->flattenNestedPeriods($periods, $departuresPath);
+                Log::info('SyncPeriodsJob: Flattened nested periods', [
+                    'tour_id' => $this->tourId,
+                    'path' => $departuresPath,
+                    'original_count' => count($result->periods ?? []),
+                    'flattened_count' => count($periods),
+                ]);
+            }
+
             // Get field mappings for periods
             $mappings = WholesalerFieldMapping::where('wholesaler_id', $this->wholesalerId)
                 ->where('section_name', 'departure')
@@ -114,9 +131,9 @@ class SyncPeriodsJob implements ShouldQueue
             // Process each period
             $stats = ['created' => 0, 'updated' => 0, 'skipped' => 0];
             
-            foreach ($result->periods as $rawPeriod) {
+            foreach ($periods as $rawPeriod) {
                 try {
-                    $periodData = $this->transformPeriodData($rawPeriod, $mappings);
+                    $periodData = $this->transformPeriodData($rawPeriod, $mappings, $departuresPath);
                     $this->syncPeriod($tour, $periodData, $stats);
                 } catch (\Exception $e) {
                     Log::error('SyncPeriodsJob: Error processing period', [
@@ -162,9 +179,44 @@ class SyncPeriodsJob implements ShouldQueue
     }
 
     /**
+     * Flatten nested periods array based on custom path
+     * e.g., if path is "periods[].tour_period[]", extract tour_period items from each period
+     */
+    protected function flattenNestedPeriods(array $data, string $path): array
+    {
+        // Parse path to get nested array key
+        // e.g., "periods[].tour_period[]" -> need to extract "tour_period" from each period
+        // But the API response for periods endpoint might already be at "periods" level
+        // So we need to check for the nested part after "periods[]."
+        
+        $path = preg_replace('/^[Pp]eriods\[\]\./', '', $path);
+        
+        // If path is like "tour_period[]", extract that nested array
+        if (preg_match('/^([a-zA-Z_]+)\[\]/', $path, $matches)) {
+            $nestedKey = $matches[0]; // e.g., "tour_period[]"
+            $nestedKey = str_replace('[]', '', $nestedKey); // e.g., "tour_period"
+            
+            $flattened = [];
+            foreach ($data as $item) {
+                if (isset($item[$nestedKey]) && is_array($item[$nestedKey])) {
+                    foreach ($item[$nestedKey] as $nestedItem) {
+                        $flattened[] = $nestedItem;
+                    }
+                } else {
+                    // If no nested key, keep the item as is
+                    $flattened[] = $item;
+                }
+            }
+            return $flattened;
+        }
+        
+        return $data;
+    }
+
+    /**
      * Transform raw period data using field mappings
      */
-    protected function transformPeriodData(array $rawPeriod, $mappings): array
+    protected function transformPeriodData(array $rawPeriod, $mappings, ?string $basePath = null): array
     {
         $result = [];
 
@@ -172,6 +224,11 @@ class SyncPeriodsJob implements ShouldQueue
             $fieldPath = $mapping->their_field_path ?? $mapping->their_field ?? null;
             if (empty($fieldPath)) {
                 continue;
+            }
+            
+            // Clean path if we have a base path
+            if ($basePath) {
+                $fieldPath = $this->cleanNestedPath($fieldPath, $basePath);
             }
             
             $value = $this->extractValue($rawPeriod, $fieldPath);
@@ -187,20 +244,66 @@ class SyncPeriodsJob implements ShouldQueue
     }
 
     /**
+     * Clean field path by removing the base path prefix
+     * e.g., "periods[].tour_period[].period_id" with base "periods[].tour_period[]" -> "period_id"
+     */
+    protected function cleanNestedPath(string $fullPath, string $basePath): string
+    {
+        // Remove base path prefix if it exists
+        $basePathWithDot = $basePath . '.';
+        if (str_starts_with($fullPath, $basePathWithDot)) {
+            return substr($fullPath, strlen($basePathWithDot));
+        }
+        
+        // Try without the last [] in base path
+        $basePathClean = preg_replace('/\[\]$/', '', $basePath);
+        $basePathCleanWithDot = $basePathClean . '[].';
+        if (str_starts_with($fullPath, $basePathCleanWithDot)) {
+            return substr($fullPath, strlen($basePathCleanWithDot));
+        }
+        
+        return $fullPath;
+    }
+
+    /**
      * Extract value from raw data using field path
+     * Supports nested array paths like "tour_period[].period_id"
      */
     protected function extractValue(array $data, string $fieldPath): mixed
     {
-        // Strip array prefix like "periods[]." since we're already iterating over the array
+        // Strip common array prefixes since we're already iterating over the base array
         $fieldPath = preg_replace('/^[Pp]eriods\[\]\./', '', $fieldPath);
         $fieldPath = preg_replace('/^[Ss]chedules\[\]\./', '', $fieldPath);
         $fieldPath = preg_replace('/^[Dd]epartures\[\]\./', '', $fieldPath);
+        
+        // Handle nested array paths like "tour_period[].period_id"
+        // Strip the nested array prefix if we're already in that context
+        if (preg_match('/^([a-zA-Z_]+)\[\]\.(.+)$/', $fieldPath, $matches)) {
+            // We're accessing a nested array, get first item
+            $nestedArrayKey = $matches[1];
+            $remainingPath = $matches[2];
+            
+            if (isset($data[$nestedArrayKey]) && is_array($data[$nestedArrayKey]) && !empty($data[$nestedArrayKey])) {
+                // If the value is already the direct item (not wrapped in array)
+                $firstItem = $data[$nestedArrayKey][0] ?? $data[$nestedArrayKey];
+                return $this->extractValue($firstItem, $remainingPath);
+            }
+            return null;
+        }
         
         $parts = explode('.', $fieldPath);
         $value = $data;
 
         foreach ($parts as $part) {
-            if (is_array($value) && isset($value[$part])) {
+            // Handle array notation like "rate[]"
+            if (str_ends_with($part, '[]')) {
+                $key = substr($part, 0, -2);
+                if (is_array($value) && isset($value[$key]) && is_array($value[$key]) && !empty($value[$key])) {
+                    $value = $value[$key][0]; // Get first item
+                } else {
+                    return null;
+                }
+            } elseif (is_array($value) && isset($value[$part])) {
                 $value = $value[$part];
             } else {
                 return null;

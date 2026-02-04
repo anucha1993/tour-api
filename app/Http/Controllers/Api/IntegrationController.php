@@ -303,6 +303,13 @@ class IntegrationController extends Controller
             'notification_types' => 'nullable|array',
             // City extraction
             'extract_cities_from_name' => 'nullable|boolean',
+            // Data structure config for nested arrays
+            'aggregation_config' => 'nullable|array',
+            'aggregation_config.data_structure' => 'nullable|array',
+            'aggregation_config.data_structure.departures' => 'nullable|array',
+            'aggregation_config.data_structure.departures.path' => 'nullable|string|max:255',
+            'aggregation_config.data_structure.itineraries' => 'nullable|array',
+            'aggregation_config.data_structure.itineraries.path' => 'nullable|string|max:255',
         ]);
 
         if ($validator->fails()) {
