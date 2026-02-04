@@ -270,6 +270,7 @@ class SyncToursJob implements ShouldQueue
         // Helper to extract value from nested path
         $extractValue = function($data, $path) use (&$extractValue) {
             if (empty($path)) return null;
+            if (!is_array($data)) return null;
             
             // Handle fallback paths with | separator (e.g., "countries[].code|countries[].name")
             if (strpos($path, '|') !== false) {
@@ -283,24 +284,28 @@ class SyncToursJob implements ShouldQueue
                 return null;
             }
             
-            // Handle array notation like "Periods[]" or "countries[].code"
+            // Handle array notation like "periods[].tour_period[].period_flight[].flight_airline_name"
             if (strpos($path, '[]') !== false) {
-                $parts = explode('[].', $path);
-                $arrayKey = $parts[0];
-                $fieldPath = $parts[1] ?? null;
-                
-                if (!isset($data[$arrayKey]) || !is_array($data[$arrayKey])) return null;
-                if (empty($data[$arrayKey])) return null;
-                
-                // Get first element from array
-                $firstItem = $data[$arrayKey][0] ?? null;
-                if (!$firstItem) return null;
-                
-                if ($fieldPath) {
-                    // Recursively get nested field from first item
-                    return $extractValue($firstItem, $fieldPath);
+                // Split only at the FIRST []. to handle nested arrays properly
+                $pos = strpos($path, '[].');
+                if ($pos !== false) {
+                    $arrayKey = substr($path, 0, $pos);
+                    $remainingPath = substr($path, $pos + 3); // Skip "[]."
+                    
+                    if (!isset($data[$arrayKey]) || !is_array($data[$arrayKey])) return null;
+                    if (empty($data[$arrayKey])) return null;
+                    
+                    // Get first element from array
+                    $firstItem = $data[$arrayKey][0] ?? null;
+                    if (!$firstItem || !is_array($firstItem)) return null;
+                    
+                    // Recursively extract from remaining path
+                    return $extractValue($firstItem, $remainingPath);
+                } else {
+                    // Path ends with [] (e.g., "periods[]") - return entire array
+                    $arrayKey = rtrim($path, '[]');
+                    return $data[$arrayKey] ?? null;
                 }
-                return $firstItem;
             }
             
             // Normal dot notation path
@@ -381,12 +386,22 @@ class SyncToursJob implements ShouldQueue
                     if (!$record && in_array($lookupTable, ['transports', 'countries'])) {
                         $searchValue = trim((string) $value);
                         
-                        // For transports - first try to extract code from parentheses like "CHINA SOUTHERN AIRLINE (CZ)"
-                        if ($lookupTable === 'transports' && preg_match('/\(([A-Z0-9]{2,3})\)/', $searchValue, $matches)) {
-                            $code = $matches[1];
-                            $record = $modelClass::where('code', $code)
-                                ->orWhere('code1', $code)
-                                ->first();
+                        // For transports - try code match first if value looks like an airline code (2-3 chars)
+                        if ($lookupTable === 'transports') {
+                            // If value is short (2-3 chars), it's likely an airline code
+                            if (strlen($searchValue) <= 3 && preg_match('/^[A-Z0-9]{2,3}$/i', $searchValue)) {
+                                $record = $modelClass::where('code', strtoupper($searchValue))
+                                    ->orWhere('code1', strtoupper($searchValue))
+                                    ->first();
+                            }
+                            
+                            // Try to extract code from parentheses like "CHINA SOUTHERN AIRLINE (CZ)"
+                            if (!$record && preg_match('/\(([A-Z0-9]{2,3})\)/', $searchValue, $matches)) {
+                                $code = $matches[1];
+                                $record = $modelClass::where('code', $code)
+                                    ->orWhere('code1', $code)
+                                    ->first();
+                            }
                         }
                         
                         // If still not found, try LIKE match on name (without parentheses part)

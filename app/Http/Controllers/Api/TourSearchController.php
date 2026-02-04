@@ -358,7 +358,9 @@ class TourSearchController extends Controller
      * Lookup tour codes by external_id
      * 
      * POST /api/tours/lookup-codes
-     * Body: { "external_ids": [{ "wholesaler_id": 1, "external_id": "12345" }, ...] }
+     * Body: { "external_ids": [{ "integration_id": 6, "external_id": "12345" }, ...] }
+     * 
+     * Supports both integration_id (config id) and wholesaler_id for backwards compatibility
      * 
      * Returns mapping of external_id to tour_code (null if not synced)
      */
@@ -366,44 +368,54 @@ class TourSearchController extends Controller
     {
         $validated = $request->validate([
             'external_ids' => 'required|array|max:200',
-            'external_ids.*.wholesaler_id' => 'required|numeric',
+            // Support both integration_id and wholesaler_id
+            'external_ids.*.integration_id' => 'nullable|numeric',
+            'external_ids.*.wholesaler_id' => 'nullable|numeric',
             'external_ids.*.external_id' => 'required|string',
         ]);
 
         try {
             $lookupMap = [];
             
-            // Group by wholesaler_id for efficient querying
-            $grouped = collect($validated['external_ids'])->groupBy('wholesaler_id');
-            
-            foreach ($grouped as $wholesalerId => $items) {
-                $externalIds = $items->pluck('external_id')->toArray();
+            // Process each lookup request
+            foreach ($validated['external_ids'] as $item) {
+                $integrationId = $item['integration_id'] ?? null;
+                $wholesalerId = $item['wholesaler_id'] ?? null;
+                $externalId = $item['external_id'];
                 
-                // Query tours with these external_ids
-                $tours = \App\Models\Tour::where('wholesaler_id', $wholesalerId)
-                    ->whereIn('external_id', $externalIds)
-                    ->select('external_id', 'tour_code', 'id', 'title', 'sync_status')
-                    ->get()
-                    ->keyBy('external_id');
-                
-                foreach ($externalIds as $extId) {
-                    $key = "{$wholesalerId}_{$extId}";
-                    if (isset($tours[$extId])) {
-                        $tour = $tours[$extId];
-                        $lookupMap[$key] = [
-                            'synced' => true,
-                            'tour_id' => $tour->id,
-                            'tour_code' => $tour->tour_code,
-                            'sync_status' => $tour->sync_status,
-                        ];
-                    } else {
-                        $lookupMap[$key] = [
-                            'synced' => false,
-                            'tour_id' => null,
-                            'tour_code' => null,
-                            'sync_status' => null,
-                        ];
+                // If integration_id is provided, convert to wholesaler_id
+                if ($integrationId && !$wholesalerId) {
+                    $config = \App\Models\WholesalerApiConfig::find($integrationId);
+                    if ($config) {
+                        $wholesalerId = $config->wholesaler_id;
                     }
+                }
+                
+                if (!$wholesalerId) continue;
+                
+                // Use integration_id for key (since that's what frontend expects)
+                $key = $integrationId ? "{$integrationId}_{$externalId}" : "{$wholesalerId}_{$externalId}";
+                
+                // Query tour
+                $tour = \App\Models\Tour::where('wholesaler_id', $wholesalerId)
+                    ->where('external_id', $externalId)
+                    ->select('external_id', 'tour_code', 'id', 'title', 'sync_status')
+                    ->first();
+                
+                if ($tour) {
+                    $lookupMap[$key] = [
+                        'synced' => true,
+                        'tour_id' => $tour->id,
+                        'tour_code' => $tour->tour_code,
+                        'sync_status' => $tour->sync_status,
+                    ];
+                } else {
+                    $lookupMap[$key] = [
+                        'synced' => false,
+                        'tour_id' => null,
+                        'tour_code' => null,
+                        'sync_status' => null,
+                    ];
                 }
             }
 
