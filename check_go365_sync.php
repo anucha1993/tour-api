@@ -1,6 +1,6 @@
 <?php
 /**
- * Check synced GO365 tour
+ * Check synced GO365 tour with itinerary and transport
  */
 
 require_once __DIR__ . '/vendor/autoload.php';
@@ -10,33 +10,48 @@ $app->make('Illuminate\Contracts\Console\Kernel')->bootstrap();
 
 use App\Models\Tour;
 use App\Models\Period;
+use App\Models\TourItinerary;
+use Illuminate\Support\Facades\DB;
 
-// Get latest synced tour from GO365 (wholesaler_id = 6)
-$tour = Tour::where('wholesaler_id', 6)
-    ->orderBy('updated_at', 'desc')
-    ->first();
+// Get GO365 tour
+$tour = Tour::find(272);
 
 if ($tour) {
-    echo "=== Latest GO365 Tour ===\n";
+    echo "=== GO365 Tour ===\n";
     echo "ID: {$tour->id}\n";
     echo "Title: {$tour->title}\n";
-    echo "Code: {$tour->tour_code}\n";
-    echo "Wholesaler Code: {$tour->wholesaler_tour_code}\n";
-    echo "Updated: {$tour->updated_at}\n";
+    echo "Transport ID: " . ($tour->transport_id ?? 'null') . "\n";
+    
+    // Get transport name
+    if ($tour->transport_id) {
+        $transport = DB::table('transports')->where('id', $tour->transport_id)->first();
+        if ($transport) {
+            $name = $transport->name_en ?? $transport->name ?? $transport->name_th ?? 'Unknown';
+            $code = $transport->code ?? '';
+            echo "Transport: {$name} ({$code})\n";
+        }
+    }
     
     // Check periods
     $periods = Period::where('tour_id', $tour->id)->get();
     echo "\nPeriods: " . $periods->count() . "\n";
-    foreach ($periods->take(5) as $p) {
-        echo "  - {$p->departure_date} -> {$p->return_date} (Price: {$p->price_adult})\n";
+    foreach ($periods->take(3) as $p) {
+        echo "  - {$p->start_date} -> {$p->end_date}\n";
     }
     
     // Check itineraries
-    $itineraries = \App\Models\Itinerary::where('tour_id', $tour->id)->orderBy('day_number')->get();
+    $itineraries = TourItinerary::where('tour_id', $tour->id)->orderBy('day_number')->get();
     echo "\nItineraries: " . $itineraries->count() . "\n";
-    foreach ($itineraries->take(3) as $i) {
-        echo "  Day {$i->day_number}: " . substr($i->title ?? $i->description ?? 'No title', 0, 60) . "...\n";
+    foreach ($itineraries->take(5) as $i) {
+        $title = $i->title ?? 'No title';
+        $desc = $i->description ? mb_substr($i->description, 0, 50) . '...' : '';
+        echo "  Day {$i->day_number}: {$title}\n";
+        if ($desc) echo "    {$desc}\n";
+    }
+    
+    if ($itineraries->count() > 5) {
+        echo "  ... and " . ($itineraries->count() - 5) . " more\n";
     }
 } else {
-    echo "No GO365 tours found\n";
+    echo "Tour 272 not found\n";
 }

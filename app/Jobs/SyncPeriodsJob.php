@@ -780,6 +780,10 @@ class SyncPeriodsJob implements ShouldQueue
 
         if ($transport && $tour->transport_id !== $transport->id) {
             $tour->update(['transport_id' => $transport->id]);
+            
+            // Also sync to tour_transports table (used by UI)
+            $this->syncTourTransport($tour, $transport->id);
+            
             $stats['updated'] = true;
             $stats['airline'] = $airlineCode ?? $airlineName;
             
@@ -788,8 +792,32 @@ class SyncPeriodsJob implements ShouldQueue
                 'transport_id' => $transport->id,
                 'airline' => $stats['airline'],
             ]);
+        } elseif ($transport) {
+            // Make sure tour_transports table is also synced even if transport_id unchanged
+            $this->syncTourTransport($tour, $transport->id);
         }
 
         return $stats;
+    }
+
+    /**
+     * Sync transport to tour_transports pivot table
+     */
+    protected function syncTourTransport(Tour $tour, int $transportId): void
+    {
+        // Check if already exists
+        $exists = DB::table('tour_transports')
+            ->where('tour_id', $tour->id)
+            ->where('transport_id', $transportId)
+            ->exists();
+        
+        if (!$exists) {
+            DB::table('tour_transports')->insert([
+                'tour_id' => $tour->id,
+                'transport_id' => $transportId,
+                'is_primary' => true,
+                'created_at' => now(),
+            ]);
+        }
     }
 }
