@@ -818,19 +818,24 @@ class IntegrationController extends Controller
      * Check tour count from wholesaler API
      * Fetches data from API and counts available tours
      * Supports both Single-Phase and Two-Phase sync modes
+     * 
+     * @param int $id Integration ID (WholesalerApiConfig primary key)
      */
-    public function checkTourCount(int $wholesalerId): JsonResponse
+    public function checkTourCount(int $id): JsonResponse
     {
         try {
-            // Get wholesaler config
-            $config = WholesalerApiConfig::where('wholesaler_id', $wholesalerId)->first();
+            // Get wholesaler config by integration ID (primary key)
+            $config = WholesalerApiConfig::find($id);
 
             if (!$config) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'ไม่พบการตั้งค่า API สำหรับ Wholesaler นี้',
+                    'message' => 'ไม่พบการตั้งค่า API สำหรับ Integration นี้',
                 ], 404);
             }
+
+            // Get wholesaler_id from config
+            $wholesalerId = $config->wholesaler_id;
 
             $wholesaler = Wholesaler::find($wholesalerId);
             if (!$wholesaler) {
