@@ -2586,11 +2586,16 @@ class IntegrationController extends Controller
                 try {
                     $detailData = $adapter->fetchTourDetail((string) $externalId);
                     if (!empty($detailData)) {
+                        // If response is wrapped in a numeric array, unwrap it
+                        if (isset($detailData[0]) && is_array($detailData[0])) {
+                            $detailData = $detailData[0];
+                        }
                         // Use detail data instead of list data
                         $raw = $detailData;
                         Log::info('Mass Sync: Fetched detail for tour', [
                             'external_id' => $externalId,
-                            'periods_count' => count($raw['periods'] ?? []),
+                            'tour_period_count' => count($raw['tour_period'] ?? []),
+                            'tour_daily_count' => count($raw['tour_daily'] ?? []),
                         ]);
                     }
                 } catch (\Exception $e) {
