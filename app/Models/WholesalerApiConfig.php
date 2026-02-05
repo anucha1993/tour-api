@@ -33,6 +33,9 @@ class WholesalerApiConfig extends Model
         'sync_schedule',
         'sync_limit',
         'full_sync_schedule',
+        // Past Period Handling
+        'past_period_handling', // skip, close, keep
+        'past_period_threshold_days',
         // Webhook
         'webhook_enabled',
         'webhook_secret',

@@ -39,16 +39,21 @@ class SyncPeriodsJob implements ShouldQueue
 
     protected int $tourId;
     protected string $externalId;
-    protected int $wholesalerId;
+    protected int $integrationId;
+    protected ?WholesalerApiConfig $config = null;
 
     /**
      * Create a new job instance.
+     * 
+     * @param int $tourId Tour ID
+     * @param string $externalId External ID from API
+     * @param int $integrationId Integration ID (WholesalerApiConfig primary key, NOT wholesaler_id)
      */
-    public function __construct(int $tourId, string $externalId, int $wholesalerId)
+    public function __construct(int $tourId, string $externalId, int $integrationId)
     {
         $this->tourId = $tourId;
         $this->externalId = $externalId;
-        $this->wholesalerId = $wholesalerId;
+        $this->integrationId = $integrationId;
         $this->onQueue('periods');
     }
 
@@ -60,7 +65,7 @@ class SyncPeriodsJob implements ShouldQueue
         Log::info('SyncPeriodsJob: Starting', [
             'tour_id' => $this->tourId,
             'external_id' => $this->externalId,
-            'wholesaler_id' => $this->wholesalerId,
+            'integration_id' => $this->integrationId,
         ]);
 
         $tour = Tour::find($this->tourId);
@@ -69,21 +74,25 @@ class SyncPeriodsJob implements ShouldQueue
             return;
         }
 
-        $config = WholesalerApiConfig::where('wholesaler_id', $this->wholesalerId)->first();
-        if (!$config) {
-            Log::warning('SyncPeriodsJob: Config not found', ['wholesaler_id' => $this->wholesalerId]);
+        // Use integration ID (primary key) to find config - supports multiple integrations per wholesaler
+        $this->config = WholesalerApiConfig::find($this->integrationId);
+        if (!$this->config) {
+            Log::warning('SyncPeriodsJob: Config not found', ['integration_id' => $this->integrationId]);
             return;
         }
+        
+        // Get wholesaler_id from config for field mappings lookup
+        $wholesalerId = $this->config->wholesaler_id;
 
         try {
             // Get periods endpoint from auth_credentials
-            $credentials = $config->auth_credentials ?? [];
+            $credentials = $this->config->auth_credentials ?? [];
             $endpoints = $credentials['endpoints'] ?? [];
             $periodsEndpoint = $endpoints['periods'] ?? null;
 
             if (!$periodsEndpoint) {
                 Log::warning('SyncPeriodsJob: No periods endpoint configured', [
-                    'wholesaler_id' => $this->wholesalerId,
+                    'integration_id' => $this->integrationId,
                 ]);
                 return;
             }
@@ -95,8 +104,8 @@ class SyncPeriodsJob implements ShouldQueue
                 $periodsEndpoint
             );
 
-            // Fetch periods from API
-            $adapter = AdapterFactory::create($this->wholesalerId);
+            // Fetch periods from API - use wholesaler_id for adapter (adapter is per wholesaler)
+            $adapter = AdapterFactory::create($wholesalerId);
             $result = $adapter->fetchPeriods($url);
 
             if (!$result->success) {
@@ -108,7 +117,7 @@ class SyncPeriodsJob implements ShouldQueue
             }
 
             // Get aggregation config for nested data structure
-            $aggConfig = $config->aggregation_config ?? [];
+            $aggConfig = $this->config->aggregation_config ?? [];
             $dataStructure = $aggConfig['data_structure'] ?? [];
             $departuresPath = $dataStructure['departures']['path'] ?? null;
 
@@ -124,8 +133,8 @@ class SyncPeriodsJob implements ShouldQueue
                 ]);
             }
 
-            // Get field mappings for periods
-            $mappings = WholesalerFieldMapping::where('wholesaler_id', $this->wholesalerId)
+            // Get field mappings for periods (mappings are per wholesaler_id, not integration_id)
+            $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)
                 ->where('section_name', 'departure')
                 ->where('is_active', true)
                 ->get();
@@ -150,11 +159,11 @@ class SyncPeriodsJob implements ShouldQueue
             $itinerariesPath = $dataStructure['itineraries']['path'] ?? null;
             // Use rawData (full API response) for itineraries/cities, not periods array
             $rawData = $result->rawData ?? [];
-            $itineraryStats = $this->syncItineraries($tour, $rawData, $itinerariesPath, $config);
+            $itineraryStats = $this->syncItineraries($tour, $rawData, $itinerariesPath, $this->config);
 
             // Sync Cities (from same API response)
             $citiesPath = $dataStructure['cities']['path'] ?? null;
-            $cityStats = $this->syncCities($tour, $rawData, $citiesPath, $config);
+            $cityStats = $this->syncCities($tour, $rawData, $citiesPath, $this->config);
 
             // Sync Transport (from tour_airline in API response)
             $transportStats = $this->syncTransport($tour, $rawData);
@@ -180,7 +189,7 @@ class SyncPeriodsJob implements ShouldQueue
             // Send notification
             try {
                 $notificationService = app(NotificationService::class);
-                $notificationService->notifyIntegration($config->id, 'sync_error', [
+                $notificationService->notifyIntegration($this->config->id, 'sync_error', [
                     'error' => $e->getMessage(),
                     'tour_id' => $this->tourId,
                     'external_id' => $this->externalId,
@@ -374,25 +383,28 @@ class SyncPeriodsJob implements ShouldQueue
             return;
         }
         
-        // Get sync settings and check for past periods
-        $syncSettings = Setting::get('sync_settings', [
-            'skip_past_periods' => true,
-            'past_period_threshold_days' => 0,
-        ]);
-        
-        $skipPastPeriods = $syncSettings['skip_past_periods'] ?? true;
-        $thresholdDays = $syncSettings['past_period_threshold_days'] ?? 0;
+        // Get past period handling settings from integration config (priority) or global settings (fallback)
+        $pastPeriodHandling = $this->config?->past_period_handling ?? 'skip'; // skip, close, keep
+        $thresholdDays = $this->config?->past_period_threshold_days ?? 0;
         $thresholdDate = now()->subDays($thresholdDays)->toDateString();
         
-        // Skip past periods if enabled
-        if ($skipPastPeriods && $data['start_date'] < $thresholdDate) {
-            $stats['skipped']++;
-            Log::debug('SyncPeriodsJob: Skipped past period', [
-                'tour_id' => $tour->id,
-                'start_date' => $data['start_date'],
-                'threshold_date' => $thresholdDate,
-            ]);
-            return;
+        // Check if this is a past period
+        $isPastPeriod = $data['start_date'] < $thresholdDate;
+        
+        // Handle past periods based on config
+        if ($isPastPeriod) {
+            if ($pastPeriodHandling === 'skip') {
+                // Skip: ข้าม period ที่เดินทางไปแล้ว ไม่บันทึกข้อมูล
+                $stats['skipped']++;
+                Log::debug('SyncPeriodsJob: Skipped past period', [
+                    'tour_id' => $tour->id,
+                    'start_date' => $data['start_date'],
+                    'threshold_date' => $thresholdDate,
+                    'handling' => 'skip',
+                ]);
+                return;
+            }
+            // For 'close' or 'keep': continue processing, will set status later
         }
 
         // Generate period code if not provided
@@ -422,6 +434,17 @@ class SyncPeriodsJob implements ShouldQueue
             'is_visible' => $data['is_visible'] ?? true,
             'sale_status' => $data['sale_status'] ?? 'available',
         ];
+
+        // Override status to 'closed' for past periods if handling = 'close'
+        if ($isPastPeriod && $pastPeriodHandling === 'close') {
+            $periodData['status'] = 'closed';
+            $periodData['sale_status'] = 'closed';
+            Log::debug('SyncPeriodsJob: Set past period to closed', [
+                'tour_id' => $tour->id,
+                'start_date' => $data['start_date'],
+                'handling' => 'close',
+            ]);
+        }
 
         if ($period) {
             $period->update($periodData);
@@ -507,7 +530,7 @@ class SyncPeriodsJob implements ShouldQueue
         Log::error('SyncPeriodsJob: Job failed permanently', [
             'tour_id' => $this->tourId,
             'external_id' => $this->externalId,
-            'wholesaler_id' => $this->wholesalerId,
+            'integration_id' => $this->integrationId,
             'error' => $exception->getMessage(),
         ]);
     }
@@ -553,8 +576,8 @@ class SyncPeriodsJob implements ShouldQueue
             return $stats;
         }
 
-        // Get itinerary mappings
-        $mappings = WholesalerFieldMapping::where('wholesaler_id', $this->wholesalerId)
+        // Get itinerary mappings (mappings are per wholesaler_id)
+        $mappings = WholesalerFieldMapping::where('wholesaler_id', $this->config->wholesaler_id)
             ->where('section_name', 'itinerary')
             ->where('is_active', true)
             ->get();
@@ -874,8 +897,8 @@ class SyncPeriodsJob implements ShouldQueue
             return $stats;
         }
 
-        // Get city mappings
-        $mappings = WholesalerFieldMapping::where('wholesaler_id', $this->wholesalerId)
+        // Get city mappings (mappings are per wholesaler_id)
+        $mappings = WholesalerFieldMapping::where('wholesaler_id', $this->config->wholesaler_id)
             ->where('section_name', 'city')
             ->where('is_active', true)
             ->get();

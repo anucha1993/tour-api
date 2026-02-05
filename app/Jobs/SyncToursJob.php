@@ -1202,7 +1202,7 @@ class SyncToursJob implements ShouldQueue
                 SyncPeriodsJob::dispatch(
                     $tour->id,
                     $externalId,
-                    $config->wholesaler_id,
+                    $config->id,  // Use integration ID (primary key), not wholesaler_id
                     $syncLog->id
                 )->onQueue('periods');
                 
