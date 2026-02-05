@@ -84,8 +84,18 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/refresh', [AuthController::class, 'refresh']);
     });
 
-    // Users CRUD
+    // Users CRUD (Backend Admin/Staff - แยกจาก WebMembers)
     Route::apiResource('users', UserController::class);
+
+    // Web Members Management (สมาชิกหน้าเว็บ - แยกจาก Users)
+    Route::prefix('web-members')->group(function () {
+        Route::get('/statistics', [\App\Http\Controllers\Api\WebMemberController::class, 'statistics']);
+        Route::get('/export', [\App\Http\Controllers\Api\WebMemberController::class, 'export']);
+        Route::patch('/{id}/status', [\App\Http\Controllers\Api\WebMemberController::class, 'updateStatus']);
+        Route::post('/{id}/reset-password', [\App\Http\Controllers\Api\WebMemberController::class, 'resetPassword']);
+        Route::post('/{id}/unlock', [\App\Http\Controllers\Api\WebMemberController::class, 'unlock']);
+    });
+    Route::apiResource('web-members', \App\Http\Controllers\Api\WebMemberController::class)->only(['index', 'show', 'destroy']);
 
     // Wholesalers CRUD
     Route::patch('wholesalers/{wholesaler}/toggle-active', [WholesalerController::class, 'toggleActive']);
@@ -196,6 +206,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/smtp', [SettingsController::class, 'updateSmtpConfig']);
         Route::post('/smtp/test', [SettingsController::class, 'testSmtpConfig']);
         
+        // OTP Settings
+        Route::get('/otp', [SettingsController::class, 'getOtpConfig']);
+        Route::put('/otp', [SettingsController::class, 'updateOtpConfig']);
+        Route::post('/otp/test', [SettingsController::class, 'testOtpConfig']);
+        
         Route::get('/{key}', [SettingsController::class, 'show']);
         Route::put('/{key}', [SettingsController::class, 'update']);
     });
@@ -203,5 +218,54 @@ Route::middleware('auth:sanctum')->group(function () {
     // User route (default)
     Route::get('/user', function (Request $request) {
         return $request->user();
+    });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Web Member API Routes (for tour-web frontend)
+|--------------------------------------------------------------------------
+*/
+use App\Http\Controllers\Web\WebAuthController;
+use App\Http\Controllers\Web\WebWishlistController;
+
+Route::prefix('web')->group(function () {
+    // Public auth routes
+    Route::prefix('auth')->group(function () {
+        // Registration
+        Route::post('/register/request-otp', [WebAuthController::class, 'requestRegisterOtp']);
+        Route::post('/register', [WebAuthController::class, 'register']);
+        
+        // Login with password
+        Route::post('/login', [WebAuthController::class, 'login']);
+        
+        // Login with OTP
+        Route::post('/login/request-otp', [WebAuthController::class, 'requestLoginOtp']);
+        Route::post('/login/verify-otp', [WebAuthController::class, 'verifyLoginOtp']);
+        
+        // Password reset
+        Route::post('/forgot-password', [WebAuthController::class, 'requestPasswordReset']);
+        Route::post('/reset-password', [WebAuthController::class, 'resetPassword']);
+    });
+
+    // Protected routes (member auth required)
+    Route::middleware('auth:sanctum')->group(function () {
+        // Auth
+        Route::post('/auth/logout', [WebAuthController::class, 'logout']);
+        
+        // Profile
+        Route::get('/me', [WebAuthController::class, 'me']);
+        Route::put('/profile', [WebAuthController::class, 'updateProfile']);
+        Route::put('/password', [WebAuthController::class, 'changePassword']);
+        
+        // Wishlist
+        Route::prefix('wishlist')->group(function () {
+            Route::get('/', [WebWishlistController::class, 'index']);
+            Route::get('/count', [WebWishlistController::class, 'count']);
+            Route::post('/', [WebWishlistController::class, 'store']);
+            Route::post('/toggle', [WebWishlistController::class, 'toggle']);
+            Route::get('/check/{tourId}', [WebWishlistController::class, 'check']);
+            Route::delete('/{tourId}', [WebWishlistController::class, 'destroy']);
+        });
     });
 });

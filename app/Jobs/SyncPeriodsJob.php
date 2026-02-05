@@ -385,11 +385,38 @@ class SyncPeriodsJob implements ShouldQueue
         
         // Get past period handling settings from integration config (priority) or global settings (fallback)
         $pastPeriodHandling = $this->config?->past_period_handling ?? 'skip'; // skip, close, keep
-        $thresholdDays = $this->config?->past_period_threshold_days ?? 0;
+        $thresholdDays = (int) ($this->config?->past_period_threshold_days ?? 0);
+        
+        // Ensure threshold days is within valid range
+        $thresholdDays = max(0, min(365, $thresholdDays));
         $thresholdDate = now()->subDays($thresholdDays)->toDateString();
         
+        // Validate and parse start_date
+        $startDate = $data['start_date'];
+        try {
+            $parsedStartDate = date('Y-m-d', strtotime($startDate));
+            if ($parsedStartDate === '1970-01-01' && $startDate !== '1970-01-01') {
+                Log::warning('SyncPeriodsJob: Invalid start_date format', [
+                    'tour_id' => $tour->id,
+                    'start_date' => $startDate,
+                ]);
+                $stats['skipped']++;
+                return;
+            }
+            $startDate = $parsedStartDate;
+            $data['start_date'] = $startDate;
+        } catch (\Exception $e) {
+            Log::warning('SyncPeriodsJob: Failed to parse start_date', [
+                'tour_id' => $tour->id,
+                'start_date' => $startDate,
+                'error' => $e->getMessage(),
+            ]);
+            $stats['skipped']++;
+            return;
+        }
+        
         // Check if this is a past period
-        $isPastPeriod = $data['start_date'] < $thresholdDate;
+        $isPastPeriod = $startDate < $thresholdDate;
         
         // Handle past periods based on config
         if ($isPastPeriod) {
@@ -398,7 +425,7 @@ class SyncPeriodsJob implements ShouldQueue
                 $stats['skipped']++;
                 Log::debug('SyncPeriodsJob: Skipped past period', [
                     'tour_id' => $tour->id,
-                    'start_date' => $data['start_date'],
+                    'start_date' => $startDate,
                     'threshold_date' => $thresholdDate,
                     'handling' => 'skip',
                 ]);
@@ -410,14 +437,14 @@ class SyncPeriodsJob implements ShouldQueue
         // Generate period code if not provided
         $periodCode = $data['period_code'] ?? $data['external_id'] ?? null;
         if (!$periodCode) {
-            $periodCode = $tour->tour_code . '-' . date('Ymd', strtotime($data['start_date']));
+            $periodCode = $tour->tour_code . '-' . date('Ymd', strtotime($startDate));
         }
 
         // Find or create period
         $period = Period::where('tour_id', $tour->id)
-            ->where(function($q) use ($periodCode, $data) {
+            ->where(function($q) use ($periodCode, $startDate) {
                 $q->where('period_code', $periodCode)
-                  ->orWhere('start_date', $data['start_date']);
+                  ->orWhere('start_date', $startDate);
             })
             ->first();
 
@@ -425,8 +452,8 @@ class SyncPeriodsJob implements ShouldQueue
             'tour_id' => $tour->id,
             'external_id' => $data['external_id'] ?? null,
             'period_code' => $periodCode,
-            'start_date' => $data['start_date'],
-            'end_date' => $data['end_date'] ?? $data['start_date'],
+            'start_date' => $startDate,
+            'end_date' => $data['end_date'] ?? $startDate,
             'capacity' => $data['capacity'] ?? 30,
             'booked' => $data['booked'] ?? 0,
             'available' => $data['available'] ?? ($data['capacity'] ?? 30) - ($data['booked'] ?? 0),
@@ -441,7 +468,7 @@ class SyncPeriodsJob implements ShouldQueue
             $periodData['sale_status'] = 'closed';
             Log::debug('SyncPeriodsJob: Set past period to closed', [
                 'tour_id' => $tour->id,
-                'start_date' => $data['start_date'],
+                'start_date' => $startDate,
                 'handling' => 'close',
             ]);
         }

@@ -303,6 +303,9 @@ class IntegrationController extends Controller
             'notification_types' => 'nullable|array',
             // City extraction
             'extract_cities_from_name' => 'nullable|boolean',
+            // Past period handling
+            'past_period_handling' => 'nullable|in:skip,close,keep',
+            'past_period_threshold_days' => 'nullable|integer|min:0|max:365',
             // Data structure config for nested arrays
             'aggregation_config' => 'nullable|array',
             'aggregation_config.data_structure' => 'nullable|array',

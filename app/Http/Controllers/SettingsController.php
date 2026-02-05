@@ -404,4 +404,157 @@ class SettingsController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Get OTP configuration
+     */
+    public function getOtpConfig(): JsonResponse
+    {
+        $otpConfig = Setting::get('otp_config', [
+            'endpoint' => 'https://api-v2.thaibulksms.com',
+            'api_key' => '',
+            'api_secret' => '',
+            'sender' => 'SMS.',
+            'enabled' => true,
+            'debug_mode' => false,
+        ]);
+
+        // Mask sensitive fields
+        if (!empty($otpConfig['api_key'])) {
+            $otpConfig['api_key_masked'] = substr($otpConfig['api_key'], 0, 8) . str_repeat('•', 10);
+            $otpConfig['has_api_key'] = true;
+        } else {
+            $otpConfig['api_key_masked'] = '';
+            $otpConfig['has_api_key'] = false;
+        }
+
+        if (!empty($otpConfig['api_secret'])) {
+            $otpConfig['api_secret_masked'] = str_repeat('•', 12);
+            $otpConfig['has_api_secret'] = true;
+        } else {
+            $otpConfig['api_secret_masked'] = '';
+            $otpConfig['has_api_secret'] = false;
+        }
+
+        unset($otpConfig['api_key'], $otpConfig['api_secret']);
+
+        return response()->json([
+            'success' => true,
+            'data' => $otpConfig,
+        ]);
+    }
+
+    /**
+     * Update OTP configuration
+     */
+    public function updateOtpConfig(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'endpoint' => 'required|string|url|max:255',
+            'api_key' => 'nullable|string|max:255',
+            'api_secret' => 'nullable|string|max:255',
+            'sender' => 'required|string|max:50',
+            'enabled' => 'boolean',
+            'debug_mode' => 'boolean',
+        ]);
+
+        // Get current config
+        $currentConfig = Setting::get('otp_config', []);
+
+        // Keep existing api_key if not provided
+        if (empty($validated['api_key']) && !empty($currentConfig['api_key'])) {
+            $validated['api_key'] = $currentConfig['api_key'];
+        } else if (!empty($validated['api_key'])) {
+            $validated['api_key'] = encrypt($validated['api_key']);
+        }
+
+        // Keep existing api_secret if not provided
+        if (empty($validated['api_secret']) && !empty($currentConfig['api_secret'])) {
+            $validated['api_secret'] = $currentConfig['api_secret'];
+        } else if (!empty($validated['api_secret'])) {
+            $validated['api_secret'] = encrypt($validated['api_secret']);
+        }
+
+        Setting::set('otp_config', $validated, 'otp', 'json');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'OTP configuration updated successfully',
+        ]);
+    }
+
+    /**
+     * Test OTP by sending a test SMS
+     */
+    public function testOtpConfig(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'phone' => 'required|string|min:10|max:15',
+        ]);
+
+        $otpConfig = Setting::get('otp_config');
+
+        if (!$otpConfig || empty($otpConfig['api_key'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'OTP configuration not found. Please save settings first.',
+            ], 400);
+        }
+
+        try {
+            // Decrypt credentials
+            $apiKey = '';
+            $apiSecret = '';
+
+            if (!empty($otpConfig['api_key'])) {
+                try {
+                    $apiKey = decrypt($otpConfig['api_key']);
+                } catch (\Exception $e) {
+                    $apiKey = $otpConfig['api_key'];
+                }
+            }
+
+            if (!empty($otpConfig['api_secret'])) {
+                try {
+                    $apiSecret = decrypt($otpConfig['api_secret']);
+                } catch (\Exception $e) {
+                    $apiSecret = $otpConfig['api_secret'];
+                }
+            }
+
+            // Normalize phone
+            $phone = preg_replace('/[^\d]/', '', $validated['phone']);
+            if (preg_match('/^0\d{9}$/', $phone)) {
+                $phone = '66' . substr($phone, 1);
+            }
+
+            // Send test SMS
+            $response = \Illuminate\Support\Facades\Http::withBasicAuth($apiKey, $apiSecret)
+                ->timeout(30)
+                ->post($otpConfig['endpoint'] . '/sms', [
+                    'msisdn' => $phone,
+                    'message' => 'ทดสอบการส่ง SMS จากระบบ NextTrip',
+                    'sender' => $otpConfig['sender'] ?? 'SMS.',
+                ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                return response()->json([
+                    'success' => true,
+                    'message' => 'ส่ง SMS ทดสอบสำเร็จ',
+                    'remaining_credit' => $data['remaining_credit'] ?? null,
+                ]);
+            } else {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'ส่ง SMS ไม่สำเร็จ: ' . $response->body(),
+                ], 400);
+            }
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'เกิดข้อผิดพลาด: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
 }

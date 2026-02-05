@@ -41,4 +41,9 @@ return [
         'images_token' => env('CLOUDFLARE_IMAGES_TOKEN'),
     ],
 
+    'thaibulksms' => [
+        'api_key' => env('THAIBULKSMS_API_KEY'),
+        'api_secret' => env('THAIBULKSMS_API_SECRET'),
+    ],
+
 ];
