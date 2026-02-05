@@ -542,8 +542,10 @@ class WebAuthController extends Controller
                 'full_name' => $member->full_name,
                 'email' => $member->email,
                 'phone' => $member->phone,
+                'line_id' => $member->line_id,
                 'birth_date' => $member->birth_date?->format('Y-m-d'),
                 'gender' => $member->gender,
+                'is_verified' => $member->is_verified,
             ],
         ]);
     }

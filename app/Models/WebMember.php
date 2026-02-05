@@ -18,6 +18,7 @@ class WebMember extends Authenticatable
         'email',
         'phone',
         'password',
+        'line_id',
         'email_verified',
         'email_verified_at',
         'phone_verified',

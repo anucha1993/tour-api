@@ -267,5 +267,14 @@ Route::prefix('web')->group(function () {
             Route::get('/check/{tourId}', [WebWishlistController::class, 'check']);
             Route::delete('/{tourId}', [WebWishlistController::class, 'destroy']);
         });
+        
+        // Billing Addresses
+        Route::prefix('billing-addresses')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Web\WebBillingAddressController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Web\WebBillingAddressController::class, 'store']);
+            Route::put('/{id}', [\App\Http\Controllers\Web\WebBillingAddressController::class, 'update']);
+            Route::delete('/{id}', [\App\Http\Controllers\Web\WebBillingAddressController::class, 'destroy']);
+            Route::put('/{id}/default', [\App\Http\Controllers\Web\WebBillingAddressController::class, 'setDefault']);
+        });
     });
 });
