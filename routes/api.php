@@ -70,6 +70,9 @@ Route::post('queue/fix-stuck', [IntegrationController::class, 'fixStuckSyncs']);
 Route::post('queue/clear-failed', [IntegrationController::class, 'clearFailedJobs']);
 Route::post('queue/process', [IntegrationController::class, 'processQueue']);
 
+// Public Hero Slides (for tour-web homepage)
+Route::get('hero-slides/public', [\App\Http\Controllers\HeroSlideController::class, 'publicList']);
+
 // Wholesaler Sync API (Public for testing - move inside auth:sanctum for production)
 Route::prefix('wholesalers/{wholesaler}/sync')->group(function () {
     Route::post('/tour', [WholesalerSyncController::class, 'syncTour']);
@@ -161,6 +164,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('gallery/bulk-upload', [GalleryImageController::class, 'bulkUpload']);
     Route::patch('gallery/{gallery}/toggle-status', [GalleryImageController::class, 'toggleStatus']);
     Route::apiResource('gallery', GalleryImageController::class)->parameters(['gallery' => 'gallery']);
+
+    // Hero Slides CRUD
+    Route::get('hero-slides/statistics', [\App\Http\Controllers\HeroSlideController::class, 'statistics']);
+    Route::post('hero-slides/reorder', [\App\Http\Controllers\HeroSlideController::class, 'reorder']);
+    Route::patch('hero-slides/{heroSlide}/toggle-status', [\App\Http\Controllers\HeroSlideController::class, 'toggleStatus']);
+    Route::post('hero-slides/{heroSlide}/replace-image', [\App\Http\Controllers\HeroSlideController::class, 'replaceImage']);
+    Route::apiResource('hero-slides', \App\Http\Controllers\HeroSlideController::class);
 
     // Integrations (Wholesaler API Configs)
     Route::prefix('integrations')->group(function () {
