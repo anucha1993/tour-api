@@ -92,7 +92,8 @@ return Application::configure(basePath: dirname(__DIR__))
         })->everyMinute()->name('check-full-sync-schedules')->withoutOverlapping();
     })
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        // Note: Don't use statefulApi() when frontend uses Bearer token auth
+        // statefulApi() enables CSRF which requires cookie-based authentication
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // Return JSON for API authentication errors
@@ -103,5 +104,10 @@ return Application::configure(basePath: dirname(__DIR__))
                     'message' => 'Unauthenticated. Please login again.',
                 ], 401);
             }
+        });
+
+        // Catch all exceptions for API and return JSON
+        $exceptions->shouldRenderJsonWhen(function (Request $request) {
+            return $request->is('api/*');
         });
     })->create();

@@ -221,6 +221,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/', [PageContentController::class, 'index']);
         Route::get('/{key}', [PageContentController::class, 'show']);
         Route::put('/{key}', [PageContentController::class, 'update']);
+        Route::post('/{key}/image', [PageContentController::class, 'uploadImage']);
+        Route::delete('/{key}/image', [PageContentController::class, 'deleteImage']);
     });
 
     // User route (default)
