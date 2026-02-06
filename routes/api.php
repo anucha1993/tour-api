@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\IntegrationController;
 use App\Http\Controllers\Api\WholesalerSyncController;
 use App\Http\Controllers\Api\TourSearchController;
 use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\PageContentController;
 
 /*
 |--------------------------------------------------------------------------
@@ -215,6 +216,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/{key}', [SettingsController::class, 'update']);
     });
 
+    // Page Content Management (จัดการเนื้อหาเว็บไซต์)
+    Route::prefix('page-content')->group(function () {
+        Route::get('/', [PageContentController::class, 'index']);
+        Route::get('/{key}', [PageContentController::class, 'show']);
+        Route::put('/{key}', [PageContentController::class, 'update']);
+    });
+
     // User route (default)
     Route::get('/user', function (Request $request) {
         return $request->user();
@@ -247,6 +255,9 @@ Route::prefix('web')->group(function () {
         Route::post('/forgot-password', [WebAuthController::class, 'requestPasswordReset']);
         Route::post('/reset-password', [WebAuthController::class, 'resetPassword']);
     });
+
+    // Public page content (เงื่อนไขการให้บริการ, เงื่อนไขการชำระเงิน)
+    Route::get('/page-content/{key}', [PageContentController::class, 'getPublicContent']);
 
     // Protected routes (member auth required)
     Route::middleware('auth:sanctum')->group(function () {
