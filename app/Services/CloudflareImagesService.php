@@ -204,13 +204,33 @@ class CloudflareImagesService
      */
     public function delete(string $imageId): bool
     {
+        if (!$this->isConfigured()) {
+            Log::warning("Cloudflare not configured, skipping delete for: {$imageId}");
+            return false;
+        }
+
         try {
+            Log::info("Attempting to delete Cloudflare image: {$imageId}");
+            
             $response = Http::withToken($this->apiToken)
                 ->delete("{$this->baseUrl}/{$imageId}");
 
-            return $response->successful() && ($response->json()['success'] ?? false);
+            $success = $response->successful() && ($response->json()['success'] ?? false);
+            
+            if ($success) {
+                Log::info("Successfully deleted Cloudflare image: {$imageId}");
+            } else {
+                Log::warning("Failed to delete Cloudflare image: {$imageId}", [
+                    'status' => $response->status(),
+                    'response' => $response->json(),
+                ]);
+            }
+            
+            return $success;
         } catch (\Exception $e) {
-            Log::error("Exception deleting from Cloudflare: " . $e->getMessage());
+            Log::error("Exception deleting from Cloudflare: " . $e->getMessage(), [
+                'image_id' => $imageId,
+            ]);
             return false;
         }
     }
