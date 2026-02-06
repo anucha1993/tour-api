@@ -1,195 +1,109 @@
-<?php
+﻿<?php
 
 /**
- * Seed Payment Terms Content
- * Run: php seed_payment_terms.php
+ * Privacy Policy Content Template
+ * Copy the HTML content below to your website
+ * Requires Tailwind CSS
  */
 
-require __DIR__ . '/vendor/autoload.php';
-
-$app = require_once __DIR__ . '/bootstrap/app.php';
-$app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
-
-use App\Models\WebPage;
-
 $content = <<<'HTML'
-<div class="max-w-4xl mx-auto p-6 bg-white rounded-2xl shadow-sm border border-gray-100">
-   
-    <div class="prose prose-lg text-gray-600 mb-10 leading-relaxed text-sm">
-        <span class="text-orange-600">บริษัทเน็กซ์ ทริป ฮอลิเดย์</span> จำกัดบริการทัวร์ในรูปแบบ ทัวร์หมู่คณะ/แพ็คเกจทัวร์อิสระ ในรูปแบบจัดทัวร์ร่วมกับกลุ่มบริษัทพันธมิตร (Partner) และทัวร์ที่จัดขึ้นเองในนาม <span class="text-orange-600">บริษัท เน็กซ์ ทริป ฮอลิเดย์ จำกัด</span> เพื่อให้ลูกค้าสามารถเลือกบริการทัวร์ได้ในความต้องการที่หลากหลาย ทั้งในเรื่องของสถานที่ท่องเที่ยว สายการบินที่เดินทางออกจากประเทศไทยทั้งสนามบินดอนเมืองและสุวรรณภูมิ หรือเชียงใหม่ เพื่อเดินทางไปยังประเทศปลายทางทั่วโลก ลูกค้าสามารถเลือกโปรแกรมท่องเที่ยวได้ <span class="text-orange-600">มากกว่า 5,000 รายการท่องเที่ยว</span> ที่ต้องการเปิดประสบการณ์ในการเดินทาง
-    </div>
+<div class="max-w-4xl mx-auto px-6 py-10">
 
-    <div class="mb-8">
-        <h3 class="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-            <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
-            ช่องทางการจองและชำระเงิน
-        </h3>
-        
-        <div class="grid md:grid-cols-2 gap-6">
-            <!-- Channel 1 -->
-            <div class="bg-gray-50 rounded-xl p-6 border border-gray-100 relative overflow-hidden group hover:border-blue-200 transition-all duration-300" style="background-color: #f9fafb; border-color: #f3f4f6;">
-                <div class="absolute top-0 right-0 -mt-2 -mr-2 w-16 h-16 bg-green-100 rounded-full blur-xl opacity-50 group-hover:opacity-70 transition-opacity"></div>
-                
-                <div class="relative z-10">
-                    <div class="flex items-center gap-3 mb-4">
-                        <div class="p-2 bg-green-100 rounded-lg text-green-600">
-                            <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 .5C5.8.5.5 5.8.5 12a11.3 11.3 0 0 0 3.3 8.3c-.1.8-.8 3-2.9 3.5 0 0 3.5-.2 5.3-2.3 1.8.6 3.8.9 5.8.9 6.2 0 11.5-5.3 11.5-11.5S18.2.5 12 .5z"/></svg>
-                        </div>
-                        <h4 class="font-bold text-gray-900">Line OA: @nexttripholiday</h4>
-                    </div>
-                    
-                    <ul class="space-y-3 text-sm text-gray-600">
-                        <li class="flex items-start gap-2">
-                            <span class="mt-1.5 w-1.5 h-1.5 bg-green-500 rounded-full flex-shrink-0"></span>
-                            <span><strong>จองล่วงหน้า 30 วัน:</strong> ชำระมัดจำภายใน 1 วันหลังได้รับเอกสารยืนยัน (ก่อน 13.00 น.)</span>
-                        </li>
-                        <li class="flex items-start gap-2">
-                            <span class="mt-1.5 w-1.5 h-1.5 bg-green-500 rounded-full flex-shrink-0"></span>
-                            <span><strong>ส่วนที่เหลือ:</strong> ชำระก่อนเดินทางอย่างน้อย 30 วัน</span>
-                        </li>
-                        <li class="flex items-start gap-2">
-                            <span class="mt-1.5 w-1.5 h-1.5 bg-green-500 rounded-full flex-shrink-0"></span>
-                            <span><strong>จองด่วน (<30 วัน):</strong> ชำระเต็มจำนวน 100% ทันที</span>
-                        </li>
-                    </ul>
-                </div>
-            </div>
+<h1 class="text-3xl font-bold text-blue-900 mb-8 pb-4 border-b-4 border-blue-500 text-center">นโยบายความเป็นส่วนตัว</h1>
 
-            <!-- Channel 2 -->
-            <div class="bg-gray-50 rounded-xl p-6 border border-gray-100 relative overflow-hidden group hover:border-blue-200 transition-all duration-300" style="background-color: #f9fafb; border-color: #f3f4f6;">
-                <div class="absolute top-0 right-0 -mt-2 -mr-2 w-16 h-16 bg-blue-100 rounded-full blur-xl opacity-50 group-hover:opacity-70 transition-opacity"></div>
-                
-                <div class="relative z-10">
-                    <div class="flex items-center gap-3 mb-4">
-                        <div class="p-2 bg-blue-100 rounded-lg text-blue-600">
-                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path></svg>
-                        </div>
-                        <h4 class="font-bold text-gray-900">Website: nexttripholiday.com</h4>
-                    </div>
-                    
-                    <p class="text-sm text-gray-600 mb-3 leading-relaxed">
-                        สำหรับลูกค้าที่ทำรายการผ่านหน้าเว็บไซต์
-                    </p>
-                    <ul class="space-y-3 text-sm text-gray-600">
-                        <li class="flex items-start gap-2">
-                            <span class="mt-1.5 w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0"></span>
-                            <span>รอเจ้าหน้าที่/ระบบยืนยันที่นั่งทางอีเมล</span>
-                        </li>
-                        <li class="flex items-start gap-2">
-                            <span class="mt-1.5 w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0"></span>
-                            <span>การจองสมบูรณ์เมื่อชำระเงินแล้วเท่านั้น</span>
-                        </li>
-                    </ul>
-                </div>
-            </div>
-        </div>
-    </div>
+<p class="text-base leading-relaxed mb-8 text-gray-700">
+การใช้บริการเว็บไซต์ของเราบนอินเทอร์เน็ต ที่ <a href="https://www.nexttripholiday.com" class="text-blue-600 underline hover:text-blue-800">www.nexttripholiday.com</a> (เว็บไซต์) เราให้ความสำคัญและเข้าใจในความต้องการของลูกค้า และตระหนักถึงความสำคัญในความเป็นส่วนตัว เพราะเหตุนี้เราจึงต้องการให้ท่านทราบว่าเราใช้ข้อมูลทางอินเทอร์เน็ตอย่างไร นโยบายคุ้มครองข้อมูลส่วนบุคคลนี้อธิบายวิธีที่เรารวบรวม ใช้ เปิดเผย และขั้นตอนในการระบุข้อมูลเกี่ยวกับตัวบุคคล (ข้อมูลส่วนตัว) ในการเชื่อมต่อกับการให้บริการของ <strong class="text-blue-800">เน็กซ์ ทริป ฮอลิเดย์</strong> ผ่านแพลตฟอร์ม เว็บไซต์ <a href="https://www.nexttripholiday.com" class="text-blue-600 underline hover:text-blue-800">www.nexttripholiday.com</a> ถือว่าคุณอนุญาตให้รวบรวมข้อมูล ใช้ข้อมูล เปิดเผยข้อมูลและดำเนินการเกี่ยวกับข้อมูลส่วนตัวของคุณตามที่ได้อธิบายในนโยบายคุ้มครองข้อมูลส่วนบุคคลนี้
+</p>
 
-    <!-- Important Notes -->
-    <div class="mt-12 bg-orange-50/50 rounded-2xl p-8 border border-orange-100" style="background-color: #fff7ed; border-color: #ffedd5;">
-        <h3 class="text-xl font-bold text-orange-900 mb-6 flex items-center gap-3">
-            <svg class="w-6 h-6 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-            ข้อสำคัญและเงื่อนไขเพิ่มเติม
-        </h3>
-        
-        <ul class="space-y-4">
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">1</span>
-                <span>เมื่อลูกค้าได้ตกลงซื้อขายทัวร์ในราคาที่ท่านพึงพอใจ และใตร่ตรองมาเป็นอย่างดีแล้ว หากมีการชำระเงินกับทางบริษัทแล้วนั้นเมื่อทางบริษัททำการปรับลดราคาที่แตกต่างจากราคาที่ลูกค้าซื้อทางบริษัทจะไม่มีการคืนเงินส่วนต่างแต่อย่างไร บริษัทจะถือว่าท่านได้พึงพอใจกับราคาที่ชำระมาแล้ว</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">2</span>
-                <span>ลูกค้าจะต้องทำการอ่านรายละเอียดทัวร์ในส่วนของ ค่าทิปพนักงานขับรถ หัวหน้าทัวร์ และ มัคคุเทศก์ท้องถิ่น ตามธรรมเนียม โดยเงื่อนไขการรวมและไม่รวมค่าทิป ต่อ ลูกค้า ผู้เดินทาง 1 ท่าน รวมไปถึงเด็ก ยกเว้นเด็กอายุไม่ถึง 2 ปี ณ วันเดินทางกลับ (INFANT) ทั้งนี้ท่านจะต้องชำระตามที่โปรแกรมระบุทุกกรณี ท่านสามารถให้มากกว่านี้ได้ตามความเหมาะสมและความพึงพอใจของท่าน โดยส่วนนี้ ทางบริษัทขอสงวนสิทธิ์ในการเรียกเก็บก่อนเดินทางทุกท่าน ที่สนามบิน ในวันเช็คอิน หรือในระหว่างการท่องเที่ยว ตามเงื่อนไขบริษัท</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">3</span>
-                <span>ถ้าหากมีผู้เดินทางต่ำกว่า จำนวนที่ทางบริษัทกำหนด ทางบริษัทขอสงวนสิทธิ์ในการยกเลิกการเดินทางหรือมีการเปลี่ยนแปลงราคา โดยจะแจ้งให้ทราบล่วงหน้า 7 วันก่อนการเดินทาง ในกรณีที่ลูกค้าจองตั๋วเครื่องบิน/ห้องพัก/บัตรโดยสาร โดยไม่ได้แจ้งบริษัท ขอสงวนสิทธิ์ในการรับผิดชอบทุกกรณี</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">4</span>
-                <span>กรณีพัก 3 ท่าน/ห้อง ทางโรงแรมจะทำการเสริมเตียงให้เท่านั้น การเสริมเตียงจะขึ้นอยู่กับนโยบายของโรงแรมนั้นๆ (บางโรงแรมใช้เตียง SGL ในการเสริมเตียง บางโรงแรมจะใช้ฟูกในการเสริมเตียง) กรณีที่ห้อง TRP เต็ม ทางบริษัทอาจจะต้องปรับไปนอนห้องพักสำหรับ 1 ท่าน 1 ห้องและสำหรับ 2 ท่าน 1 ห้อง โดยท่านจะต้องชำระค่าห้องพักเดี่ยวเพิ่ม</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">5</span>
-                <span>อัตราค่าบริการทัวร์เฉพาะนักท่องเที่ยวที่ถือหนังสือเดินทางไทยเท่านั้น กรณีถือหนังสือเดินทางต่างประเทศ ทางบริษัทขอสงวนสิทธิ์เรียกเก็บค่าธรรมเนียมเพิ่มจากราคาทัวร์ ท่านละ 100 USD. (เป็นเงินไทยประมาณ 3,200 บาท)</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">6</span>
-                <span>กรณีผู้เดินทางถูกปฏิเสธการเข้า – ออกประเทศจากประเทศต้นทางและปลายทาง ทั้งจากที่ด้านหน้าเคาน์เตอร์เช็คอิน หรือจากด่านตรวจคนเข้าเมืองก็ตาม ทางบริษัทขอสงวนสิทธิ์ไม่รับผิดชอบค่าใช้จ่ายที่จะเกิดขึ้นตามมา และ จะไม่สามารถคืนเงินค่าทัวร์ที่ท่านชำระเรียบร้อยแล้วไม่ว่าส่วนใดส่วนหนึ่ง</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">7</span>
-                <span>กรณีต้องการตัดกรุ๊ปส่วนตัว กรุ๊ปเหมาที่สถานะผู้เดินทางเป็น เด็กนักเรียน นักศึกษา ครู ธุรกิจขายตรงเครื่องสำอาง หมอ พยาบาล ชาวต่างชาติ หรือคณะที่ต้องการให้เพิ่มสถานที่ขอดูงาน กรุณาติดต่อแจ้งรายละเอียด โดยละเอียด กับเจ้าหน้าที่เพื่อทำราคาให้ใหม่ทุกครั้ง เนื่องจากบางโปรแกรมมีความจำเป็นในการชาร์จค่าใช้จ่ายในบางอาชีพหากท่านปกปิดข้อมูล หากทางบริษัททราบภายหลังลูกค้าจะต้องเป็นผู้รับผิดชอบค่าใช้จ่ายที่เกิดขึ้นหากมีการเรียกเก็บเพิ่มจากทางฝั่งต่างประเทศ</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">8</span>
-                <span>กรณีที่ท่านต้องออกบัตรโดยสารภายใน (ตั๋วภายในประเทศ เช่น ตั๋วเครื่องบิน , ตั๋วรถทัวร์ , ตั๋วรถไฟ) กรุณาติดต่อสอบถามเพื่อยืนยันกับเจ้าหน้าที่ก่อนทุกครั้ง และควรจองบัตรโดยสารภายในที่สามารถเลื่อนวันและเวลาเดินทางได้ เพราะมีบางกรณีที่สายการบินอาจมีการปรับเปลี่ยนไฟล์ทบิน หรือ เวลาบิน โดยไม่แจ้งให้ทราบล่วงหน้า ทั้งนี้ขึ้นอยู่กับฤดูกาล สภาพภูมิกาศ และ ตารางบินของท่าอากาศยานเป็นสำคัญเท่านั้น สิ่งสำคัญ ท่านจำเป็นต้องมาถึงสนามบินเพื่อเช็คอินก่อนเครื่องบิน อย่างน้อย 3 ชั่วโมง โดยในส่วนนี้หากเกิดความเสียหายใดๆบริษัทขอสงวนสิทธิ์ในการไม่รับผิดชอบค่าใช้จ่ายที่เกิดขึ้นใดๆทั้งสิ้น</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">9</span>
-                <span>กรณีที่ออกบัตรโดยสาร (ตั๋ว) เรียบร้อยแล้ว มีรายละเอียดส่วนใดผิด ทางบริษัทขอสงวนสิทธิ์ในการรับผิดชอบไม่ว่าส่วนใดส่วนหนึ่ง หากท่านไม่ดำเนินการส่งสำเนาหน้าแรกของหนังสือเดินทางให้ทางบริษัทเพื่อใช้ในการออกบัตรโดยสาร</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">10</span>
-                <span>หลังจากท่านชำระค่าทัวร์ครบตามจำนวนเรียบร้อยแล้ว ทางบริษัทจะนำส่งใบนัดหมายและเตรียมตัวการเดินทางให้ท่านอย่างน้อย 1 หรือ 3 วัน ก่อนออกเดินทาง</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">11</span>
-                <span>อัตราทัวร์นี้ เป็นอัตราสำหรับบัตรโดยสารเครื่องบินแบบหมู่คณะ (ตั๋วกรุ๊ป) ท่านจะไม่สามารถเลื่อนไฟล์ท วัน ไป หรือ กลับส่วนใดได้ จำเป็นจะต้องไป และ กลับ ตามกำหนดการเท่านั้น หากต้องการเปลี่ยนแปลงกรุณาติดต่อเจ้าหน้าที่เป็นกรณีพิเศษ</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">12</span>
-                <span>ทางบริษัทไม่มีนโยบายจัดคู่นอนให้กับลูกค้าที่ไม่รู้จักกันมาก่อน เช่น กรณีที่ท่านเดินทาง 1 ท่าน จำเป็นต้องชำระค่าห้องพักเดี่ยวตามที่ระบุ</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">13</span>
-                <span>หนังสือเดินทาง หรือ พาสปอร์ต ต้องมีอายุใช้งานได้คงเหลือไม่น้อยกว่า 6 เดือน ณ วันกลับ หากลูกค้าทำการจองและชำระเงินเรียบร้อย หากเกิดปัยหาในส่วนนี้ทางบริษัทจะไม่รับผิดชอบทุกกรณี</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">14</span>
-                <span>กรณีที่ท่านเป็นอิสลาม ไม่ทานเนื้อสัตว์ หรือ แพ้อาหารบางประเภท กรุณาแจ้งเจ้าหน้าที่เป็นกรณีพิเศษ</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">15</span>
-                <span>บริษัทฯ จะไม่รับผิดชอบค่าเสียหายในเหตุการณ์ที่เกิดจากยานพาหนะ การยกเลิกเที่ยวบิน การล่าช้าของสายการบิน ภัยธรรมชาติ การเมือง จราจล ประท้วง คำสั่งของเจ้าหน้าที่รัฐ และอื่นๆ ที่อยู่นอกเหนือการควบคุมของทางบริษัท</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">16</span>
-                <span>เมื่อท่านออกเดินทางไปกับคณะแล้ว ท่านงดใช้บริการใดบริการหนึ่ง หรือไม่เดินทางพร้อมคณะ ถือว่าท่านสละสิทธิ์ ไม่สามารถเรียกร้องค่าบริการคืนได้ ไม่ว่ากรณีใดๆ ทั้งสิ้น</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">17</span>
-                <span>มัคคุเทศก์ พนักงาน และตัวแทนบริษัทฯ ไม่มีอำนาจในการตัดสินใจหรือให้คำสัญญาใดๆ ทั้งสิ้นแทน บริษัทฯนอกจากมีเอกสารลงนามโดยผู้มีอำนาจของบริษัทฯกำกับเท่านั้นกรณีต้องการเปลี่ยนแปลงพีเรียดวันเดินทาง (เลื่อนวันเดินทาง) ทางบริษัทขอสงวนสิทธิ์ในการหักค่าใช้จ่ายการดำเนินการต่างๆ ที่เกิดขึ้นจริงสำหรับการดำเนินการจองครั้งแรก ตามจำนวนครั้งที่เปลี่ยนแปลง ไม่ว่ากรณีใดๆทั้งสิ้น</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">18</span>
-                <span>บริษัทขอสงวนสิทธิ์ ในการไม่รับผิดชอบใดๆทั้งสิ้น หากเกิดสิ่งของสูญหายระหว่างการเดินทาง และ ขอสงวนสิทธิ์ในการเรียกเก็บค่าใช้จ่ายตามจริง กรณีท่านลืมสิ่งของไว้ที่โรงแรมและจำเป็นต้องส่งมายังจุดหมายปลายทางตามที่ท่านต้องการ</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">19</span>
-                <span>ขอสงวนสิทธิ์การเก็บค่าน้ำมันและภาษีสนามบินทุกแห่งเพิ่ม หากสายการบินมีการปรับขึ้นก่อนวันเดินทาง</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">20</span>
-                <span>เนื่องจากการเดินทางท่องเที่ยวในครั้งนี้ เป็นการชำระแบบเหมาจ่ายขาดกับบริษัทตัวแทนในต่างประเทศ ทางบริษัทจึงขอสงวนสิทธิ์ ไม่สามารถขอรับเงินคืนได้ในบริการบางส่วน หรือ ส่วนใดส่วนหนึ่งที่ท่านไม่ต้องการได้รับบริการ หากระหว่างเดินทาง สถานที่ท่องเที่ยวใดที่ไม่สามารถเข้าชมได้ ไม่ว่าด้วยสาเหตุใดก็ตาม ทางบริษัทขอสงวนสิทธิ์ในการไม่สามารถคืนค่าใช้จ่ายไม่ว่าส่วนใดส่วนหนึ่งให้ท่าน เนื่องจากทางบริษัทได้ทำการจองและถูกเก็บค่าใช้จ่ายแบบเหมาจ่ายไปล่วงหน้าทั้งหมดแล้ว</span>
-            </li>
-            <li class="flex items-start gap-3 text-gray-700 text-sm leading-relaxed">
-                <span class="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-orange-100 text-orange-700 text-xs font-bold rounded-full mt-0.5" style="background-color: #ffedd5; color: #c2410c;">21</span>
-                <span>หากมีสถานที่ ร้านค้าที่ไม่สามารถเปิดให้บริการได้ภายหลัง โปรแกรมอาจมีการเปลี่ยนแปลงได้ตามความเหมาะสม โดยไม่แจ้งให้ทราบล่วงหน้า โดยส่วนนี้ทางบริษัทจะคำนึงถึงประโยชน์ของลูกค้าเป็นสำคัญ หากกรณีที่จำเป็นจะต้องมีค่าใช้จ่ายเพิ่ม ทางบริษัทจะแจ้งให้ทราบล่วงหน้า</span>
-            </li>
-        </ul>
-    </div>
+<h2 class="text-xl font-bold text-blue-800 mt-10 mb-4 pl-4 border-l-4 border-blue-500">การเก็บและการใช้ข้อมูล</h2>
+<p class="text-base leading-relaxed mb-4 text-gray-700">
+โดยปกติท่านสามารถเข้าเยี่ยมชมเว็บไซต์ของเราได้ตลอดเวลาโดยไม่ต้องบอกเราว่าท่านเป็นใคร หรือเปิดเผยข้อมูลส่วนตัวของท่านให้เราทราบ เราจะเก็บข้อมูลของท่านเฉพาะในกรณีที่ท่านยินยอม โดยจะมีการแสดงทางเลือกสำหรับท่านในการยินยอมที่จะเปิดเผยข้อมูลหรือไม่ การเริ่มเก็บข้อมูลอาจมาจากกรณีการลงทะเบียนเป็นสมาชิกเพื่อใช้บริการด้านการท่องเที่ยวต่างๆ หรือการร้องขอของท่านในการสอบถามข้อมูลบริการที่ท่านสนใจ
+</p>
+<p class="text-base leading-relaxed mb-4 text-gray-700">
+ข้อมูลส่วนตัวอาจรวมถึง:
+</p>
+<ul class="text-base mb-6 pl-6 list-disc space-y-2 text-gray-700">
+<li>ชื่อ ที่อยู่ หมายเลขโทรศัพท์</li>
+<li>รายละเอียดบัตรเครดิต อีเมล</li>
+<li>ชื่อที่พัก ที่ตั้งโรงแรม และ/หรือช่วงเวลาที่เข้าพักของท่าน</li>
+<li>ชื่อ Login, IP Address และรหัสผ่าน</li>
+</ul>
+<p class="text-base leading-relaxed mb-4 text-gray-700">
+ทางเราจะใช้ข้อมูลที่ท่านให้มาเพื่อวัตถุประสงค์ในการตอบกลับความต้องการของท่านที่ท่านได้ร้องขอมาเป็นหลัก เราอาจใช้ข้อมูลของท่านในการนำเสนอข้อมูลที่เป็นประโยชน์ หรือข่าวสารด้านบริการท่องเที่ยวต่างๆ ในอนาคต ซึ่งท่านสามารถที่จะเลือกรับหรือไม่รับข่าวสารดังกล่าวได้เสมอ
+</p>
+<p class="text-base leading-relaxed mb-6 text-gray-600 italic">
+ทั้งนี้ การตรวจสอบผู้ใช้บนอินเทอร์เน็ตเป็นสิ่งที่ทำได้ยาก ดังนั้น เราจึงไม่มีส่วนรับผิดชอบต่อการยืนยันตัวตนโดยใช้ข้อมูลส่วนตัวของผู้ใช้บริการได้ในบางกรณี
+</p>
+<p class="text-base leading-relaxed mb-6 text-gray-700">
+เราอาจจัดทำแบบสอบถามทางอินเทอร์เน็ต เพื่อให้เราสามารถเข้าใจความต้องการ และข้อมูลของผู้เข้าเยี่ยมชมเรามากขึ้น เมื่อเราออกแบบสอบถาม เราจะพยายามแจ้งให้ท่านทราบว่าเราจะใช้ข้อมูลดังกล่าวเพื่อวัตถุประสงค์ใดในขณะที่เราทำการรวบรวมข้อมูล
+</p>
+
+<h2 class="text-xl font-bold text-blue-800 mt-10 mb-4 pl-4 border-l-4 border-blue-500">การเปิดเผยข้อมูล</h2>
+<p class="text-base leading-relaxed mb-4 text-gray-700">
+ในบางกรณี เราอาจต้องให้ข้อมูลส่วนตัวของท่านกับองค์กร สายการบิน โรงแรม ธนาคาร หรือผู้ให้บริการอื่นๆ เพื่อความจำเป็นในการตอบสนองความต้องการของท่าน ซึ่งโดยส่วนใหญ่จะเป็นกรณีที่ท่านได้ตกลงที่จะจอง/ซื้อผลิตภัณฑ์หรือบริการของเราแล้ว และทางเราพิจารณาโดยเหตุผลแล้วว่าไม่ขัดกับกฎหมาย
+</p>
+<div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-6 rounded-r-lg">
+<p class="text-base text-blue-800 font-medium">
+เราจะไม่ทำการขายข้อมูลส่วนตัวของท่านไปยังบุคคลที่สาม เว้นแต่ในกรณีมีการควบรวมกิจการ การเข้าซื้อกิจการ หรือการร่วมทุนจากบุคคลที่สาม
+</p>
+</div>
+<p class="text-base leading-relaxed mb-4 text-gray-700">
+เราจะไม่เปิดเผยข้อมูลส่วนตัวของท่านต่อบุคคลที่สามโดยไม่ได้รับการยินยอมจากท่าน ยกเว้นกรณี:
+</p>
+<ul class="text-base mb-6 pl-6 list-disc space-y-2 text-gray-700">
+<li>การเปิดเผยข้อมูลดังที่มีระบุในนโยบายคุ้มครองข้อมูลส่วนบุคคลนี้</li>
+<li>การเปิดเผยข้อมูลตามการอนุญาตทางกฎหมายของเขตอำนาจศาลใดๆ ที่เกี่ยวข้อง</li>
+<li>การเปิดเผยข้อมูลส่วนตัวและข้อมูลที่จำเป็นสำหรับการดำเนินการจองห้องพักของที่พักที่ท่านเลือกให้เสร็จสมบูรณ์</li>
+</ul>
+<p class="text-base leading-relaxed mb-4 text-gray-700">
+เราขอสงวนสิทธิที่จะเปิดเผยข้อมูลส่วนตัวของท่านต่อบริษัทหรือกลุ่มบริษัทพันธมิตรของเรา (ทั้งในและนอกประเทศของท่าน) ซึ่งรวมถึงพนักงานของบริษัท เอเยนต์และผู้แทนที่ไว้วางใจได้ของเราที่เราอนุญาตให้เข้าถึงข้อมูลนี้
+</p>
+<p class="text-base leading-relaxed mb-6 text-gray-700">
+<strong class="text-blue-800">เน็กซ์ ทริป ฮอลิเดย์</strong> อาจเปิดเผยข้อมูลส่วนตัวโดยชอบด้วยกฎหมายที่เกี่ยวข้องเพื่อเป็นการป้องกันตัวเองจากความรับผิดชอบ เพื่อปฏิบัติตามหมายศาล ตามกระบวนการยุติธรรม ตามหนังสือรับรองหรือเทียบเท่า ตามคำร้องขอจากเจ้าหน้าที่ผู้รักษากฎหมาย หรือเจ้าหน้าที่ผู้มีอำนาจเพื่อสืบค้นการทุจริตหรือการกระทำที่ผิด
+</p>
+
+<h2 class="text-xl font-bold text-blue-800 mt-10 mb-4 pl-4 border-l-4 border-blue-500">การเก็บรวบรวมข้อมูลด้านสถิติ</h2>
+<p class="text-base leading-relaxed mb-4 text-gray-700">
+เว็บไซต์ของเราอาจมีการเก็บสถิติการเยี่ยมชม ในแต่ละหน้าเว็บไซต์ รวมถึง IP Address และโดเมนเนมผู้ให้บริการอินเทอร์เน็ตของผู้เข้าเยี่ยมชมเว็บไซต์ เพื่อจุดประสงค์ในการวิเคราะห์ข้อมูล แนวโน้มเชิงสถิติ สำหรับการปรับปรุงเว็บไซต์และการวางแผนทางการตลาด
+</p>
+<p class="text-base leading-relaxed mb-6 text-gray-600 italic">
+โดยขอเรียนว่าข้อมูลดังกล่าวเป็นข้อมูลโดยสรุปและไม่ได้เป็นข้อมูลส่วนตัวหรือเชื่อมโยงไปยังข้อมูลส่วนตัวของผู้เข้าชมเว็บไซต์ในการที่จะระบุตัวตนของผู้เข้าชมเว็บไซต์แต่อย่างใด
+</p>
+
+<h2 class="text-xl font-bold text-blue-800 mt-10 mb-4 pl-4 border-l-4 border-blue-500">เกี่ยวกับ Cookies</h2>
+<p class="text-base leading-relaxed mb-4 text-gray-700">
+เว็บไซต์อาจมีการใช้เทคโนโลยี Cookies เพื่อจุดประสงค์ในการปรับปรุงการให้บริการที่รวดเร็วและนำมาซึ่งประสบการณ์ที่ดีในการใช้เว็บไซต์ โดย <strong class="text-blue-800">Cookies</strong> คือ ส่วนของข้อความเล็กๆ ที่จะถูกเก็บอยู่บนเครื่องคอมพิวเตอร์ของท่าน เพื่อให้เราทราบทุกครั้งที่ท่านกลับมาเยี่ยมชมเว็บไซต์ของเรา
+</p>
+<p class="text-base leading-relaxed mb-6 text-gray-700">
+ท่านสามารถตั้งเครื่องคอมพิวเตอร์ของท่านให้แสดงผลเมื่อท่านได้รับ Cookies หรือท่านยังสามารถปฏิเสธการรับ Cookies ได้ แต่โดยทั่วไป ในบางกรณีเว็บไซต์อาจไม่สามารถตอบสนองความต้องการของท่านได้อย่างมีประสิทธิภาพ หากท่านมีการปฏิเสธการรับ Cookies
+</p>
+
+<h2 class="text-xl font-bold text-blue-800 mt-10 mb-4 pl-4 border-l-4 border-blue-500">การเชื่อมโยงข้อมูล</h2>
+<p class="text-base leading-relaxed mb-4 text-gray-700">
+เว็บไซต์ของเราอาจจะมีการเชื่อมโยงกับเว็บไซต์อื่นๆ เราพยายามเชื่อมโยงกับเว็บไซต์ที่มีมาตรฐานและนโยบายคุ้มครองข้อมูลส่วนบุคคลระดับเดียวกับเรา
+</p>
+<div class="bg-amber-50 border-l-4 border-amber-500 p-4 mb-6 rounded-r-lg">
+<p class="text-base text-amber-800">
+<strong>ข้อควรระวัง:</strong> เราไม่สามารถรับผิดชอบในเนื้อหา หรือแนวปฏิบัติเกี่ยวกับความเป็นส่วนตัวที่เว็บไซต์อื่นถือปฏิบัติ รวมถึงความน่าเชื่อถือของเนื้อหา ข้อความ ข้อมูล สินค้า บริการ ของเว็บไซต์อื่นๆ ดังนั้นท่านจึงโปรดพิจารณาและตระหนักถึงความสำคัญของการศึกษาข้อมูลนโยบายคุ้มครองข้อมูลส่วนบุคคลของเว็บไซต์อื่นๆ รวมถึงข้อตกลงต่างๆ ก่อนที่ท่านจะใช้บริการ
+</p>
+</div>
+
+<h2 class="text-xl font-bold text-blue-800 mt-10 mb-4 pl-4 border-l-4 border-blue-500">การปรับปรุงนโยบายคุ้มครองข้อมูลส่วนบุคคล</h2>
+<p class="text-base leading-relaxed mb-4 text-gray-700">
+เนื่องจากการเปลี่ยนแปลงที่รวดเร็วบนโลกของอินเทอร์เน็ต <a href="https://www.nexttripholiday.com" class="text-blue-600 underline hover:text-blue-800">www.nexttripholiday.com</a> อาจมีการปรับปรุงเนื้อหาที่ระบุอยู่ในนโยบายคุ้มครองข้อมูลส่วนบุคคลนี้เป็นระยะเพื่อความทันสมัย
+</p>
+<p class="text-base leading-relaxed mb-8 text-gray-700">
+ทางเราแนะนำให้ท่านตรวจสอบนโยบายคุ้มครองข้อมูลส่วนบุคคลนี้อยู่เสมอหากท่านมีความกรุณาที่ต้องการใช้งานเว็บไซต์ของเราอยู่เป็นระยะ
+</p>
+
+<div class="bg-blue-100 border border-gray-200 rounded-xl p-6 text-center">
+<p class="text-sm text-blue-800">
+<strong>เน็กซ์ ทริป ฮอลิเดย์</strong><br>
+นโยบายความเป็นส่วนตัว | Privacy Policy
+</p>
+</div>
+
 </div>
 HTML;
 
-WebPage::updateOrCreate(
-    ['key' => 'terms'],
-    [
-        'title' => 'เงื่อนไขการให้บริการ',
-        'content' => $content,
-        'description' => 'เงื่อนไขการให้บริการ',
-        'is_active' => true,
-    ]
-);
-
-echo "terms  content seeded successfully.\n";
+echo $content;
