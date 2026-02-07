@@ -154,8 +154,8 @@ class PopularCountryController extends Controller
     {
         $countries = Country::where('is_active', true)
             ->withCount(['tours' => function ($query) {
+                // Status 'active' = เปิดใช้งาน (tour UI has 3 statuses: draft, active, closed)
                 $query->where('status', 'active')
-                      ->where('is_published', true)
                       ->whereHas('periods', function ($q) {
                           $q->where('status', 'open')
                             ->where('start_date', '>=', now()->toDateString());
@@ -281,8 +281,8 @@ class PopularCountryController extends Controller
             
             $setting = PopularCountrySetting::create($validated);
 
-            // Create items if manual mode
-            if ($validated['selection_mode'] === 'manual' && !empty($items)) {
+            // Create items if provided (both auto and manual modes can have custom display data)
+            if (!empty($items)) {
                 foreach ($items as $index => $itemData) {
                     $setting->items()->create([
                         'country_id' => $itemData['country_id'],
@@ -384,35 +384,50 @@ class PopularCountryController extends Controller
             $items = $validated['items'] ?? null;
             unset($validated['items']);
 
+            // Handle slug - if empty/null, don't update it (keep existing)
+            if (array_key_exists('slug', $validated) && empty($validated['slug'])) {
+                unset($validated['slug']);
+            }
+
             $setting->update($validated);
 
             // Update items if provided
+            // Items are saved by country_id - never deleted (to preserve images for countries that may come back)
             if ($items !== null) {
-                $existingIds = [];
-                
                 foreach ($items as $index => $itemData) {
-                    if (!empty($itemData['id'])) {
-                        // Update existing item
-                        $item = PopularCountryItem::where('id', $itemData['id'])
-                            ->where('setting_id', $setting->id)
-                            ->first();
+                    // Find existing item by country_id (not by id)
+                    $existingItem = PopularCountryItem::where('setting_id', $setting->id)
+                        ->where('country_id', $itemData['country_id'])
+                        ->first();
+                    
+                    if ($existingItem) {
+                        // Update existing item - use array_key_exists to allow setting null values
+                        $updateData = [
+                            'sort_order' => $itemData['sort_order'] ?? $index,
+                            'is_active' => $itemData['is_active'] ?? true,
+                        ];
                         
-                        if ($item) {
-                            $item->update([
-                                'country_id' => $itemData['country_id'],
-                                'display_name' => $itemData['display_name'] ?? null,
-                                'alt_text' => $itemData['alt_text'] ?? null,
-                                'title' => $itemData['title'] ?? null,
-                                'subtitle' => $itemData['subtitle'] ?? null,
-                                'link_url' => $itemData['link_url'] ?? null,
-                                'sort_order' => $itemData['sort_order'] ?? $index,
-                                'is_active' => $itemData['is_active'] ?? true,
-                            ]);
-                            $existingIds[] = $item->id;
+                        // Only update if key exists in request (allows setting to empty/null)
+                        if (array_key_exists('display_name', $itemData)) {
+                            $updateData['display_name'] = $itemData['display_name'];
                         }
+                        if (array_key_exists('alt_text', $itemData)) {
+                            $updateData['alt_text'] = $itemData['alt_text'];
+                        }
+                        if (array_key_exists('title', $itemData)) {
+                            $updateData['title'] = $itemData['title'];
+                        }
+                        if (array_key_exists('subtitle', $itemData)) {
+                            $updateData['subtitle'] = $itemData['subtitle'];
+                        }
+                        if (array_key_exists('link_url', $itemData)) {
+                            $updateData['link_url'] = $itemData['link_url'];
+                        }
+                        
+                        $existingItem->update($updateData);
                     } else {
                         // Create new item
-                        $newItem = $setting->items()->create([
+                        $setting->items()->create([
                             'country_id' => $itemData['country_id'],
                             'display_name' => $itemData['display_name'] ?? null,
                             'alt_text' => $itemData['alt_text'] ?? null,
@@ -422,12 +437,11 @@ class PopularCountryController extends Controller
                             'sort_order' => $itemData['sort_order'] ?? $index,
                             'is_active' => $itemData['is_active'] ?? true,
                         ]);
-                        $existingIds[] = $newItem->id;
                     }
                 }
-
-                // Delete removed items (but keep images on Cloudflare for now)
-                $setting->items()->whereNotIn('id', $existingIds)->delete();
+                
+                // Note: We don't delete items that aren't in the current list
+                // This preserves images for countries that may come back when tour counts change
             }
 
             // Clear cache after update
@@ -531,6 +545,7 @@ class PopularCountryController extends Controller
     public function previewSettings(Request $request): JsonResponse
     {
         $validated = $request->validate([
+            'setting_id' => 'nullable|integer|exists:popular_country_settings,id',
             'selection_mode' => ['required', Rule::in(['auto', 'manual'])],
             'country_ids' => 'nullable|array',
             'country_ids.*' => 'integer|exists:countries,id',
@@ -541,6 +556,11 @@ class PopularCountryController extends Controller
             'sort_by' => ['nullable', Rule::in(['tour_count', 'name', 'manual'])],
             'sort_direction' => ['nullable', Rule::in(['asc', 'desc'])],
         ]);
+
+        // If editing an existing setting, load it to access saved items
+        $existingSetting = !empty($validated['setting_id']) 
+            ? PopularCountrySetting::with('items')->find($validated['setting_id']) 
+            : null;
 
         // Create temporary setting for preview
         $setting = new PopularCountrySetting([
@@ -554,6 +574,11 @@ class PopularCountryController extends Controller
             'sort_by' => $validated['sort_by'] ?? 'tour_count',
             'sort_direction' => $validated['sort_direction'] ?? 'desc',
         ]);
+        
+        // Copy items from existing setting if available (for image lookup)
+        if ($existingSetting && $existingSetting->items->isNotEmpty()) {
+            $setting->setRelation('items', $existingSetting->items);
+        }
 
         try {
             // For manual mode with country_ids, use special preview method
@@ -655,8 +680,9 @@ class PopularCountryController extends Controller
                 }
             }
 
-            // Upload to Cloudflare
-            $result = $this->cloudflare->uploadFromFile($file, "popular-countries/{$settingId}");
+            // Upload to Cloudflare with unique ID
+            $uniqueId = "popular-countries/{$settingId}/{$countryId}-" . time();
+            $result = $this->cloudflare->uploadFromFile($file, $uniqueId);
             
             if (!$result || !isset($result['id'])) {
                 throw new \Exception('Cloudflare upload failed');

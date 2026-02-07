@@ -18,12 +18,21 @@ class Promotion extends Model
         'discount_value',
         'is_active',
         'sort_order',
+        'banner_url',
+        'cloudflare_id',
+        'link_url',
+        'start_date',
+        'end_date',
+        'badge_text',
+        'badge_color',
     ];
 
     protected $casts = [
         'discount_value' => 'decimal:2',
         'is_active' => 'boolean',
         'sort_order' => 'integer',
+        'start_date' => 'date',
+        'end_date' => 'date',
     ];
 
     // Type constants

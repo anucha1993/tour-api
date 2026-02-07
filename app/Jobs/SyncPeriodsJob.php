@@ -653,7 +653,7 @@ class SyncPeriodsJob implements ShouldQueue
                     'tour_id' => $tour->id,
                     'data_source' => 'api',
                     'day_number' => $itinData['day_number'] ?? $dayNumber,
-                    'title' => $itinData['title'] ?? "Day {$dayNumber}",
+                    'title' => mb_substr($itinData['title'] ?? "Day {$dayNumber}", 0, 250),
                     'description' => is_array($itinData['description'] ?? null) 
                         ? json_encode($itinData['description'], JSON_UNESCAPED_UNICODE) 
                         : ($itinData['description'] ?? null),
@@ -664,7 +664,7 @@ class SyncPeriodsJob implements ShouldQueue
                     'has_lunch' => $this->parseMealFlag($itinData['has_lunch'] ?? null, 'lunch'),
                     'has_dinner' => $this->parseMealFlag($itinData['has_dinner'] ?? null, 'dinner'),
                     'meals_note' => $itinData['meals_note'] ?? null,
-                    'accommodation' => $itinData['accommodation'] ?? null,
+                    'accommodation' => mb_substr($itinData['accommodation'] ?? '', 0, 250) ?: null,
                     'hotel_star' => $itinData['hotel_star'] ?? null,
                     'images' => is_array($itinData['images'] ?? null) 
                         ? json_encode($itinData['images'], JSON_UNESCAPED_UNICODE) 

@@ -66,6 +66,7 @@ Route::post('integrations/{id}/tours/sync-selected', [IntegrationController::cla
 
 // Queue & Sync Status (for monitoring/debugging)
 Route::get('queue/status', [IntegrationController::class, 'getQueueStatus']);
+Route::get('queue/failed-jobs', [IntegrationController::class, 'getFailedJobs']);
 Route::post('queue/fix-stuck', [IntegrationController::class, 'fixStuckSyncs']);
 Route::post('queue/clear-failed', [IntegrationController::class, 'clearFailedJobs']);
 Route::post('queue/process', [IntegrationController::class, 'processQueue']);
@@ -75,6 +76,9 @@ Route::get('hero-slides/public', [\App\Http\Controllers\HeroSlideController::cla
 
 // Public Popular Countries (for tour-web homepage)
 Route::get('popular-countries/public', [\App\Http\Controllers\PopularCountryController::class, 'publicList']);
+
+// Public Promotions (for tour-web homepage)
+Route::get('promotions/public', [PromotionController::class, 'publicList']);
 
 // Wholesaler Sync API (Public for testing - move inside auth:sanctum for production)
 Route::prefix('wholesalers/{wholesaler}/sync')->group(function () {
@@ -158,6 +162,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('tours.itineraries', App\Http\Controllers\TourItineraryController::class);
 
     // Promotions
+    Route::post('promotions/{promotion}/upload-banner', [PromotionController::class, 'uploadBanner']);
+    Route::delete('promotions/{promotion}/delete-banner', [PromotionController::class, 'deleteBanner']);
+    Route::patch('promotions/{promotion}/toggle-status', [PromotionController::class, 'toggleStatus']);
+    Route::post('promotions/reorder', [PromotionController::class, 'reorder']);
     Route::apiResource('promotions', PromotionController::class);
 
     // Gallery Images CRUD

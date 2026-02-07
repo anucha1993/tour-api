@@ -2508,6 +2508,71 @@ class IntegrationController extends Controller
     }
 
     /**
+     * Get failed jobs with error details
+     */
+    public function getFailedJobs(Request $request): JsonResponse
+    {
+        $limit = $request->integer('limit', 20);
+        
+        $failedJobs = DB::table('failed_jobs')
+            ->orderBy('failed_at', 'desc')
+            ->limit($limit)
+            ->get();
+
+        $jobs = $failedJobs->map(function ($job) {
+            $payload = json_decode($job->payload, true);
+            $exception = $job->exception;
+            
+            // Extract job class name
+            $jobClass = $payload['displayName'] ?? 'Unknown Job';
+            $shortClass = class_basename($jobClass);
+            
+            // Extract error message (first line of exception)
+            $errorMessage = '';
+            if ($exception) {
+                $lines = explode("\n", $exception);
+                $errorMessage = trim($lines[0] ?? '');
+                // Remove long class paths for readability
+                $errorMessage = preg_replace('/([A-Za-z\\\\]+Exception):/', '$1:', $errorMessage);
+            }
+
+            // Try to extract useful data from payload
+            $commandData = [];
+            if (isset($payload['data']['command'])) {
+                $command = @unserialize($payload['data']['command']);
+                if ($command && is_object($command)) {
+                    // Get public properties
+                    $reflection = new \ReflectionObject($command);
+                    foreach ($reflection->getProperties(\ReflectionProperty::IS_PUBLIC) as $prop) {
+                        $value = $prop->getValue($command);
+                        if (!is_object($value) && !is_array($value)) {
+                            $commandData[$prop->getName()] = $value;
+                        }
+                    }
+                }
+            }
+            
+            return [
+                'id' => $job->id,
+                'uuid' => $job->uuid,
+                'job_class' => $shortClass,
+                'full_class' => $jobClass,
+                'queue' => $job->queue,
+                'error_message' => $errorMessage,
+                'exception_preview' => mb_substr($exception, 0, 1000),
+                'command_data' => $commandData,
+                'failed_at' => $job->failed_at,
+            ];
+        });
+        
+        return response()->json([
+            'success' => true,
+            'data' => $jobs,
+            'total' => DB::table('failed_jobs')->count(),
+        ]);
+    }
+
+    /**
      * Sync selected tours from search results (Mass Sync)
      * 
      * This allows users to sync specific tours from the search page

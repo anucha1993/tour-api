@@ -61,7 +61,10 @@ class PopularCountrySetting extends Model
     ];
 
     /**
-     * Relationship: Country items (for manual selection with custom data)
+     * Relationship: Country items with custom display data
+     * Items can be used in BOTH modes:
+     * - Manual mode: Defines which countries to show and their display data
+     * - Auto mode: Provides custom display data (images, titles) for auto-selected countries
      */
     public function items(): HasMany
     {
@@ -147,15 +150,17 @@ class PopularCountrySetting extends Model
      * 
      * Mandatory conditions (always applied):
      * - Status is 'active' (excludes draft, closed)
-     * - Is published (is_published = true)
+     *   Note: When status is 'active' means it's ready to show on website
+     *   (UI has 3 statuses: แบบร่าง/draft, เปิดใช้งาน/active, ปิดใช้งาน/closed)
      * - Has at least one upcoming period (status='open', start_date >= today)
      *   This excludes tours without periods or tours that have already departed
      */
     protected function buildBaseTourQuery()
     {
+        // Status 'active' = เปิดใช้งาน (ready to display on website)
+        // No need to check is_published since UI doesn't have that option
         $query = Tour::query()
-            ->where('status', 'active')
-            ->where('is_published', true);
+            ->where('status', 'active');
 
         // Apply additional filters from settings
         if (!empty($this->filters)) {
@@ -330,12 +335,29 @@ class PopularCountrySetting extends Model
             return [];
         }
 
+        // Load saved items for custom display data (images, titles, etc.)
+        // If items relation is already loaded (e.g., from preview with existing setting), use it
+        // Otherwise, query from database
+        if ($this->relationLoaded('items') && $this->items->isNotEmpty()) {
+            $savedItems = $this->items->where('is_active', true)->keyBy('country_id');
+        } elseif ($this->exists) {
+            $savedItems = $this->activeItems()->with('country')->get()->keyBy('country_id');
+        } else {
+            $savedItems = collect();
+        }
+
         // Get countries
         $countries = Country::whereIn('id', array_keys($tourCounts))
             ->where('is_active', true)
             ->get()
-            ->map(function ($country) use ($tourCounts) {
+            ->map(function ($country) use ($tourCounts, $savedItems) {
                 $tourCount = $tourCounts[$country->id] ?? 0;
+                
+                // Check if we have custom display data for this country
+                if ($savedItems->has($country->id)) {
+                    return $this->formatItemData($savedItems->get($country->id), $tourCount);
+                }
+                
                 return $this->formatCountryData($country, $tourCount);
             })
             ->toArray();

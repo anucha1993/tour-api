@@ -74,18 +74,25 @@ class PopularCountryItem extends Model
     }
 
     /**
-     * Get image URL with Cloudflare fallback
+     * Get image URL with Cloudflare fallback and cache busting
      */
     public function getImageAttribute(): ?string
     {
+        $url = null;
+        
         if ($this->image_url) {
-            return $this->image_url;
+            $url = $this->image_url;
+        } elseif ($this->cloudflare_id) {
+            $url = "https://imagedelivery.net/" . config('services.cloudflare.account_hash', 'yixdo-GXTcyjkoSkBzfBcA') . "/{$this->cloudflare_id}/public";
         }
         
-        if ($this->cloudflare_id) {
-            return "https://imagedelivery.net/" . config('services.cloudflare.account_hash', 'yixdo-GXTcyjkoSkBzfBcA') . "/{$this->cloudflare_id}/public";
+        // Add cache busting based on updated_at timestamp
+        if ($url && $this->updated_at) {
+            $timestamp = $this->updated_at->timestamp;
+            $separator = str_contains($url, '?') ? '&' : '?';
+            $url .= "{$separator}v={$timestamp}";
         }
         
-        return null;
+        return $url;
     }
 }
