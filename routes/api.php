@@ -73,6 +73,9 @@ Route::post('queue/process', [IntegrationController::class, 'processQueue']);
 // Public Hero Slides (for tour-web homepage)
 Route::get('hero-slides/public', [\App\Http\Controllers\HeroSlideController::class, 'publicList']);
 
+// Public Popular Countries (for tour-web homepage)
+Route::get('popular-countries/public', [\App\Http\Controllers\PopularCountryController::class, 'publicList']);
+
 // Wholesaler Sync API (Public for testing - move inside auth:sanctum for production)
 Route::prefix('wholesalers/{wholesaler}/sync')->group(function () {
     Route::post('/tour', [WholesalerSyncController::class, 'syncTour']);
@@ -171,6 +174,17 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('hero-slides/{heroSlide}/toggle-status', [\App\Http\Controllers\HeroSlideController::class, 'toggleStatus']);
     Route::post('hero-slides/{heroSlide}/replace-image', [\App\Http\Controllers\HeroSlideController::class, 'replaceImage']);
     Route::apiResource('hero-slides', \App\Http\Controllers\HeroSlideController::class);
+
+    // Popular Countries CRUD
+    Route::get('popular-countries/filter-options', [\App\Http\Controllers\PopularCountryController::class, 'filterOptions']);
+    Route::post('popular-countries/preview-settings', [\App\Http\Controllers\PopularCountryController::class, 'previewSettings']);
+    Route::post('popular-countries/reorder', [\App\Http\Controllers\PopularCountryController::class, 'reorder']);
+    Route::get('popular-countries/{id}/preview', [\App\Http\Controllers\PopularCountryController::class, 'preview']);
+    Route::post('popular-countries/{id}/clear-cache', [\App\Http\Controllers\PopularCountryController::class, 'clearCache']);
+    Route::patch('popular-countries/{id}/toggle-status', [\App\Http\Controllers\PopularCountryController::class, 'toggleStatus']);
+    Route::post('popular-countries/{settingId}/items/{countryId}/image', [\App\Http\Controllers\PopularCountryController::class, 'uploadItemImage']);
+    Route::delete('popular-countries/{settingId}/items/{countryId}/image', [\App\Http\Controllers\PopularCountryController::class, 'deleteItemImage']);
+    Route::apiResource('popular-countries', \App\Http\Controllers\PopularCountryController::class);
 
     // Integrations (Wholesaler API Configs)
     Route::prefix('integrations')->group(function () {
