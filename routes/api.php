@@ -11,6 +11,7 @@ use App\Http\Controllers\CityController;
 use App\Http\Controllers\TourController;
 use App\Http\Controllers\PeriodController;
 use App\Http\Controllers\PromotionController;
+use App\Http\Controllers\TourTabController;
 use App\Http\Controllers\GalleryImageController;
 use App\Http\Controllers\Api\IntegrationController;
 use App\Http\Controllers\Api\WholesalerSyncController;
@@ -79,6 +80,10 @@ Route::get('popular-countries/public', [\App\Http\Controllers\PopularCountryCont
 
 // Public Promotions (for tour-web homepage)
 Route::get('promotions/public', [PromotionController::class, 'publicList']);
+
+// Public Tour Tabs (for tour-web homepage)
+Route::get('tour-tabs/public', [TourTabController::class, 'publicList']);
+Route::get('tour-tabs/public/{slug}', [TourTabController::class, 'publicShow']);
 
 // Wholesaler Sync API (Public for testing - move inside auth:sanctum for production)
 Route::prefix('wholesalers/{wholesaler}/sync')->group(function () {
@@ -167,6 +172,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('promotions/{promotion}/toggle-status', [PromotionController::class, 'toggleStatus']);
     Route::post('promotions/reorder', [PromotionController::class, 'reorder']);
     Route::apiResource('promotions', PromotionController::class);
+
+    // Tour Tabs
+    Route::get('tour-tabs/condition-options', [TourTabController::class, 'getConditionOptions']);
+    Route::get('tour-tabs/{tourTab}/preview', [TourTabController::class, 'preview']);
+    Route::patch('tour-tabs/{tourTab}/toggle-status', [TourTabController::class, 'toggleStatus']);
+    Route::post('tour-tabs/reorder', [TourTabController::class, 'reorder']);
+    Route::apiResource('tour-tabs', TourTabController::class);
 
     // Gallery Images CRUD
     Route::get('gallery/tags', [GalleryImageController::class, 'tags']);

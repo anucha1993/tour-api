@@ -145,6 +145,7 @@ class Tour extends Model
         'popularity_score',
         'sort_order',
         'status',
+        'view_count',
         'is_published',
         'published_at',
         'updated_at_source',
