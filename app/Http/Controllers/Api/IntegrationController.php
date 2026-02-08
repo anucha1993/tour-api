@@ -2464,6 +2464,181 @@ class IntegrationController extends Controller
     }
 
     /**
+     * Get sync progress for a specific sync log
+     */
+    public function getSyncProgress(int $syncLogId): JsonResponse
+    {
+        $syncLog = SyncLog::with('wholesaler')->find($syncLogId);
+        
+        if (!$syncLog) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sync log not found',
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'sync_log_id' => $syncLog->id,
+                'wholesaler_id' => $syncLog->wholesaler_id,
+                'wholesaler_name' => $syncLog->wholesaler?->name,
+                'status' => $syncLog->status,
+                'sync_type' => $syncLog->sync_type,
+                'progress_percent' => $syncLog->progress_percent ?? 0,
+                'processed_items' => $syncLog->processed_items ?? 0,
+                'total_items' => $syncLog->total_items ?? 0,
+                'current_item_code' => $syncLog->current_item_code,
+                'chunk_size' => $syncLog->chunk_size ?? 50,
+                'current_chunk' => $syncLog->current_chunk ?? 0,
+                'total_chunks' => $syncLog->total_chunks ?? 0,
+                'api_calls_count' => $syncLog->api_calls_count ?? 0,
+                'cancel_requested' => (bool) ($syncLog->cancel_requested ?? false),
+                'cancelled_at' => $syncLog->cancelled_at,
+                'cancel_reason' => $syncLog->cancel_reason,
+                'last_heartbeat_at' => $syncLog->last_heartbeat_at,
+                'heartbeat_timeout_minutes' => $syncLog->heartbeat_timeout_minutes ?? 5,
+                'is_stuck' => $syncLog->last_heartbeat_at 
+                    ? $syncLog->last_heartbeat_at->lt(now()->subMinutes($syncLog->heartbeat_timeout_minutes ?? 5))
+                    : ($syncLog->started_at ? $syncLog->started_at->lt(now()->subMinutes(5)) : false),
+                'started_at' => $syncLog->started_at,
+                'completed_at' => $syncLog->completed_at,
+                'duration_seconds' => $syncLog->started_at 
+                    ? ($syncLog->completed_at 
+                        ? $syncLog->completed_at->diffInSeconds($syncLog->started_at) 
+                        : now()->diffInSeconds($syncLog->started_at))
+                    : 0,
+                'tours_created' => $syncLog->tours_created ?? 0,
+                'tours_updated' => $syncLog->tours_updated ?? 0,
+                'tours_failed' => $syncLog->tours_failed ?? 0,
+                'error_count' => $syncLog->error_count ?? 0,
+            ],
+        ]);
+    }
+
+    /**
+     * Request cancellation of a running sync
+     */
+    public function cancelSync(int $syncLogId): JsonResponse
+    {
+        $syncLog = SyncLog::find($syncLogId);
+        
+        if (!$syncLog) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sync log not found',
+            ], 404);
+        }
+
+        if ($syncLog->status !== 'running') {
+            return response()->json([
+                'success' => false,
+                'message' => "Cannot cancel sync with status: {$syncLog->status}",
+            ], 400);
+        }
+
+        // Request cancellation (job will check this flag)
+        $syncLog->update([
+            'cancel_requested' => true,
+        ]);
+
+        Log::info('IntegrationController: Sync cancellation requested', [
+            'sync_log_id' => $syncLogId,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Cancellation requested. The sync will stop at the next checkpoint.',
+            'data' => [
+                'sync_log_id' => $syncLogId,
+                'cancel_requested' => true,
+            ],
+        ]);
+    }
+
+    /**
+     * Force cancel a sync immediately
+     */
+    public function forceCancelSync(int $syncLogId): JsonResponse
+    {
+        $syncLog = SyncLog::find($syncLogId);
+        
+        if (!$syncLog) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sync log not found',
+            ], 404);
+        }
+
+        if (!in_array($syncLog->status, ['running', 'pending'])) {
+            return response()->json([
+                'success' => false,
+                'message' => "Cannot cancel sync with status: {$syncLog->status}",
+            ], 400);
+        }
+
+        // Force cancel immediately
+        $syncLog->update([
+            'status' => 'cancelled',
+            'cancel_requested' => true,
+            'cancelled_at' => now(),
+            'cancel_reason' => 'Force cancelled by user',
+            'completed_at' => now(),
+        ]);
+
+        Log::warning('IntegrationController: Sync force cancelled', [
+            'sync_log_id' => $syncLogId,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Sync has been force cancelled.',
+            'data' => [
+                'sync_log_id' => $syncLogId,
+                'status' => 'cancelled',
+            ],
+        ]);
+    }
+
+    /**
+     * Get all running syncs
+     */
+    public function getRunningSyncs(): JsonResponse
+    {
+        $runningSyncs = SyncLog::with('wholesaler')
+            ->where('status', 'running')
+            ->orderBy('started_at', 'desc')
+            ->get()
+            ->map(function ($sync) {
+                return [
+                    'id' => $sync->id,
+                    'wholesaler_id' => $sync->wholesaler_id,
+                    'wholesaler_name' => $sync->wholesaler?->name,
+                    'sync_type' => $sync->sync_type,
+                    'status' => $sync->status,
+                    'progress_percent' => $sync->progress_percent ?? 0,
+                    'processed_items' => $sync->processed_items ?? 0,
+                    'total_items' => $sync->total_items ?? 0,
+                    'current_item_code' => $sync->current_item_code,
+                    'started_at' => $sync->started_at,
+                    'last_heartbeat_at' => $sync->last_heartbeat_at,
+                    'is_stuck' => $sync->last_heartbeat_at 
+                        ? $sync->last_heartbeat_at->lt(now()->subMinutes(5))
+                        : $sync->started_at->lt(now()->subMinutes(5)),
+                    'cancel_requested' => (bool) $sync->cancel_requested,
+                ];
+            });
+
+        return response()->json([
+            'success' => true,
+            'data' => $runningSyncs,
+            'meta' => [
+                'count' => $runningSyncs->count(),
+            ],
+        ]);
+    }
+
+    /**
      * Fix stuck sync jobs (mark as failed)
      */
     public function fixStuckSyncs(): JsonResponse

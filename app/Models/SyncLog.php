@@ -29,6 +29,21 @@ class SyncLog extends Model
         'ack_sent',
         'ack_sent_at',
         'ack_accepted',
+        // New fields for progress tracking
+        'last_heartbeat_at',
+        'heartbeat_timeout_minutes',
+        'total_items',
+        'processed_items',
+        'progress_percent',
+        'current_item_code',
+        'chunk_size',
+        'current_chunk',
+        'total_chunks',
+        'api_calls_count',
+        'rate_limit_reset_at',
+        'cancel_requested',
+        'cancelled_at',
+        'cancel_reason',
     ];
 
     protected $casts = [
@@ -38,6 +53,11 @@ class SyncLog extends Model
         'ack_sent' => 'boolean',
         'ack_sent_at' => 'datetime',
         'ack_accepted' => 'boolean',
+        // New casts
+        'last_heartbeat_at' => 'datetime',
+        'rate_limit_reset_at' => 'datetime',
+        'cancelled_at' => 'datetime',
+        'cancel_requested' => 'boolean',
     ];
 
     /**
@@ -54,6 +74,57 @@ class SyncLog extends Model
     public function errorLogs(): HasMany
     {
         return $this->hasMany(SyncErrorLog::class);
+    }
+
+    /**
+     * Check if sync is stuck (no heartbeat for timeout period)
+     */
+    public function isStuck(): bool
+    {
+        if ($this->status !== 'running') {
+            return false;
+        }
+
+        $timeout = $this->heartbeat_timeout_minutes ?? 30;
+        
+        if ($this->last_heartbeat_at) {
+            return $this->last_heartbeat_at->lt(now()->subMinutes($timeout));
+        }
+
+        return $this->started_at->lt(now()->subMinutes($timeout));
+    }
+
+    /**
+     * Check if cancellation was requested
+     */
+    public function isCancellationRequested(): bool
+    {
+        return (bool) $this->cancel_requested;
+    }
+
+    /**
+     * Scope for running syncs
+     */
+    public function scopeRunning($query)
+    {
+        return $query->where('status', 'running');
+    }
+
+    /**
+     * Scope for stuck syncs
+     */
+    public function scopeStuck($query, int $timeoutMinutes = 30)
+    {
+        return $query->where('status', 'running')
+            ->where(function ($q) use ($timeoutMinutes) {
+                $q->where(function ($sub) use ($timeoutMinutes) {
+                    $sub->whereNull('last_heartbeat_at')
+                        ->where('started_at', '<', now()->subMinutes($timeoutMinutes));
+                })->orWhere(function ($sub) use ($timeoutMinutes) {
+                    $sub->whereNotNull('last_heartbeat_at')
+                        ->where('last_heartbeat_at', '<', now()->subMinutes($timeoutMinutes));
+                });
+            });
     }
 
     /**

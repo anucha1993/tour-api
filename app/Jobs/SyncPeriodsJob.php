@@ -111,7 +111,7 @@ class SyncPeriodsJob implements ShouldQueue
             if (!$result->success) {
                 Log::error('SyncPeriodsJob: Failed to fetch periods', [
                     'tour_id' => $this->tourId,
-                    'error' => $result->errorMessage,
+                    'error' => $result->error,
                 ]);
                 return;
             }

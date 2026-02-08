@@ -72,6 +72,12 @@ Route::post('queue/fix-stuck', [IntegrationController::class, 'fixStuckSyncs']);
 Route::post('queue/clear-failed', [IntegrationController::class, 'clearFailedJobs']);
 Route::post('queue/process', [IntegrationController::class, 'processQueue']);
 
+// Sync Progress & Control (NEW)
+Route::get('sync/running', [IntegrationController::class, 'getRunningSyncs']);
+Route::get('sync/{syncLogId}/progress', [IntegrationController::class, 'getSyncProgress']);
+Route::post('sync/{syncLogId}/cancel', [IntegrationController::class, 'cancelSync']);
+Route::post('sync/{syncLogId}/force-cancel', [IntegrationController::class, 'forceCancelSync']);
+
 // Public Hero Slides (for tour-web homepage)
 Route::get('hero-slides/public', [\App\Http\Controllers\HeroSlideController::class, 'publicList']);
 

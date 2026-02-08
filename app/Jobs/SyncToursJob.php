@@ -83,6 +83,15 @@ class SyncToursJob implements ShouldQueue
             return;
         }
 
+        // Check if sync is disabled (skip only for auto/incremental syncs, not manual)
+        if (!$config->sync_enabled && !$this->transformedData && $this->syncType !== 'full') {
+            Log::info('SyncToursJob: Sync disabled for this integration, skipping', [
+                'wholesaler_id' => $this->wholesalerId,
+                'sync_type' => $this->syncType,
+            ]);
+            return;
+        }
+
         // Create sync log
         $syncLog = $this->createSyncLog();
         
@@ -104,7 +113,8 @@ class SyncToursJob implements ShouldQueue
                 $syncLog->update([
                     'status' => 'completed',
                     'completed_at' => now(),
-                    'duration_seconds' => now()->diffInSeconds($syncLog->started_at),
+                    'duration_seconds' => abs(now()->diffInSeconds($syncLog->started_at)),
+                    'progress_percent' => 100,
                 ]);
                 return;
             }
@@ -122,14 +132,37 @@ class SyncToursJob implements ShouldQueue
                 ]);
             }
 
-            // Process each tour
+            // Initialize progress tracking
+            $chunkSize = 50;
+            $totalItems = count($toursData);
+            $syncLog->update([
+                'total_items' => $totalItems,
+                'processed_items' => 0,
+                'progress_percent' => 0,
+                'chunk_size' => $chunkSize,
+                'total_chunks' => ceil($totalItems / $chunkSize),
+                'current_chunk' => 0,
+                'last_heartbeat_at' => now(),
+            ]);
+
+            // Process tours in chunks
             $stats = $this->processTours($toursData, $config, $syncLog);
+
+            // Determine final status
+            $finalStatus = 'completed';
+            if ($syncLog->cancel_requested) {
+                $finalStatus = 'cancelled';
+            } elseif ($stats['errors'] > 0 && $stats['created'] === 0 && $stats['updated'] === 0) {
+                $finalStatus = 'failed';
+            } elseif ($stats['errors'] > 0) {
+                $finalStatus = 'partial';
+            }
 
             // Update sync log
             $syncLog->update([
-                'status' => $stats['errors'] > 0 ? 'partial' : 'completed',
+                'status' => $finalStatus,
                 'completed_at' => now(),
-                'duration_seconds' => now()->diffInSeconds($syncLog->started_at),
+                'duration_seconds' => abs(now()->diffInSeconds($syncLog->started_at)),
                 'tours_received' => $stats['received'],
                 'tours_created' => $stats['created'],
                 'tours_updated' => $stats['updated'],
@@ -139,10 +172,14 @@ class SyncToursJob implements ShouldQueue
                 'periods_created' => $stats['periods_created'],
                 'periods_updated' => $stats['periods_updated'],
                 'error_count' => $stats['errors'],
+                'progress_percent' => 100,
+                'cancelled_at' => $syncLog->cancel_requested ? now() : null,
+                'cancel_reason' => $syncLog->cancel_requested ? 'User requested cancellation' : null,
             ]);
 
             Log::info('SyncToursJob: Completed', [
                 'wholesaler_id' => $this->wholesalerId,
+                'status' => $finalStatus,
                 'stats' => $stats,
             ]);
 
@@ -156,7 +193,7 @@ class SyncToursJob implements ShouldQueue
             $syncLog->update([
                 'status' => 'failed',
                 'completed_at' => now(),
-                'duration_seconds' => now()->diffInSeconds($syncLog->started_at),
+                'duration_seconds' => abs(now()->diffInSeconds($syncLog->started_at)),
                 'error_summary' => ['message' => $e->getMessage()],
             ]);
 
@@ -827,52 +864,111 @@ class SyncToursJob implements ShouldQueue
             $toursData = [$toursData]; // Wrap in array
         }
 
-        foreach ($toursData as $tourData) {
-            $stats['received']++;
+        // Process in chunks for better progress tracking
+        $chunkSize = $syncLog->chunk_size ?? 50;
+        $chunks = array_chunk($toursData, $chunkSize);
+        $chunkIndex = 0;
+        $processedCount = 0;
+        $lastHeartbeat = time();
 
-            try {
-                DB::beginTransaction();
+        foreach ($chunks as $chunk) {
+            $chunkIndex++;
+            
+            // Check for cancellation before each chunk
+            $syncLog->refresh();
+            if ($syncLog->cancel_requested) {
+                Log::info('SyncToursJob: Cancellation requested, stopping', [
+                    'sync_log_id' => $syncLog->id,
+                    'processed' => $processedCount,
+                    'total' => count($toursData),
+                ]);
+                break;
+            }
 
-                // Remove emojis from all text fields
-                $tourData = $this->removeEmojisFromArray($tourData);
+            // Update chunk progress
+            $syncLog->update([
+                'current_chunk' => $chunkIndex,
+            ]);
 
-                $result = $this->processSingleTour($tourData, $config, $pdfBranding, $wholesalerCode, $syncLog);
-                
-                if ($result['action'] === 'created') {
-                    $stats['created']++;
-                } elseif ($result['action'] === 'updated') {
-                    $stats['updated']++;
-                } else {
-                    $stats['skipped']++;
+            foreach ($chunk as $tourData) {
+                $stats['received']++;
+                $processedCount++;
+
+                // Get tour code for progress display
+                $currentTourCode = $tourData['tour']['tour_code'] 
+                    ?? $tourData['tour']['wholesaler_tour_code'] 
+                    ?? $tourData['tour']['external_id'] 
+                    ?? "item-{$processedCount}";
+
+                try {
+                    DB::beginTransaction();
+
+                    // Remove emojis from all text fields
+                    $tourData = $this->removeEmojisFromArray($tourData);
+
+                    $result = $this->processSingleTour($tourData, $config, $pdfBranding, $wholesalerCode, $syncLog);
+                    
+                    if ($result['action'] === 'created') {
+                        $stats['created']++;
+                    } elseif ($result['action'] === 'updated') {
+                        $stats['updated']++;
+                    } else {
+                        $stats['skipped']++;
+                    }
+
+                    $stats['periods_received'] += $result['periods_received'] ?? 0;
+                    $stats['periods_created'] += $result['periods_created'] ?? 0;
+                    $stats['periods_updated'] += $result['periods_updated'] ?? 0;
+
+                    DB::commit();
+
+                } catch (\Exception $e) {
+                    DB::rollBack();
+                    $stats['errors']++;
+
+                    // Log error with proper type detection
+                    $errorType = $this->categorizeError($e);
+                    SyncErrorLog::create([
+                        'sync_log_id' => $syncLog->id,
+                        'wholesaler_id' => $this->wholesalerId,
+                        'entity_type' => 'tour',
+                        'entity_code' => $currentTourCode,
+                        'error_type' => $errorType,
+                        'error_message' => mb_substr($e->getMessage(), 0, 1000),
+                        'raw_data' => $tourData,
+                    ]);
+
+                    Log::warning('SyncToursJob: Failed to process tour', [
+                        'tour_code' => $currentTourCode,
+                        'error_type' => $errorType,
+                        'error' => $e->getMessage(),
+                    ]);
                 }
 
-                $stats['periods_received'] += $result['periods_received'] ?? 0;
-                $stats['periods_created'] += $result['periods_created'] ?? 0;
-                $stats['periods_updated'] += $result['periods_updated'] ?? 0;
-
-                DB::commit();
-
-            } catch (\Exception $e) {
-                DB::rollBack();
-                $stats['errors']++;
-
-                // Log error
-                SyncErrorLog::create([
-                    'sync_log_id' => $syncLog->id,
-                    'wholesaler_id' => $this->wholesalerId,
-                    'entity_type' => 'tour',
-                    'entity_code' => $tourData['tour']['tour_code'] ?? 'unknown',
-                    'error_type' => 'database', // enum: mapping, validation, lookup, type_cast, api, database, unknown
-                    'error_message' => $e->getMessage(),
-                    'raw_data' => $tourData,
-                ]);
-
-                Log::warning('SyncToursJob: Failed to process tour', [
-                    'tour_code' => $tourData['tour']['tour_code'] ?? 'unknown',
-                    'error' => $e->getMessage(),
-                ]);
+                // Update progress after each item
+                $totalItems = count($toursData);
+                $percent = $totalItems > 0 ? round(($processedCount / $totalItems) * 100) : 0;
+                
+                // Heartbeat update (every 30 seconds or every 10 items)
+                if (time() - $lastHeartbeat >= 30 || $processedCount % 10 === 0) {
+                    $syncLog->update([
+                        'processed_items' => $processedCount,
+                        'progress_percent' => $percent,
+                        'current_item_code' => $currentTourCode,
+                        'last_heartbeat_at' => now(),
+                    ]);
+                    $lastHeartbeat = time();
+                }
             }
         }
+
+        // Final heartbeat update
+        $totalItems = count($toursData);
+        $syncLog->update([
+            'processed_items' => $processedCount,
+            'progress_percent' => $totalItems > 0 ? round(($processedCount / $totalItems) * 100) : 100,
+            'last_heartbeat_at' => now(),
+        ]);
 
         // Cleanup PDF branding service
         if ($pdfBranding) {
@@ -1035,9 +1131,17 @@ class SyncToursJob implements ShouldQueue
         // Fields that should be null when empty (numeric fields)
         $numericFields = ['hotel_star', 'duration_days', 'duration_nights', 'primary_country_id', 'transport_id'];
         
+        // Fields that should be skipped if empty (will be auto-generated)
+        $autoGeneratedFields = ['tour_code'];
+        
         foreach ($tourSection as $field => $value) {
             // Skip null values to keep existing data
             if ($value === null) continue;
+            
+            // Skip empty auto-generated fields (tour_code will be generated below)
+            if (empty($value) && in_array($field, $autoGeneratedFields)) {
+                continue;
+            }
             //
             // Convert empty string to null for numeric fields
             if ($value === '' && in_array($field, $numericFields)) {
@@ -1051,7 +1155,7 @@ class SyncToursJob implements ShouldQueue
         }
         
         // Auto-generate tour_code if not provided (always generate, don't use wholesaler code)
-        if (empty($tour->tour_code)) {
+        if (empty($tour->tour_code) && empty($tourFields['tour_code'])) {
             $tourFields['tour_code'] = $this->generateTourCode($config->wholesaler_id);
         }
         
@@ -1472,6 +1576,47 @@ class SyncToursJob implements ShouldQueue
         ];
 
         return $statusMap[strtolower($status)] ?? Period::STATUS_OPEN;
+    }
+
+    /**
+     * Categorize error to determine error type
+     */
+    protected function categorizeError(\Exception $e): string
+    {
+        $message = strtolower($e->getMessage());
+        $class = get_class($e);
+
+        // Database errors
+        if (str_contains($class, 'QueryException') || str_contains($class, 'PDOException')) {
+            return 'database';
+        }
+
+        // HTTP/API errors
+        if (str_contains($class, 'RequestException') || str_contains($class, 'ConnectionException')) {
+            return 'api';
+        }
+
+        // Rate limiting
+        if (str_contains($message, 'rate limit') || str_contains($message, 'too many requests') || str_contains($message, '429')) {
+            return 'rate_limit';
+        }
+
+        // Timeout
+        if (str_contains($message, 'timeout') || str_contains($message, 'timed out')) {
+            return 'timeout';
+        }
+
+        // Validation
+        if (str_contains($class, 'ValidationException') || str_contains($message, 'validation')) {
+            return 'validation';
+        }
+
+        // Type casting
+        if (str_contains($message, 'type') && (str_contains($message, 'cast') || str_contains($message, 'convert'))) {
+            return 'type_cast';
+        }
+
+        return 'unknown';
     }
 
     /**

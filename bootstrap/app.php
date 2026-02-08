@@ -90,6 +90,12 @@ return Application::configure(basePath: dirname(__DIR__))
                 }
             }
         })->everyMinute()->name('check-full-sync-schedules')->withoutOverlapping();
+        
+        // Auto-cancel stuck syncs every 5 minutes
+        $schedule->command('sync:cancel-stuck --timeout=30')
+            ->everyFiveMinutes()
+            ->name('cancel-stuck-syncs')
+            ->withoutOverlapping();
     })
     ->withMiddleware(function (Middleware $middleware): void {
         // Note: Don't use statefulApi() when frontend uses Bearer token auth
