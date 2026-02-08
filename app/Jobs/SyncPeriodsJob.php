@@ -97,12 +97,18 @@ class SyncPeriodsJob implements ShouldQueue
                 return;
             }
 
-            // Build URL - replace placeholders
-            $url = str_replace(
-                ['{external_id}', '{tour_code}', '{wholesaler_tour_code}'],
-                [$this->externalId, $tour->tour_code, $tour->wholesaler_tour_code ?? ''],
-                $periodsEndpoint
-            );
+            // Build URL - replace all placeholders dynamically from tour data
+            $placeholders = [
+                '{external_id}'          => $this->externalId,
+                '{tour_id}'              => $this->externalId,
+                '{id}'                   => $this->externalId,
+                '{series_id}'            => $this->externalId,
+                '{tour_code}'            => $tour->tour_code ?? '',
+                '{wholesaler_tour_code}' => $tour->wholesaler_tour_code ?? '',
+                '{code}'                 => $tour->wholesaler_tour_code ?? $tour->tour_code ?? '',
+                '{slug}'                 => $tour->slug ?? '',
+            ];
+            $url = str_replace(array_keys($placeholders), array_values($placeholders), $periodsEndpoint);
 
             // Fetch periods from API - use wholesaler_id for adapter (adapter is per wholesaler)
             $adapter = AdapterFactory::create($wholesalerId);

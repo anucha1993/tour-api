@@ -1648,12 +1648,18 @@ class SyncToursJob implements ShouldQueue
      */
     protected function fetchAndSyncItineraries(Tour $tour, WholesalerApiConfig $config, string $itinerariesEndpoint): void
     {
-        // Build URL - replace placeholders
-        $url = str_replace(
-            ['{external_id}', '{tour_code}', '{wholesaler_tour_code}'],
-            [$tour->external_id ?? '', $tour->tour_code ?? '', $tour->wholesaler_tour_code ?? ''],
-            $itinerariesEndpoint
-        );
+        // Build URL - replace all placeholders dynamically from tour data
+        $placeholders = [
+            '{external_id}'          => $tour->external_id ?? '',
+            '{tour_id}'              => $tour->external_id ?? '',
+            '{id}'                   => $tour->external_id ?? '',
+            '{series_id}'            => $tour->external_id ?? '',
+            '{tour_code}'            => $tour->tour_code ?? '',
+            '{wholesaler_tour_code}' => $tour->wholesaler_tour_code ?? '',
+            '{code}'                 => $tour->wholesaler_tour_code ?? $tour->tour_code ?? '',
+            '{slug}'                 => $tour->slug ?? '',
+        ];
+        $url = str_replace(array_keys($placeholders), array_values($placeholders), $itinerariesEndpoint);
 
         try {
             $adapter = AdapterFactory::create($config->wholesaler_id);
