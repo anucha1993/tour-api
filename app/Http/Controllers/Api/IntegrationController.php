@@ -244,6 +244,150 @@ class IntegrationController extends Controller
     }
 
     /**
+     * Validate that a sync schedule does not conflict with other integrations.
+     * Two schedules conflict if their "minute offset" is within 10 minutes of each other
+     * AND they share the same hour interval pattern.
+     *
+     * Returns null if OK, or an error array if conflict found.
+     */
+    private function validateScheduleConflict(string $newSchedule, ?int $excludeConfigId = null): ?array
+    {
+        $newParts = preg_split('/\s+/', trim($newSchedule));
+        if (count($newParts) < 5) {
+            return null; // Can't validate non-standard cron
+        }
+
+        $newMinute = $newParts[0];
+        $newHourPart = $newParts[1];
+
+        // Only validate fixed-minute patterns (e.g. "10 */12 * * *", "0 * * * *")
+        if (!preg_match('/^\d+$/', $newMinute)) {
+            return null; // Skip validation for */N minute patterns
+        }
+
+        $newMin = (int) $newMinute;
+
+        // Get all other active integrations
+        $others = WholesalerApiConfig::where('sync_enabled', true)
+            ->where('is_active', true)
+            ->when($excludeConfigId, fn($q) => $q->where('id', '!=', $excludeConfigId))
+            ->get(['id', 'wholesaler_id', 'sync_schedule']);
+
+        $minGap = 10; // Minimum 10 minutes apart
+
+        foreach ($others as $other) {
+            $otherParts = preg_split('/\s+/', trim($other->sync_schedule));
+            if (count($otherParts) < 5) continue;
+
+            $otherMinute = $otherParts[0];
+            $otherHourPart = $otherParts[1];
+
+            if (!preg_match('/^\d+$/', $otherMinute)) continue;
+
+            // Only compare if same hour pattern (both could run at the same hour)
+            if ($newHourPart !== $otherHourPart) continue;
+
+            $otherMin = (int) $otherMinute;
+
+            // Calculate circular distance (0-59 wraps around)
+            $diff = abs($newMin - $otherMin);
+            $circularDiff = min($diff, 60 - $diff);
+
+            if ($circularDiff < $minGap) {
+                $wholesalerName = $other->wholesaler?->name ?? "Config #{$other->id}";
+                return [
+                    'conflict' => true,
+                    'message' => "Schedule ชนกับ {$wholesalerName} (นาทีที่ {$otherMin}) ห่างกันแค่ {$circularDiff} นาที ต้องห่างกันอย่างน้อย {$minGap} นาที",
+                    'conflicting_integration' => $wholesalerName,
+                    'conflicting_minute' => $otherMin,
+                    'gap_minutes' => $circularDiff,
+                    'min_gap' => $minGap,
+                ];
+            }
+        }
+
+        return null; // No conflict
+    }
+
+    /**
+     * API: Check schedule conflicts before saving
+     * GET /api/integrations/check-schedule?schedule=10 */12 * * *&exclude_id=1
+     */
+    public function checkScheduleConflict(Request $request): JsonResponse
+    {
+        $schedule = $request->input('schedule');
+        $excludeId = $request->input('exclude_id');
+
+        if (!$schedule) {
+            return response()->json(['success' => false, 'message' => 'schedule is required'], 422);
+        }
+
+        $conflict = $this->validateScheduleConflict($schedule, $excludeId ? (int) $excludeId : null);
+
+        if ($conflict) {
+            // Also suggest available minutes
+            $suggestions = $this->suggestAvailableMinutes($schedule, $excludeId ? (int) $excludeId : null);
+            $conflict['suggested_minutes'] = $suggestions;
+
+            return response()->json([
+                'success' => true,
+                'data' => $conflict,
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'conflict' => false,
+                'message' => 'ไม่มี schedule ชนกัน',
+            ],
+        ]);
+    }
+
+    /**
+     * Suggest available minute offsets that don't conflict
+     */
+    private function suggestAvailableMinutes(string $schedule, ?int $excludeConfigId = null): array
+    {
+        $parts = preg_split('/\s+/', trim($schedule));
+        $hourPart = $parts[1] ?? '*';
+        $rest = implode(' ', array_slice($parts, 2));
+
+        $usedMinutes = [];
+        $others = WholesalerApiConfig::where('sync_enabled', true)
+            ->where('is_active', true)
+            ->when($excludeConfigId, fn($q) => $q->where('id', '!=', $excludeConfigId))
+            ->get(['sync_schedule']);
+
+        foreach ($others as $other) {
+            $otherParts = preg_split('/\s+/', trim($other->sync_schedule));
+            if (count($otherParts) < 5) continue;
+            if ($otherParts[1] !== $hourPart) continue;
+            if (preg_match('/^\d+$/', $otherParts[0])) {
+                $usedMinutes[] = (int) $otherParts[0];
+            }
+        }
+
+        $available = [];
+        for ($m = 0; $m < 60; $m++) {
+            $ok = true;
+            foreach ($usedMinutes as $used) {
+                $diff = abs($m - $used);
+                $circDiff = min($diff, 60 - $diff);
+                if ($circDiff < 10) {
+                    $ok = false;
+                    break;
+                }
+            }
+            if ($ok) {
+                $available[] = $m;
+            }
+        }
+
+        return $available;
+    }
+
+    /**
      * Calculate sync statistics for different time periods
      */
     private function calculateSyncStats(int $wholesalerId): array
