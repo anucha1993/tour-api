@@ -15,7 +15,7 @@ class WholesalerController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Wholesaler::query();
+        $query = Wholesaler::withCount('tours');
 
         // Search
         if ($request->filled('search')) {

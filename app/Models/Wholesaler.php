@@ -53,6 +53,22 @@ class Wholesaler extends Model
     }
 
     /**
+     * Get tours for this wholesaler.
+     */
+    public function tours()
+    {
+        return $this->hasMany(Tour::class, 'wholesaler_id');
+    }
+
+    /**
+     * Get API configs for this wholesaler.
+     */
+    public function apiConfigs()
+    {
+        return $this->hasMany(WholesalerApiConfig::class, 'wholesaler_id');
+    }
+
+    /**
      * Find wholesaler by code.
      */
     public static function findByCode(string $code): ?self

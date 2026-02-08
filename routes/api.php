@@ -16,6 +16,7 @@ use App\Http\Controllers\GalleryImageController;
 use App\Http\Controllers\Api\IntegrationController;
 use App\Http\Controllers\Api\WholesalerSyncController;
 use App\Http\Controllers\Api\TourSearchController;
+use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\PageContentController;
 
@@ -42,6 +43,9 @@ Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/login', [AuthController::class, 'login']);
 });
+
+// Dashboard Summary
+Route::get('dashboard/summary', [DashboardController::class, 'summary']);
 
 // Protected routes (auth required)
 // Integrations (Wholesaler API Configs)

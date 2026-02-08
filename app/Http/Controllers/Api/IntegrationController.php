@@ -44,6 +44,12 @@ class IntegrationController extends Controller
                 ->where('created_at', '>=', now()->subDays(7))
                 ->count();
 
+            // Calculate next sync time based on cron schedule
+            $nextSync = null;
+            if ($config->sync_enabled && $config->sync_schedule) {
+                $nextSync = $this->calculateNextSyncFromCron($config->sync_schedule);
+            }
+
             return [
                 'id' => $config->id,
                 'wholesaler_id' => $config->wholesaler_id,
@@ -58,6 +64,7 @@ class IntegrationController extends Controller
                 'sync_schedule' => $config->sync_schedule,
                 'last_synced_at' => $lastSync?->started_at,
                 'last_sync_status' => $lastSync?->status,
+                'next_sync_at' => $nextSync?->toDateTimeString(),
                 'tours_count' => $lastSync?->tours_received ?? 0,
                 'errors_count' => $errorCount,
                 'health_status' => $config->health_status,
@@ -149,6 +156,91 @@ class IntegrationController extends Controller
                 'recent_tours' => $recentTours,
             ],
         ]);
+    }
+
+    /**
+     * Calculate the next sync time from a cron expression.
+     * Supports patterns:
+     *   "M *\/N * * *"  = every N hours at minute M (e.g. "10 *\/12 * * *")
+     *   "*\/N * * * *"  = every N minutes
+     *   "M H * * *"     = daily at H:M (e.g. "30 3 * * *")
+     */
+    private function calculateNextSyncFromCron(string $cron): ?\Carbon\Carbon
+    {
+        $parts = preg_split('/\s+/', trim($cron));
+        if (count($parts) < 5) {
+            return null;
+        }
+
+        [$minutePart, $hourPart] = $parts;
+        $now = now();
+
+        // Pattern 1: "M */N * * *" → specific minute, every N hours
+        if (preg_match('/^(\d+)$/', $minutePart, $mm) && preg_match('/^\*\/(\d+)$/', $hourPart, $hm)) {
+            $minute = (int) $mm[1];
+            $interval = (int) $hm[1];
+
+            // Find next matching hour from now
+            $candidate = $now->copy()->setMinute($minute)->setSecond(0);
+
+            // Find the next hour that matches */N pattern
+            $currentHour = $now->hour;
+            $nextHour = $currentHour;
+
+            // */N means hours 0, N, 2N, 3N, ...
+            $remainder = $currentHour % $interval;
+            $nextHour = $currentHour - $remainder; // current slot start
+
+            $candidate->setHour($nextHour);
+
+            // If candidate is in the past, move to next slot
+            if ($candidate->lte($now)) {
+                $nextHour += $interval;
+                if ($nextHour >= 24) {
+                    // Wrap to next day
+                    $candidate = $now->copy()->addDay()->startOfDay()->setHour($nextHour % 24)->setMinute($minute)->setSecond(0);
+                    // If wrapped hour is 0, it's the start of next day
+                    if ($nextHour >= 24) {
+                        $candidate->setHour($nextHour - 24);
+                    }
+                } else {
+                    $candidate->setHour($nextHour);
+                }
+            }
+
+            return $candidate;
+        }
+
+        // Pattern 2: "*/N * * * *" → every N minutes
+        if (preg_match('/^\*\/(\d+)$/', $minutePart, $mm) && $hourPart === '*') {
+            $interval = (int) $mm[1];
+            $remainder = $now->minute % $interval;
+            $nextMinute = $now->minute + ($interval - $remainder);
+            $candidate = $now->copy()->setSecond(0);
+
+            if ($nextMinute >= 60) {
+                $candidate->addHour()->setMinute($nextMinute - 60);
+            } else {
+                $candidate->setMinute($nextMinute);
+            }
+
+            return $candidate;
+        }
+
+        // Pattern 3: "M H * * *" → daily at specific time
+        if (preg_match('/^(\d+)$/', $minutePart, $mm) && preg_match('/^(\d+)$/', $hourPart, $hm)) {
+            $minute = (int) $mm[1];
+            $hour = (int) $hm[1];
+            $candidate = $now->copy()->setTime($hour, $minute, 0);
+
+            if ($candidate->lte($now)) {
+                $candidate->addDay();
+            }
+
+            return $candidate;
+        }
+
+        return null;
     }
 
     /**
