@@ -51,6 +51,7 @@ Route::get('dashboard/summary', [DashboardController::class, 'summary']);
 // Integrations (Wholesaler API Configs)
 // Public endpoints for testing/preview (no auth needed as it tests external API)
 Route::post('integrations/test-connection', [IntegrationController::class, 'testConnection']);
+Route::get('integrations/check-schedule', [IntegrationController::class, 'checkScheduleConflict']);
 Route::get('integrations/{id}/fetch-sample', [IntegrationController::class, 'fetchSample']);
 Route::get('integrations/{id}/mappings', [IntegrationController::class, 'getFieldMappings']);
 Route::post('integrations/{id}/mappings', [IntegrationController::class, 'saveFieldMappings']);

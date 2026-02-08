@@ -311,7 +311,6 @@ class IntegrationController extends Controller
 
     /**
      * API: Check schedule conflicts before saving
-     * GET /api/integrations/check-schedule?schedule=10 */12 * * *&exclude_id=1
      */
     public function checkScheduleConflict(Request $request): JsonResponse
     {
@@ -470,10 +469,24 @@ class IntegrationController extends Controller
             ], 422);
         }
 
+        // Validate sync schedule conflict (must be 10+ minutes apart)
+        $validated = $validator->validated();
+        if (!empty($validated['sync_schedule'])) {
+            $conflict = $this->validateScheduleConflict($validated['sync_schedule']);
+            if ($conflict) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $conflict['message'],
+                    'errors' => ['sync_schedule' => [$conflict['message']]],
+                    'conflict' => $conflict,
+                ], 422);
+            }
+        }
+
         try {
             DB::beginTransaction();
 
-            $config = WholesalerApiConfig::create($validator->validated());
+            $config = WholesalerApiConfig::create($validated);
 
             // Create default sync cursor
             SyncCursor::create([
@@ -559,7 +572,21 @@ class IntegrationController extends Controller
             ], 422);
         }
 
-        $config->update($validator->validated());
+        // Validate sync schedule conflict (must be 10+ minutes apart)
+        $validated = $validator->validated();
+        if (!empty($validated['sync_schedule'])) {
+            $conflict = $this->validateScheduleConflict($validated['sync_schedule'], $id);
+            if ($conflict) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $conflict['message'],
+                    'errors' => ['sync_schedule' => [$conflict['message']]],
+                    'conflict' => $conflict,
+                ], 422);
+            }
+        }
+
+        $config->update($validated);
 
         return response()->json([
             'success' => true,
