@@ -186,6 +186,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Tour Tabs
     Route::get('tour-tabs/condition-options', [TourTabController::class, 'getConditionOptions']);
+    Route::post('tour-tabs/preview-conditions', [TourTabController::class, 'previewConditions']);
     Route::get('tour-tabs/{tourTab}/preview', [TourTabController::class, 'preview']);
     Route::patch('tour-tabs/{tourTab}/toggle-status', [TourTabController::class, 'toggleStatus']);
     Route::post('tour-tabs/reorder', [TourTabController::class, 'reorder']);

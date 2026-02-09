@@ -62,7 +62,6 @@ class TourTab extends Model
         'is_premium' => 'ทัวร์พรีเมียม',
         'created_within_days' => 'สร้างภายใน (วัน)',
         'has_available_seats' => 'มีที่ว่าง',
-        'min_views' => 'ยอดคนเข้าชมขั้นต่ำ',
     ];
 
     /**
@@ -105,8 +104,8 @@ class TourTab extends Model
         $query = Tour::query()
             ->where('status', 'active')
             ->whereHas('periods', function ($q) {
-                $q->where('departure_date', '>=', now()->toDateString())
-                  ->where('status', 'active');
+                $q->where('start_date', '>=', now()->toDateString())
+                  ->where('status', 'open');
             });
 
         // Apply conditions
@@ -123,18 +122,29 @@ class TourTab extends Model
      */
     protected function applyConditions($query)
     {
-        $conditions = $this->conditions ?? [];
+        $rawConditions = $this->conditions ?? [];
+        
+        // Convert from [{type: 'price_min', value: 10000}] to ['price_min' => 10000]
+        $conditions = [];
+        foreach ($rawConditions as $cond) {
+            if (is_array($cond) && isset($cond['type']) && isset($cond['value'])) {
+                $conditions[$cond['type']] = $cond['value'];
+            } elseif (is_object($cond) && isset($cond->type) && isset($cond->value)) {
+                $conditions[$cond->type] = $cond->value;
+            }
+        }
+        
+        // If already flat array format (backwards compatibility)
+        if (empty($conditions) && !empty($rawConditions) && isset($rawConditions['price_min'])) {
+            $conditions = $rawConditions;
+        }
 
-        // Price range
+        // Price range - use tours.min_price directly
         if (!empty($conditions['price_min'])) {
-            $query->whereHas('periods', function ($q) use ($conditions) {
-                $q->where('price_adult', '>=', $conditions['price_min']);
-            });
+            $query->where('min_price', '>=', $conditions['price_min']);
         }
         if (!empty($conditions['price_max'])) {
-            $query->whereHas('periods', function ($q) use ($conditions) {
-                $q->where('price_adult', '<=', $conditions['price_max']);
-            });
+            $query->where('min_price', '<=', $conditions['price_max']);
         }
 
         // Countries
@@ -157,23 +167,22 @@ class TourTab extends Model
         // Departure within days
         if (!empty($conditions['departure_within_days'])) {
             $query->whereHas('periods', function ($q) use ($conditions) {
-                $q->where('departure_date', '<=', now()->addDays($conditions['departure_within_days'])->toDateString());
+                $q->where('start_date', '<=', now()->addDays($conditions['departure_within_days'])->toDateString());
             });
         }
 
-        // Has discount
+        // Has discount - use tours.has_promotion or discount_adult > 0
         if (!empty($conditions['has_discount'])) {
-            $query->whereHas('periods', function ($q) {
-                $q->where('discount_percent', '>', 0)
-                  ->orWhereColumn('price_adult', '<', 'original_price');
+            $query->where(function ($q) {
+                $q->where('has_promotion', true)
+                  ->orWhere('discount_adult', '>', 0)
+                  ->orWhere('max_discount_percent', '>', 0);
             });
         }
 
-        // Discount min percent
+        // Discount min percent - use tours.max_discount_percent
         if (!empty($conditions['discount_min_percent'])) {
-            $query->whereHas('periods', function ($q) use ($conditions) {
-                $q->where('discount_percent', '>=', $conditions['discount_min_percent']);
-            });
+            $query->where('max_discount_percent', '>=', $conditions['discount_min_percent']);
         }
 
         // Tour type
@@ -199,16 +208,9 @@ class TourTab extends Model
             $query->where('created_at', '>=', now()->subDays($conditions['created_within_days']));
         }
 
-        // Has available seats
+        // Has available seats - use tours.available_seats
         if (!empty($conditions['has_available_seats'])) {
-            $query->whereHas('periods', function ($q) {
-                $q->where('available_seats', '>', 0);
-            });
-        }
-
-        // Minimum view count
-        if (!empty($conditions['min_views'])) {
-            $query->where('view_count', '>=', (int) $conditions['min_views']);
+            $query->where('available_seats', '>', 0);
         }
 
         return $query;
@@ -221,20 +223,23 @@ class TourTab extends Model
     {
         switch ($this->sort_by) {
             case self::SORT_PRICE_ASC:
-                $query->orderByRaw('(SELECT MIN(price_adult) FROM periods WHERE periods.tour_id = tours.id AND periods.status = "active") ASC');
+                // Use tours.min_price directly
+                $query->orderByRaw('COALESCE(min_price, 999999999) ASC');
                 break;
             case self::SORT_PRICE_DESC:
-                $query->orderByRaw('(SELECT MIN(price_adult) FROM periods WHERE periods.tour_id = tours.id AND periods.status = "active") DESC');
+                $query->orderByRaw('COALESCE(min_price, 0) DESC');
                 break;
             case self::SORT_NEWEST:
                 $query->orderBy('created_at', 'desc');
                 break;
             case self::SORT_DEPARTURE_DATE:
-                $query->orderByRaw('(SELECT MIN(departure_date) FROM periods WHERE periods.tour_id = tours.id AND periods.status = "active" AND periods.departure_date >= CURDATE()) ASC');
+                // Use tours.next_departure_date directly
+                $query->orderByRaw('COALESCE(next_departure_date, "9999-12-31") ASC');
                 break;
             case self::SORT_POPULAR:
             default:
-                $query->orderBy('view_count', 'desc')->orderBy('created_at', 'desc');
+                // Use COALESCE to treat NULL as 0, so tours with NULL view_count are treated same as 0
+                $query->orderByRaw('COALESCE(view_count, 0) DESC')->orderBy('created_at', 'desc');
                 break;
         }
 

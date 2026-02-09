@@ -161,23 +161,17 @@ class TourTabController extends Controller
         try {
             $tours = $tourTab->getTours($limit);
             
-            // Format tours for preview
+            // Format tours for preview - use tours table fields directly
             $formattedTours = $tours->map(function ($tour) {
-                $minPeriod = $tour->periods()
-                    ->where('departure_date', '>=', now()->toDateString())
-                    ->where('status', 'active')
-                    ->orderBy('price_adult')
-                    ->first();
-
                 return [
                     'id' => $tour->id,
                     'title' => $tour->title,
                     'tour_code' => $tour->tour_code,
                     'country' => $tour->country?->name_th ?? $tour->country?->name_en,
-                    'days' => $tour->days,
-                    'nights' => $tour->nights,
-                    'price' => $minPeriod?->price_adult,
-                    'departure_date' => $minPeriod?->departure_date,
+                    'days' => $tour->duration_days ?? $tour->days,
+                    'nights' => $tour->duration_nights ?? $tour->nights,
+                    'price' => $tour->min_price,
+                    'departure_date' => $tour->next_departure_date,
                     'image_url' => $tour->cover_image_url,
                 ];
             });
@@ -189,6 +183,64 @@ class TourTabController extends Controller
                     'total' => $tours->count(),
                     'conditions' => $tourTab->conditions,
                     'sort_by' => $tourTab->sort_by,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Preview tours with conditions (without saving - for testing in modal)
+     */
+    public function previewConditions(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'conditions' => 'nullable|array',
+            'sort_by' => 'nullable|string|in:popular,price_asc,price_desc,newest,departure_date',
+            'display_limit' => 'nullable|integer|min:1|max:50',
+        ]);
+
+        $conditions = $validated['conditions'] ?? [];
+        $sortBy = $validated['sort_by'] ?? 'popular';
+        $displayLimit = $validated['display_limit'] ?? 12;
+
+        try {
+            // Create a temporary TourTab instance (not saved)
+            $tempTab = new TourTab([
+                'conditions' => $conditions,
+                'sort_by' => $sortBy,
+                'display_limit' => $displayLimit,
+            ]);
+
+            $tours = $tempTab->getTours($displayLimit);
+
+            // Format tours for preview - use tours table fields directly
+            $formattedTours = $tours->map(function ($tour) {
+                return [
+                    'id' => $tour->id,
+                    'title' => $tour->title,
+                    'tour_code' => $tour->tour_code,
+                    'country' => $tour->country?->name_th ?? $tour->country?->name_en,
+                    'days' => $tour->duration_days ?? $tour->days,
+                    'nights' => $tour->duration_nights ?? $tour->nights,
+                    'price' => $tour->min_price,
+                    'departure_date' => $tour->next_departure_date,
+                    'image_url' => $tour->cover_image_url,
+                    'view_count' => $tour->view_count ?? 0,
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'tours' => $formattedTours,
+                    'total' => $tours->count(),
+                    'conditions' => $conditions,
+                    'sort_by' => $sortBy,
                 ],
             ]);
         } catch (\Exception $e) {
@@ -231,36 +283,24 @@ class TourTabController extends Controller
         $result = $tabs->map(function ($tab) {
             $tours = $tab->getTours();
             
-            // Format tours for display
+            // Format tours for display - use tours table fields directly
             $formattedTours = $tours->map(function ($tour) {
-                $minPeriod = $tour->periods()
-                    ->where('departure_date', '>=', now()->toDateString())
-                    ->where('status', 'active')
-                    ->orderBy('price_adult')
-                    ->first();
-
-                $nextDeparture = $tour->periods()
-                    ->where('departure_date', '>=', now()->toDateString())
-                    ->where('status', 'active')
-                    ->orderBy('departure_date')
-                    ->first();
-
                 return [
                     'id' => $tour->id,
                     'slug' => $tour->slug,
                     'title' => $tour->title,
                     'tour_code' => $tour->tour_code,
                     'country' => [
-                        'id' => $tour->country_id,
+                        'id' => $tour->primary_country_id ?? $tour->country_id,
                         'name' => $tour->country?->name_th ?? $tour->country?->name_en,
                         'iso2' => $tour->country?->iso2,
                     ],
-                    'days' => $tour->days,
-                    'nights' => $tour->nights,
-                    'price' => $minPeriod?->price_adult,
-                    'original_price' => $minPeriod?->original_price,
-                    'discount_percent' => $minPeriod?->discount_percent,
-                    'departure_date' => $nextDeparture?->departure_date,
+                    'days' => $tour->duration_days ?? $tour->days,
+                    'nights' => $tour->duration_nights ?? $tour->nights,
+                    'price' => $tour->min_price,
+                    'original_price' => $tour->price_adult,
+                    'discount_percent' => $tour->max_discount_percent,
+                    'departure_date' => $tour->next_departure_date,
                     'airline' => $tour->airline,
                     'image_url' => $tour->cover_image_url,
                     'badge' => $tour->badge,
@@ -297,36 +337,24 @@ class TourTabController extends Controller
         
         $tours = $tab->getTours($limit);
 
-        // Format tours
+        // Format tours - use tours table fields directly
         $formattedTours = $tours->map(function ($tour) {
-            $minPeriod = $tour->periods()
-                ->where('departure_date', '>=', now()->toDateString())
-                ->where('status', 'active')
-                ->orderBy('price_adult')
-                ->first();
-
-            $nextDeparture = $tour->periods()
-                ->where('departure_date', '>=', now()->toDateString())
-                ->where('status', 'active')
-                ->orderBy('departure_date')
-                ->first();
-
             return [
                 'id' => $tour->id,
                 'slug' => $tour->slug,
                 'title' => $tour->title,
                 'tour_code' => $tour->tour_code,
                 'country' => [
-                    'id' => $tour->country_id,
+                    'id' => $tour->primary_country_id ?? $tour->country_id,
                     'name' => $tour->country?->name_th ?? $tour->country?->name_en,
                     'iso2' => $tour->country?->iso2,
                 ],
-                'days' => $tour->days,
-                'nights' => $tour->nights,
-                'price' => $minPeriod?->price_adult,
-                'original_price' => $minPeriod?->original_price,
-                'discount_percent' => $minPeriod?->discount_percent,
-                'departure_date' => $nextDeparture?->departure_date,
+                'days' => $tour->duration_days ?? $tour->days,
+                'nights' => $tour->duration_nights ?? $tour->nights,
+                'price' => $tour->min_price,
+                'original_price' => $tour->price_adult,
+                'discount_percent' => $tour->max_discount_percent,
+                'departure_date' => $tour->next_departure_date,
                 'airline' => $tour->airline,
                 'image_url' => $tour->cover_image_url,
                 'badge' => $tour->badge,
