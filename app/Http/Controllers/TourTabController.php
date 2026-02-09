@@ -52,7 +52,17 @@ class TourTabController extends Controller
 
         // Auto-generate slug if not provided
         if (empty($validated['slug'])) {
-            $validated['slug'] = Str::slug($validated['name']);
+            $baseSlug = Str::slug($validated['name']);
+            if (empty($baseSlug)) {
+                $baseSlug = 'tab-' . Str::random(8);
+            }
+            // Ensure unique
+            $slug = $baseSlug;
+            $counter = 1;
+            while (TourTab::where('slug', $slug)->exists()) {
+                $slug = $baseSlug . '-' . $counter++;
+            }
+            $validated['slug'] = $slug;
         }
 
         $tab = TourTab::create($validated);
@@ -276,38 +286,63 @@ class TourTabController extends Controller
     /**
      * Get active tabs with tours for public display
      */
+    /**
+     * Format a tour for public tab display
+     */
+    private function formatTourForTab(Tour $tour): array
+    {
+        // Get airline from first outbound transport
+        $airlineTransport = $tour->transports
+            ->where('transport_type', 'outbound')
+            ->first();
+        $airline = $airlineTransport
+            ? ($airlineTransport->transport?->name ?? $airlineTransport->transport_name)
+            : null;
+
+        // Get departure date range from open future periods
+        $openPeriods = $tour->periods
+            ->where('status', 'open')
+            ->where('start_date', '>=', now()->toDateString());
+        $minDeparture = $openPeriods->min('start_date');
+        $maxDeparture = $openPeriods->max('start_date');
+
+        return [
+            'id' => $tour->id,
+            'slug' => $tour->slug,
+            'title' => $tour->title,
+            'tour_code' => $tour->tour_code,
+            'country' => [
+                'id' => $tour->primary_country_id ?? $tour->country_id,
+                'name' => $tour->country?->name_th ?? $tour->country?->name_en,
+                'iso2' => $tour->country?->iso2,
+            ],
+            'days' => $tour->duration_days ?? $tour->days,
+            'nights' => $tour->duration_nights ?? $tour->nights,
+            'price' => $tour->min_price,
+            'original_price' => $tour->price_adult,
+            'discount_adult' => $tour->discount_adult,
+            'discount_percent' => $tour->max_discount_percent,
+            'departure_date' => $minDeparture,
+            'max_departure_date' => $maxDeparture,
+            'airline' => $airline,
+            'image_url' => $tour->cover_image_url,
+            'badge' => $tour->badge,
+            'rating' => $tour->rating,
+            'review_count' => $tour->review_count,
+        ];
+    }
+
     public function publicList(Request $request): JsonResponse
     {
         $tabs = TourTab::active()->ordered()->get();
 
         $result = $tabs->map(function ($tab) {
             $tours = $tab->getTours();
-            
-            // Format tours for display - use tours table fields directly
-            $formattedTours = $tours->map(function ($tour) {
-                return [
-                    'id' => $tour->id,
-                    'slug' => $tour->slug,
-                    'title' => $tour->title,
-                    'tour_code' => $tour->tour_code,
-                    'country' => [
-                        'id' => $tour->primary_country_id ?? $tour->country_id,
-                        'name' => $tour->country?->name_th ?? $tour->country?->name_en,
-                        'iso2' => $tour->country?->iso2,
-                    ],
-                    'days' => $tour->duration_days ?? $tour->days,
-                    'nights' => $tour->duration_nights ?? $tour->nights,
-                    'price' => $tour->min_price,
-                    'original_price' => $tour->price_adult,
-                    'discount_percent' => $tour->max_discount_percent,
-                    'departure_date' => $tour->next_departure_date,
-                    'airline' => $tour->airline,
-                    'image_url' => $tour->cover_image_url,
-                    'badge' => $tour->badge,
-                    'rating' => $tour->rating,
-                    'review_count' => $tour->review_count,
-                ];
-            });
+
+            // Eager-load relations for airline & departure dates
+            $tours->load(['transports.transport', 'periods', 'country']);
+
+            $formattedTours = $tours->map(fn ($tour) => $this->formatTourForTab($tour));
 
             return [
                 'id' => $tab->id,
@@ -337,31 +372,10 @@ class TourTabController extends Controller
         
         $tours = $tab->getTours($limit);
 
-        // Format tours - use tours table fields directly
-        $formattedTours = $tours->map(function ($tour) {
-            return [
-                'id' => $tour->id,
-                'slug' => $tour->slug,
-                'title' => $tour->title,
-                'tour_code' => $tour->tour_code,
-                'country' => [
-                    'id' => $tour->primary_country_id ?? $tour->country_id,
-                    'name' => $tour->country?->name_th ?? $tour->country?->name_en,
-                    'iso2' => $tour->country?->iso2,
-                ],
-                'days' => $tour->duration_days ?? $tour->days,
-                'nights' => $tour->duration_nights ?? $tour->nights,
-                'price' => $tour->min_price,
-                'original_price' => $tour->price_adult,
-                'discount_percent' => $tour->max_discount_percent,
-                'departure_date' => $tour->next_departure_date,
-                'airline' => $tour->airline,
-                'image_url' => $tour->cover_image_url,
-                'badge' => $tour->badge,
-                'rating' => $tour->rating,
-                'review_count' => $tour->review_count,
-            ];
-        });
+        // Eager-load relations for airline & departure dates
+        $tours->load(['transports.transport', 'periods', 'country']);
+
+        $formattedTours = $tours->map(fn ($tour) => $this->formatTourForTab($tour));
 
         return response()->json([
             'success' => true,

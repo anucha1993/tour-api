@@ -18,7 +18,9 @@ use App\Http\Controllers\Api\WholesalerSyncController;
 use App\Http\Controllers\Api\TourSearchController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\RecommendedTourController;
 use App\Http\Controllers\PageContentController;
+use App\Http\Controllers\PublicTourController;
 
 /*
 |--------------------------------------------------------------------------
@@ -96,6 +98,13 @@ Route::get('promotions/public', [PromotionController::class, 'publicList']);
 Route::get('tour-tabs/public', [TourTabController::class, 'publicList']);
 Route::get('tour-tabs/public/{slug}', [TourTabController::class, 'publicShow']);
 
+// Public Recommended Tours (for tour-web homepage)
+Route::get('recommended-tours/public', [RecommendedTourController::class, 'publicShow']);
+
+// Public Tour Detail (for tour-web tour page)
+Route::get('tours/detail/{slug}', [PublicTourController::class, 'show']);
+Route::post('tours/detail/{slug}/view', [PublicTourController::class, 'recordView']);
+
 // Wholesaler Sync API (Public for testing - move inside auth:sanctum for production)
 Route::prefix('wholesalers/{wholesaler}/sync')->group(function () {
     Route::post('/tour', [WholesalerSyncController::class, 'syncTour']);
@@ -153,6 +162,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('tours/suitable-for', [TourController::class, 'suitableFor']);
     Route::get('tours/statistics', [TourController::class, 'statistics']);
     Route::get('tours/counts', [TourController::class, 'counts']);
+    Route::get('tours/view-stats/summary', [PublicTourController::class, 'viewStatsSummary']);
     Route::get('tours/{tour}/debug', [TourController::class, 'debug']);
     Route::patch('tours/{tour}/toggle-status', [TourController::class, 'toggleStatus']);
     Route::patch('tours/{tour}/toggle-publish', [TourController::class, 'togglePublish']);
@@ -191,6 +201,16 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('tour-tabs/{tourTab}/toggle-status', [TourTabController::class, 'toggleStatus']);
     Route::post('tour-tabs/reorder', [TourTabController::class, 'reorder']);
     Route::apiResource('tour-tabs', TourTabController::class);
+
+    // Recommended Tours
+    Route::get('recommended-tours/condition-options', [RecommendedTourController::class, 'getConditionOptions']);
+    Route::get('recommended-tours/settings', [RecommendedTourController::class, 'getSettings']);
+    Route::put('recommended-tours/settings', [RecommendedTourController::class, 'updateSettings']);
+    Route::post('recommended-tours/preview-conditions', [RecommendedTourController::class, 'previewConditions']);
+    Route::get('recommended-tours/{recommendedTourSection}/preview', [RecommendedTourController::class, 'preview']);
+    Route::patch('recommended-tours/{recommendedTourSection}/toggle-status', [RecommendedTourController::class, 'toggleStatus']);
+    Route::post('recommended-tours/reorder', [RecommendedTourController::class, 'reorder']);
+    Route::apiResource('recommended-tours', RecommendedTourController::class);
 
     // Gallery Images CRUD
     Route::get('gallery/tags', [GalleryImageController::class, 'tags']);
