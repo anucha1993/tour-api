@@ -22,6 +22,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -44,6 +45,7 @@ class SyncToursJob implements ShouldQueue
     protected string $syncType;
     protected ?int $limit;
     protected ?int $syncLogId = null;
+    protected ?string $syncLockKey = null;
 
     /**
      * Create a new job instance.
@@ -90,6 +92,37 @@ class SyncToursJob implements ShouldQueue
                 'sync_type' => $this->syncType,
             ]);
             return;
+        }
+
+        // Prevent concurrent syncs for the same wholesaler (auto/incremental only)
+        if (!$this->transformedData) {
+            $lockKey = "sync_lock:wholesaler:{$this->wholesalerId}";
+            
+            // Clean up any stuck sync logs first (running for more than 15 minutes without heartbeat)
+            SyncLog::where('wholesaler_id', $this->wholesalerId)
+                ->where('status', 'running')
+                ->where(function ($q) {
+                    $q->where('last_heartbeat_at', '<', now()->subMinutes(15))
+                      ->orWhereNull('last_heartbeat_at');
+                })
+                ->where('started_at', '<', now()->subMinutes(15))
+                ->update([
+                    'status' => 'failed',
+                    'completed_at' => now(),
+                    'error_summary' => ['message' => 'Sync timed out (no heartbeat for 15 minutes)'],
+                ]);
+            
+            // Check if another sync is already running
+            if (!Cache::lock($lockKey, 600)->get()) {
+                Log::warning('SyncToursJob: Another sync already running, skipping', [
+                    'wholesaler_id' => $this->wholesalerId,
+                    'sync_type' => $this->syncType,
+                ]);
+                return;
+            }
+            
+            // Store lock key to release later
+            $this->syncLockKey = $lockKey;
         }
 
         // Create sync log
@@ -211,7 +244,44 @@ class SyncToursJob implements ShouldQueue
             }
 
             throw $e;
+        } finally {
+            // Always release sync lock
+            $this->releaseSyncLock();
         }
+    }
+
+    /**
+     * Release sync lock
+     */
+    protected function releaseSyncLock(): void
+    {
+        if ($this->syncLockKey) {
+            Cache::lock($this->syncLockKey)->forceRelease();
+            $this->syncLockKey = null;
+        }
+    }
+
+    /**
+     * Handle a job failure.
+     */
+    public function failed(?\Throwable $exception): void
+    {
+        // Release lock on failure
+        $this->releaseSyncLock();
+        
+        // Mark any running sync logs as failed
+        SyncLog::where('wholesaler_id', $this->wholesalerId)
+            ->where('status', 'running')
+            ->update([
+                'status' => 'failed',
+                'completed_at' => now(),
+                'error_summary' => ['message' => $exception?->getMessage() ?? 'Job failed'],
+            ]);
+        
+        Log::error('SyncToursJob: Job failed permanently', [
+            'wholesaler_id' => $this->wholesalerId,
+            'error' => $exception?->getMessage(),
+        ]);
     }
 
     /**
