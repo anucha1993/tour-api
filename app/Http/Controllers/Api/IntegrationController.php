@@ -2699,14 +2699,26 @@ class IntegrationController extends Controller
             ]);
         
         // Auto-fix orphaned running syncs: sync_log says "running" but no jobs in queue
+        // Only mark as orphaned if:
+        // 1. No pending/reserved jobs in queue at all
+        // 2. Sync started more than 10 minutes ago
+        // 3. No heartbeat in the last 5 minutes (heartbeat means the job IS actively running)
         if ($pendingJobs === 0) {
             $orphanedCount = SyncLog::where('status', 'running')
-                ->where('started_at', '<', now()->subMinutes(2))
+                ->where('started_at', '<', now()->subMinutes(10))
+                ->where(function ($q) {
+                    $q->whereNull('last_heartbeat_at')
+                      ->orWhere('last_heartbeat_at', '<', now()->subMinutes(5));
+                })
                 ->count();
             
             if ($orphanedCount > 0) {
                 SyncLog::where('status', 'running')
-                    ->where('started_at', '<', now()->subMinutes(2))
+                    ->where('started_at', '<', now()->subMinutes(10))
+                    ->where(function ($q) {
+                        $q->whereNull('last_heartbeat_at')
+                          ->orWhere('last_heartbeat_at', '<', now()->subMinutes(5));
+                    })
                     ->update([
                         'status' => 'failed',
                         'completed_at' => now(),
