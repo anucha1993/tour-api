@@ -3,23 +3,43 @@ require 'vendor/autoload.php';
 $app = require_once 'bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-echo "=== SYNC LOGS (integration 5) ===" . PHP_EOL;
-$logs = DB::table('sync_logs')->where('wholesaler_id', 5)->orderByDesc('id')->limit(5)->get();
-foreach ($logs as $log) {
-    $cols = (array) $log;
-    echo "ID: {$log->id} | Status: {$log->status} | Type: {$log->sync_type}" . PHP_EOL;
-    echo "  Started: {$log->started_at}" . PHP_EOL;
-    echo "  Heartbeat: " . ($cols['last_heartbeat_at'] ?? 'NULL') . PHP_EOL;
-    echo "  Completed: " . ($cols['completed_at'] ?? 'NULL') . PHP_EOL;
-    echo "  Error: " . ($cols['error_message'] ?? 'NULL') . PHP_EOL;
-    // Print all columns
-    foreach ($cols as $k => $v) {
-        if (!in_array($k, ['id','status','sync_type','started_at'])) {
-            echo "  {$k}: " . ($v ?? 'NULL') . PHP_EOL;
-        }
+// Check and clean running syncs
+$running = DB::table('sync_logs')->where('wholesaler_id', 5)->where('status', 'running')->get();
+echo "Running syncs: " . $running->count() . PHP_EOL;
+foreach ($running as $r) {
+    echo "  ID: {$r->id} started: {$r->started_at} heartbeat: {$r->last_heartbeat_at}" . PHP_EOL;
+    // Cancel if heartbeat is stale (>5 min)
+    $hb = $r->last_heartbeat_at ? strtotime($r->last_heartbeat_at) : strtotime($r->started_at);
+    if (time() - $hb > 300) {
+        DB::table('sync_logs')->where('id', $r->id)->update([
+            'status' => 'failed',
+            'completed_at' => now(),
+            'error_summary' => json_encode(['message' => 'Auto-cancelled stale sync']),
+        ]);
+        echo "  -> Cancelled (stale)" . PHP_EOL;
     }
-    echo PHP_EOL;
 }
+
+// Check jobs
+$jobs = DB::table('jobs')->count();
+echo "Jobs in queue: {$jobs}" . PHP_EOL;
+
+// Check failed jobs  
+$failed = DB::table('failed_jobs')->count();
+echo "Failed jobs: {$failed}" . PHP_EOL;
+
+// Check cache locks
+$locks = DB::table('cache')->where('key', 'like', '%sync_lock%')->get();
+echo "Cache locks: " . $locks->count() . PHP_EOL;
+foreach ($locks as $l) {
+    echo "  {$l->key} expires: " . date('Y-m-d H:i:s', $l->expiration) . PHP_EOL;
+    if ($l->expiration < time()) {
+        DB::table('cache')->where('key', $l->key)->delete();
+        echo "  -> Deleted (expired)" . PHP_EOL;
+    }
+}
+
+echo "Now: " . now()->toDateTimeString() . PHP_EOL;
 
 echo "=== JOBS TABLE ===" . PHP_EOL;
 $jobs = DB::table('jobs')->get();
