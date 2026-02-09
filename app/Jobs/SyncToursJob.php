@@ -971,10 +971,13 @@ class SyncToursJob implements ShouldQueue
                     ?? "item-{$processedCount}";
 
                 try {
-                    DB::beginTransaction();
-
                     // Remove emojis from all text fields
                     $tourData = $this->removeEmojisFromArray($tourData);
+
+                    // Process media OUTSIDE transaction to avoid long-running locks
+                    $tourData = $this->processMediaBeforeTransaction($tourData, $config, $pdfBranding, $wholesalerCode);
+
+                    DB::beginTransaction();
 
                     $result = $this->processSingleTour($tourData, $config, $pdfBranding, $wholesalerCode, $syncLog);
                     
@@ -1049,6 +1052,88 @@ class SyncToursJob implements ShouldQueue
     }
 
     /**
+     * Process media (PDF + cover image) BEFORE database transaction
+     * This prevents long-running HTTP requests from holding DB locks
+     */
+    protected function processMediaBeforeTransaction(
+        array $tourData,
+        WholesalerApiConfig $config,
+        ?PdfBrandingService $pdfBranding,
+        string $wholesalerCode
+    ): array {
+        $tourSection = $tourData['tour'] ?? [];
+        $mediaSection = $tourData['media'] ?? [];
+        
+        // Merge media into tour section for URL access
+        $merged = array_merge($tourSection, $mediaSection);
+
+        // Process PDF - upload to R2
+        $pdfUrl = $merged['pdf_url'] ?? null;
+        if ($pdfUrl && str_starts_with($pdfUrl, 'http') && !str_contains($pdfUrl, env('R2_URL', ''))) {
+            try {
+                if ($pdfBranding) {
+                    $brandedPdfUrl = $pdfBranding->processAndUpload($pdfUrl, $wholesalerCode);
+                    if ($brandedPdfUrl) {
+                        $merged['pdf_url'] = $brandedPdfUrl;
+                    }
+                } else {
+                    $filename = pathinfo(parse_url($pdfUrl, PHP_URL_PATH), PATHINFO_FILENAME);
+                    $filename = preg_replace('/[^a-zA-Z0-9_-]/', '_', $filename) . '_' . uniqid() . '.pdf';
+                    $r2Path = "pdfs/{$wholesalerCode}/" . date('Y/m') . "/{$filename}";
+                    
+                    $pdfContent = file_get_contents($pdfUrl);
+                    if ($pdfContent) {
+                        $disk = \Storage::disk('r2');
+                        $disk->put($r2Path, $pdfContent, 'public');
+                        $r2Url = env('R2_URL');
+                        if ($r2Url) {
+                            $merged['pdf_url'] = rtrim($r2Url, '/') . '/' . $r2Path;
+                        } else {
+                            $merged['pdf_url'] = $disk->url($r2Path);
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                Log::warning('SyncToursJob: Failed to upload PDF to R2 (pre-tx)', [
+                    'url' => $pdfUrl,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        // Process cover image - upload to Cloudflare
+        $coverImageUrl = $merged['cover_image_url'] ?? null;
+        if ($coverImageUrl && str_starts_with($coverImageUrl, 'http') && !str_contains($coverImageUrl, 'imagedelivery.net')) {
+            try {
+                $cloudflare = app(CloudflareImagesService::class);
+                if ($cloudflare->isConfigured()) {
+                    $uploadResult = $cloudflare->uploadFromUrl($coverImageUrl, 'tour-cover-' . uniqid());
+                    if ($uploadResult && isset($uploadResult['id'])) {
+                        $merged['cover_image_url'] = $cloudflare->getDisplayUrl($uploadResult['id']);
+                    }
+                }
+            } catch (\Exception $e) {
+                Log::warning('SyncToursJob: Failed to upload cover image (pre-tx)', [
+                    'url' => $coverImageUrl,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        // Write back processed URLs
+        if (isset($tourData['tour'])) {
+            if (isset($merged['pdf_url'])) $tourData['tour']['pdf_url'] = $merged['pdf_url'];
+            if (isset($merged['cover_image_url'])) $tourData['tour']['cover_image_url'] = $merged['cover_image_url'];
+        }
+        if (isset($tourData['media'])) {
+            if (isset($merged['pdf_url'])) $tourData['media']['pdf_url'] = $merged['pdf_url'];
+            if (isset($merged['cover_image_url'])) $tourData['media']['cover_image_url'] = $merged['cover_image_url'];
+        }
+
+        return $tourData;
+    }
+
+    /**
      * Process a single tour
      */
     protected function processSingleTour(
@@ -1080,63 +1165,8 @@ class SyncToursJob implements ShouldQueue
             return $result;
         }
 
-        // Process PDF if exists - upload to Cloudflare R2 (with branding if configured)
-        $pdfUrl = $tourSection['pdf_url'] ?? null;
-        if ($pdfUrl && str_starts_with($pdfUrl, 'http') && !str_contains($pdfUrl, env('R2_URL', ''))) {
-            try {
-                if ($pdfBranding) {
-                    // Download, add header/footer, then upload to R2
-                    $brandedPdfUrl = $pdfBranding->processAndUpload($pdfUrl, $wholesalerCode);
-                    if ($brandedPdfUrl) {
-                        $tourSection['pdf_url'] = $brandedPdfUrl;
-                    }
-                } else {
-                    // No branding - still upload to R2
-                    $filename = pathinfo(parse_url($pdfUrl, PHP_URL_PATH), PATHINFO_FILENAME);
-                    $filename = preg_replace('/[^a-zA-Z0-9_-]/', '_', $filename) . '_' . uniqid() . '.pdf';
-                    $r2Path = "pdfs/{$wholesalerCode}/" . date('Y/m') . "/{$filename}";
-                    
-                    // Download and upload to R2
-                    $pdfContent = file_get_contents($pdfUrl);
-                    if ($pdfContent) {
-                        $disk = \Storage::disk('r2');
-                        $disk->put($r2Path, $pdfContent, 'public');
-                        $r2Url = env('R2_URL');
-                        if ($r2Url) {
-                            $tourSection['pdf_url'] = rtrim($r2Url, '/') . '/' . $r2Path;
-                        } else {
-                            $tourSection['pdf_url'] = $disk->url($r2Path);
-                        }
-                    }
-                }
-            } catch (\Exception $e) {
-                Log::warning('SyncToursJob: Failed to upload PDF to R2', [
-                    'url' => $pdfUrl,
-                    'error' => $e->getMessage(),
-                ]);
-                // Keep original URL if upload fails
-            }
-        }
-        
-        // Process cover image - upload to Cloudflare
-        $coverImageUrl = $tourSection['cover_image_url'] ?? null;
-        if ($coverImageUrl && str_starts_with($coverImageUrl, 'http') && !str_contains($coverImageUrl, 'imagedelivery.net')) {
-            try {
-                $cloudflare = app(CloudflareImagesService::class);
-                if ($cloudflare->isConfigured()) {
-                    $uploadResult = $cloudflare->uploadFromUrl($coverImageUrl, 'tour-cover-' . uniqid());
-                    if ($uploadResult && isset($uploadResult['id'])) {
-                        $tourSection['cover_image_url'] = $cloudflare->getDisplayUrl($uploadResult['id']);
-                    }
-                }
-            } catch (\Exception $e) {
-                Log::warning('SyncToursJob: Failed to upload cover image', [
-                    'url' => $coverImageUrl,
-                    'error' => $e->getMessage(),
-                ]);
-                // Keep original URL if upload fails
-            }
-        }
+        // Media already processed in processMediaBeforeTransaction()
+        // URLs in tourSection are already updated with R2/Cloudflare URLs
 
         // ค้นหา tour โดยใช้ tour_code wholesaler_tour_code หรือ external_id
         $tourCode = $tourSection['tour_code'] ?? $tourSection['wholesaler_tour_code'] ?? $tourSection['external_id'] ?? null;
