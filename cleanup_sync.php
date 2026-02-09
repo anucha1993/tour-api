@@ -48,13 +48,21 @@ if ($pendingCount > 0) {
     }
 }
 
-// 5. Release any cache locks
+// 5. Release any cache locks (both cache and cache_locks tables)
 echo "\n4. Releasing sync locks...\n";
 $wholesalerIds = SyncLog::distinct()->pluck('wholesaler_id');
 foreach ($wholesalerIds as $wId) {
     $lockKey = "sync_lock:wholesaler:{$wId}";
     Cache::lock($lockKey)->forceRelease();
     echo "   Released lock for wholesaler {$wId}\n";
+}
+
+// Also clean up cache_locks table directly
+$locksCleaned = DB::table('cache_locks')
+    ->where('key', 'like', '%sync_lock%')
+    ->delete();
+if ($locksCleaned > 0) {
+    echo "   Cleaned {$locksCleaned} entries from cache_locks table\n";
 }
 
 echo "\n=== Done! ===\n";

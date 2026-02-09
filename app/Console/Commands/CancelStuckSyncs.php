@@ -4,6 +4,8 @@ namespace App\Console\Commands;
 
 use App\Models\SyncLog;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -99,6 +101,15 @@ class CancelStuckSyncs extends Command
                 'completed_at' => now(),
             ]);
 
+            // Release cache lock for this wholesaler (stored in cache_locks table)
+            $lockKey = "sync_lock:wholesaler:{$sync->wholesaler_id}";
+            try {
+                Cache::lock($lockKey)->forceRelease();
+                $this->line("  Released lock: {$lockKey}");
+            } catch (\Exception $e) {
+                $this->warn("  Failed to release lock {$lockKey}: {$e->getMessage()}");
+            }
+
             Log::warning('CancelStuckSyncs: Cancelled stuck sync', [
                 'sync_log_id' => $sync->id,
                 'wholesaler_id' => $sync->wholesaler_id,
@@ -106,6 +117,15 @@ class CancelStuckSyncs extends Command
             ]);
 
             $cancelled++;
+        }
+
+        // Also clean up any expired locks in cache_locks table
+        $expiredLocks = DB::table('cache_locks')
+            ->where('key', 'like', '%sync_lock%')
+            ->where('expiration', '<', time())
+            ->delete();
+        if ($expiredLocks > 0) {
+            $this->info("Cleaned up {$expiredLocks} expired lock(s) from cache_locks table.");
         }
 
         $this->info("Cancelled {$cancelled} stuck sync(s).");

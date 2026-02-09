@@ -47,6 +47,27 @@ Route::prefix('auth')->group(function () {
 // Dashboard Summary
 Route::get('dashboard/summary', [DashboardController::class, 'summary']);
 
+// TEMP: Debug route to read error log (remove after debugging)
+Route::get('debug/log', function () {
+    $logFile = storage_path('logs/laravel.log');
+    if (!file_exists($logFile)) {
+        return response()->json(['error' => 'Log file not found']);
+    }
+    // Read last 200 lines
+    $lines = [];
+    $fp = fopen($logFile, 'r');
+    fseek($fp, max(0, filesize($logFile) - 50000)); // Last ~50KB
+    fgets($fp); // Skip partial line
+    while (!feof($fp)) {
+        $lines[] = fgets($fp);
+    }
+    fclose($fp);
+    return response()->json([
+        'lines' => count($lines),
+        'content' => implode('', array_slice($lines, -100)),
+    ]);
+});
+
 // Protected routes (auth required)
 // Integrations (Wholesaler API Configs)
 // Public endpoints for testing/preview (no auth needed as it tests external API)
