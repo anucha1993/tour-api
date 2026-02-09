@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Tour;
 use App\Models\Country;
 use App\Services\CloudflareImagesService;
+use App\Services\SlugService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Str;
@@ -575,7 +576,82 @@ class TourController extends Controller
     }
 
     /**
+     * Generate slug อัตโนมัติจาก title (แปลไทย→อังกฤษ)
+     * POST /tours/{tour}/generate-slug
+     */
+    public function generateSlug(Tour $tour): JsonResponse
+    {
+        if (empty($tour->title)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ทัวร์ไม่มีชื่อ ไม่สามารถสร้าง slug ได้',
+            ], 422);
+        }
+
+        $slug = SlugService::generateSlug($tour->title, $tour->id, $tour->tour_code);
+        
+        $tour->update(['slug' => $slug]);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'slug' => $slug,
+                'tour_id' => $tour->id,
+            ],
+            'message' => 'สร้าง slug สำเร็จ',
+        ]);
+    }
+
+    /**
+     * ตรวจสอบว่า slug ซ้ำหรือไม่
+     * POST /tours/check-slug
+     */
+    public function checkSlug(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'slug' => 'required|string|max:255',
+            'tour_id' => 'nullable|integer',
+        ]);
+
+        $slug = Str::slug($validated['slug']);
+        $isUnique = SlugService::isUnique($slug, $validated['tour_id'] ?? null);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'slug' => $slug,
+                'is_unique' => $isUnique,
+            ],
+        ]);
+    }
+
+    /**
+     * Preview slug จาก title (ไม่บันทึก)
+     * POST /tours/preview-slug
+     */
+    public function previewSlug(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'title' => 'required|string|max:255',
+            'tour_id' => 'nullable|integer',
+        ]);
+
+        $slug = SlugService::generateSlug(
+            $validated['title'],
+            $validated['tour_id'] ?? null
+        );
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'slug' => $slug,
+            ],
+        ]);
+    }
+
+    /**
      * Toggle tour status.
+     * เมื่อเปลี่ยนเป็น active → ถ้ายังไม่มี slug จะ auto-generate ให้
      */
     public function toggleStatus(Tour $tour): JsonResponse
     {
@@ -585,7 +661,14 @@ class TourController extends Controller
             'draft' => 'active',
         };
 
-        $tour->update(['status' => $newStatus]);
+        $updateData = ['status' => $newStatus];
+
+        // Auto-generate slug เมื่อเปลี่ยนเป็น active และยังไม่มี slug
+        if ($newStatus === 'active' && empty($tour->slug) && !empty($tour->title)) {
+            $updateData['slug'] = SlugService::generateSlug($tour->title, $tour->id, $tour->tour_code);
+        }
+
+        $tour->update($updateData);
 
         return response()->json([
             'success' => true,

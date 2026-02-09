@@ -163,9 +163,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('tours/statistics', [TourController::class, 'statistics']);
     Route::get('tours/counts', [TourController::class, 'counts']);
     Route::get('tours/view-stats/summary', [PublicTourController::class, 'viewStatsSummary']);
+    Route::post('tours/check-slug', [TourController::class, 'checkSlug']);
+    Route::post('tours/preview-slug', [TourController::class, 'previewSlug']);
     Route::get('tours/{tour}/debug', [TourController::class, 'debug']);
     Route::patch('tours/{tour}/toggle-status', [TourController::class, 'toggleStatus']);
     Route::patch('tours/{tour}/toggle-publish', [TourController::class, 'togglePublish']);
+    Route::post('tours/{tour}/generate-slug', [TourController::class, 'generateSlug']);
     Route::post('tours/{tour}/recalculate', [TourController::class, 'recalculate']);
     Route::post('tours/{tour}/upload-cover-image', [TourController::class, 'uploadCoverImage']);
     Route::post('tours/{tour}/upload-pdf', [TourController::class, 'uploadPdf']);

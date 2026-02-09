@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\GalleryImage;
 use App\Models\Tour;
 use App\Models\TourView;
 use Illuminate\Http\JsonResponse;
@@ -401,6 +402,7 @@ class PublicTourController extends Controller
             'cover_image_url' => $tour->cover_image_url,
             'cover_image_alt' => $tour->cover_image_alt,
             'gallery' => $gallery,
+            'gallery_images' => $this->getGalleryImagesForTour($tour),
             'pdf_url' => $tour->pdf_url,
 
             // Tags & classification
@@ -442,5 +444,31 @@ class PublicTourController extends Controller
             'meta_title' => $tour->meta_title,
             'meta_description' => $tour->meta_description,
         ];
+    }
+
+    /**
+     * Get gallery images matching tour's hashtags only
+     * Random images from GalleryImage table where tags match tour hashtags
+     */
+    private function getGalleryImagesForTour(Tour $tour): array
+    {
+        $hashtags = $tour->hashtags ?? [];
+
+        if (empty($hashtags)) {
+            return [];
+        }
+
+        $images = GalleryImage::active()
+            ->byTags($hashtags)
+            ->inRandomOrder()
+            ->limit(6)
+            ->get();
+
+        return $images->map(fn($img) => [
+            'url' => $img->url,
+            'thumbnail_url' => $img->thumbnail_url,
+            'alt' => $img->alt,
+            'caption' => $img->caption,
+        ])->values()->toArray();
     }
 }

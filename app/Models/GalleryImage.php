@@ -78,12 +78,13 @@ class GalleryImage extends Model
 
     /**
      * Scope: By tags (match any)
+     * Uses JSON_SEARCH for MariaDB compatibility with Thai Unicode
      */
     public function scopeByTags($query, array $tags)
     {
         return $query->where(function ($q) use ($tags) {
             foreach ($tags as $tag) {
-                $q->orWhereJsonContains('tags', $tag);
+                $q->orWhereRaw("JSON_SEARCH(tags, 'one', ?) IS NOT NULL", [$tag]);
             }
         });
     }
