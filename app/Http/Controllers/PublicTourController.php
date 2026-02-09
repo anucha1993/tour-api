@@ -18,7 +18,6 @@ class PublicTourController extends Controller
     {
         $tour = Tour::where('slug', $slug)
             ->where('status', 'active')
-            ->where('is_published', true)
             ->with([
                 'primaryCountry:id,iso2,name_en,name_th,flag_emoji',
                 'countries:id,iso2,name_en,name_th,flag_emoji',
@@ -58,7 +57,6 @@ class PublicTourController extends Controller
     {
         $tour = Tour::where('slug', $slug)
             ->where('status', 'active')
-            ->where('is_published', true)
             ->with(['primaryCountry:id,name_th', 'cities:id,name_th'])
             ->first();
 
