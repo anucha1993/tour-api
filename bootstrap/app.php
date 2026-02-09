@@ -100,7 +100,7 @@ return Application::configure(basePath: dirname(__DIR__))
         })->everyMinute()->name('check-full-sync-schedules')->withoutOverlapping();
         
         // Auto-cancel stuck syncs every 5 minutes
-        $schedule->command('sync:cancel-stuck --timeout=30')
+        $schedule->command('sync:cancel-stuck --timeout=30 --force')
             ->everyFiveMinutes()
             ->name('cancel-stuck-syncs')
             ->withoutOverlapping();

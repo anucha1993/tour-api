@@ -21,7 +21,8 @@ class CancelStuckSyncs extends Command
      */
     protected $signature = 'sync:cancel-stuck 
                             {--timeout=30 : Minutes of inactivity before marking as stuck}
-                            {--dry-run : Show what would be cancelled without actually cancelling}';
+                            {--dry-run : Show what would be cancelled without actually cancelling}
+                            {--force : Skip confirmation prompt (for scheduled runs)}';
 
     /**
      * The console command description.
@@ -83,7 +84,7 @@ class CancelStuckSyncs extends Command
             return Command::SUCCESS;
         }
 
-        if (!$this->confirm('Do you want to cancel these stuck syncs?', true)) {
+        if (!$this->option('force') && !$this->confirm('Do you want to cancel these stuck syncs?', true)) {
             $this->info('Cancelled by user.');
             return Command::SUCCESS;
         }
