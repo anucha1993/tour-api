@@ -2685,7 +2685,39 @@ class IntegrationController extends Controller
         $pendingJobs = DB::table('jobs')->count();
         $failedJobs = DB::table('failed_jobs')->count();
         
-        // Check for stuck sync logs (running for more than 30 minutes)
+        // Auto-fix stuck sync logs (running for more than 15 minutes without heartbeat)
+        SyncLog::where('status', 'running')
+            ->where(function ($q) {
+                $q->where('last_heartbeat_at', '<', now()->subMinutes(15))
+                  ->orWhereNull('last_heartbeat_at');
+            })
+            ->where('started_at', '<', now()->subMinutes(15))
+            ->update([
+                'status' => 'failed',
+                'completed_at' => now(),
+                'error_summary' => json_encode(['message' => 'Sync timed out (no heartbeat for 15 minutes)']),
+            ]);
+        
+        // Auto-fix orphaned running syncs: sync_log says "running" but no jobs in queue
+        if ($pendingJobs === 0) {
+            $orphanedCount = SyncLog::where('status', 'running')
+                ->where('started_at', '<', now()->subMinutes(2))
+                ->count();
+            
+            if ($orphanedCount > 0) {
+                SyncLog::where('status', 'running')
+                    ->where('started_at', '<', now()->subMinutes(2))
+                    ->update([
+                        'status' => 'failed',
+                        'completed_at' => now(),
+                        'error_summary' => json_encode(['message' => 'Sync orphaned - no job in queue']),
+                    ]);
+                
+                Log::warning('getQueueStatus: Fixed orphaned running syncs', ['count' => $orphanedCount]);
+            }
+        }
+        
+        // Check for stuck sync logs (running for more than 30 minutes) 
         $stuckSyncs = SyncLog::where('status', 'running')
             ->where('started_at', '<', now()->subMinutes(30))
             ->get(['id', 'wholesaler_id', 'started_at', 'sync_type']);
@@ -2694,7 +2726,7 @@ class IntegrationController extends Controller
         $runningSyncs = SyncLog::where('status', 'running')
             ->where('started_at', '>=', now()->subMinutes(30))
             ->with('wholesaler:id,name')
-            ->get(['id', 'wholesaler_id', 'started_at', 'sync_type']);
+            ->get(['id', 'wholesaler_id', 'started_at', 'sync_type', 'total_items', 'processed_items', 'progress_percent', 'current_item_code']);
         
         // Queue worker status (check if jobs are being processed)
         $lastProcessedJob = SyncLog::whereIn('status', ['completed', 'failed'])

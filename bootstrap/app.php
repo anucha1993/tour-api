@@ -30,7 +30,11 @@ return Application::configure(basePath: dirname(__DIR__))
                     // Check if there's already a running sync for this wholesaler
                     $hasRunningSync = \App\Models\SyncLog::where('wholesaler_id', $config->wholesaler_id)
                         ->where('status', 'running')
-                        ->where('started_at', '>', now()->subHours(2)) // Timeout after 2 hours
+                        ->where('started_at', '>', now()->subMinutes(15))
+                        ->where(function ($q) {
+                            $q->where('last_heartbeat_at', '>', now()->subMinutes(15))
+                              ->orWhere('started_at', '>', now()->subMinutes(5));
+                        })
                         ->exists();
                     
                     if ($hasRunningSync) {
@@ -67,7 +71,11 @@ return Application::configure(basePath: dirname(__DIR__))
                     // Check if there's already a running sync for this wholesaler
                     $hasRunningSync = \App\Models\SyncLog::where('wholesaler_id', $config->wholesaler_id)
                         ->where('status', 'running')
-                        ->where('started_at', '>', now()->subHours(2))
+                        ->where('started_at', '>', now()->subMinutes(15))
+                        ->where(function ($q) {
+                            $q->where('last_heartbeat_at', '>', now()->subMinutes(15))
+                              ->orWhere('started_at', '>', now()->subMinutes(5));
+                        })
                         ->exists();
                     
                     if ($hasRunningSync) {
