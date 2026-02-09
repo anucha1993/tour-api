@@ -52,13 +52,17 @@ class CloudflareImagesService
 
             // แปลงเป็น webp
             $webpContent = $this->convertToWebp($imageContent);
-            if (!$webpContent) {
-                Log::error("Failed to convert image to webp: {$imageUrl}");
-                return null;
+            if ($webpContent) {
+                // Free original content
+                unset($imageContent);
+                // อัพโหลด webp ไป Cloudflare
+                return $this->uploadToCloudflare($webpContent, $customId, $metadata);
             }
 
-            // อัพโหลดไป Cloudflare
-            return $this->uploadToCloudflare($webpContent, $customId, $metadata);
+            // Fallback: upload original image if webp conversion fails
+            // Cloudflare Images will handle optimization on its own
+            Log::warning("WebP conversion failed, uploading original image: {$imageUrl}");
+            return $this->uploadToCloudflare($imageContent, $customId, $metadata);
         } catch (\Exception $e) {
             Log::error("Error uploading image to Cloudflare: " . $e->getMessage(), [
                 'url' => $imageUrl,
@@ -100,14 +104,37 @@ class CloudflareImagesService
     protected function convertToWebp(string $imageContent, int $quality = 85): ?string
     {
         try {
+            // Temporarily increase memory limit for large images
+            $originalMemoryLimit = ini_get('memory_limit');
+            ini_set('memory_limit', '512M');
+
             $image = Image::read($imageContent);
+
+            // Resize if image is very large (max 2000px width) to save memory
+            $width = $image->width();
+            $height = $image->height();
+            if ($width > 2000 || $height > 2000) {
+                $image = $image->scaleDown(width: 2000, height: 2000);
+                Log::info("CloudflareImages: Resized large image from {$width}x{$height}");
+            }
             
             // Encode เป็น webp
             $encoded = $image->encode(new WebpEncoder(quality: $quality));
-            
-            return $encoded->toString();
+            $result = $encoded->toString();
+
+            // Free memory explicitly
+            unset($image, $encoded);
+
+            // Restore original memory limit
+            ini_set('memory_limit', $originalMemoryLimit);
+
+            return $result;
         } catch (\Exception $e) {
             Log::error("Exception converting to webp: " . $e->getMessage());
+            // Restore memory limit on error
+            if (isset($originalMemoryLimit)) {
+                ini_set('memory_limit', $originalMemoryLimit);
+            }
             return null;
         }
     }
