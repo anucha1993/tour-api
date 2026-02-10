@@ -407,6 +407,7 @@ class RecommendedTourController extends Controller
             'rating' => $tour->rating,
             'review_count' => $tour->review_count,
             'available_seats' => $availableSeats,
+            'view_count' => $tour->view_count ?? 0,
         ];
     }
 }
