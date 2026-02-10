@@ -317,6 +317,7 @@ Route::middleware('auth:sanctum')->group(function () {
 */
 use App\Http\Controllers\Web\WebAuthController;
 use App\Http\Controllers\Web\WebWishlistController;
+use App\Http\Controllers\Web\WebBookingController;
 
 Route::prefix('web')->group(function () {
     // Public auth routes
@@ -335,6 +336,13 @@ Route::prefix('web')->group(function () {
         // Password reset
         Route::post('/forgot-password', [WebAuthController::class, 'requestPasswordReset']);
         Route::post('/reset-password', [WebAuthController::class, 'resetPassword']);
+    });
+
+    // Booking routes (public - guest + member)
+    Route::prefix('booking')->group(function () {
+        Route::post('/request-otp', [WebBookingController::class, 'requestOtp']);
+        Route::post('/verify-otp', [WebBookingController::class, 'verifyOtp']);
+        Route::post('/submit', [WebBookingController::class, 'submit']);
     });
 
     // Public page content (เงื่อนไขการให้บริการ, เงื่อนไขการชำระเงิน)

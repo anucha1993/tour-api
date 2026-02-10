@@ -293,6 +293,7 @@ class OtpService
             'login' => 'รหัส OTP สำหรับเข้าสู่ระบบ NextTrip คือ {otp} (หมดอายุใน 5 นาที)',
             'reset_password' => 'รหัส OTP สำหรับรีเซ็ตรหัสผ่าน NextTrip คือ {otp} (หมดอายุใน 5 นาที)',
             'verify_phone' => 'รหัส OTP สำหรับยืนยันเบอร์โทร NextTrip คือ {otp} (หมดอายุใน 5 นาที)',
+            'booking' => 'รหัส OTP สำหรับจองทัวร์ NextTrip คือ {otp} (หมดอายุใน 5 นาที)',
             default => 'รหัส OTP ของคุณคือ {otp} (หมดอายุใน 5 นาที)',
         };
 

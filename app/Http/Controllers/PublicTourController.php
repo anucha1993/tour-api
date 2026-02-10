@@ -12,6 +12,19 @@ use Illuminate\Support\Facades\DB;
 class PublicTourController extends Controller
 {
     /**
+     * Ensure a value is an array (handles double-encoded JSON strings)
+     */
+    private function ensureArray(mixed $value): array
+    {
+        if (is_array($value)) return $value;
+        if (is_string($value)) {
+            $decoded = json_decode($value, true);
+            return is_array($decoded) ? $decoded : [];
+        }
+        return [];
+    }
+
+    /**
      * แสดงข้อมูลทัวร์สำหรับ public (ไม่ต้อง auth)
      * GET /tours/{slug}
      */
@@ -92,8 +105,8 @@ class PublicTourController extends Controller
             'country_name' => $tour->primaryCountry?->name_th,
             'city_ids' => $cityIds,
             'city_names' => $cityNames,
-            'hashtags' => $tour->hashtags,
-            'themes' => $tour->themes,
+            'hashtags' => $this->ensureArray($tour->hashtags),
+            'themes' => $this->ensureArray($tour->themes),
             'region' => $tour->region,
             'sub_region' => $tour->sub_region,
             'price' => $tour->min_price ?? $tour->display_price,
@@ -383,10 +396,10 @@ class PublicTourController extends Controller
             'duration_nights' => $tour->duration_nights,
 
             // Highlights
-            'highlights' => $tour->highlights,
-            'shopping_highlights' => $tour->shopping_highlights,
-            'food_highlights' => $tour->food_highlights,
-            'special_highlights' => $tour->special_highlights,
+            'highlights' => $this->ensureArray($tour->highlights),
+            'shopping_highlights' => $this->ensureArray($tour->shopping_highlights),
+            'food_highlights' => $this->ensureArray($tour->food_highlights),
+            'special_highlights' => $this->ensureArray($tour->special_highlights),
 
             // Hotel
             'hotel_star' => $tour->hotel_star,
@@ -406,10 +419,10 @@ class PublicTourController extends Controller
             'pdf_url' => $tour->pdf_url,
 
             // Tags & classification
-            'hashtags' => $tour->hashtags,
-            'themes' => $tour->themes,
-            'suitable_for' => $tour->suitable_for,
-            'keywords' => $tour->keywords,
+            'hashtags' => $this->ensureArray($tour->hashtags),
+            'themes' => $this->ensureArray($tour->themes),
+            'suitable_for' => $this->ensureArray($tour->suitable_for),
+            'keywords' => $this->ensureArray($tour->keywords),
             'badge' => $tour->badge,
             'tour_category' => $tour->tour_category,
 
@@ -424,7 +437,7 @@ class PublicTourController extends Controller
             'discount_label' => $tour->discount_label,
 
             // Departures & transport
-            'departure_airports' => $tour->departure_airports,
+            'departure_airports' => $this->ensureArray($tour->departure_airports),
             'transports' => $transports,
             'next_departure_date' => $tour->next_departure_date?->format('Y-m-d'),
             'total_departures' => $tour->total_departures,
@@ -452,9 +465,9 @@ class PublicTourController extends Controller
      */
     private function getGalleryImagesForTour(Tour $tour): array
     {
-        $hashtags = $tour->hashtags ?? [];
+        $hashtags = $this->ensureArray($tour->hashtags);
 
-        if (empty($hashtags)) {
+        if (empty($hashtags) || !is_array($hashtags)) {
             return [];
         }
 
