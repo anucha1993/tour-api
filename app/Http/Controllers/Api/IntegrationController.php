@@ -555,6 +555,16 @@ class IntegrationController extends Controller
             // Past period handling
             'past_period_handling' => 'nullable|in:skip,close,keep',
             'past_period_threshold_days' => 'nullable|integer|min:0|max:365',
+            // Smart Sync Settings
+            'respect_manual_overrides' => 'nullable|boolean',
+            'always_sync_fields' => 'nullable|array',
+            'always_sync_fields.*' => 'string|max:100',
+            'never_sync_fields' => 'nullable|array',
+            'never_sync_fields.*' => 'string|max:100',
+            'auto_close_expired_periods' => 'nullable|boolean',
+            'auto_close_expired_tours' => 'nullable|boolean',
+            'skip_past_periods_on_sync' => 'nullable|boolean',
+            'skip_disabled_tours_on_sync' => 'nullable|boolean',
             // Data structure config for nested arrays
             'aggregation_config' => 'nullable|array',
             'aggregation_config.data_structure' => 'nullable|array',
@@ -4209,5 +4219,145 @@ class IntegrationController extends Controller
             ],
         ]);
     }
-}
 
+    /**
+     * Get Smart Sync Settings for an integration
+     */
+    public function getSyncSettings(int $id): JsonResponse
+    {
+        $config = WholesalerApiConfig::findOrFail($id);
+
+        // Default always_sync_fields if not set
+        $defaultAlwaysSyncFields = ['cover_image_url', 'pdf_url', 'og_image_url', 'docx_url'];
+        // Default never_sync_fields if not set
+        $defaultNeverSyncFields = ['status'];
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'respect_manual_overrides' => $config->respect_manual_overrides ?? true,
+                'always_sync_fields' => $config->always_sync_fields ?? $defaultAlwaysSyncFields,
+                'never_sync_fields' => $config->never_sync_fields ?? $defaultNeverSyncFields,
+                'auto_close_expired_periods' => $config->auto_close_expired_periods ?? false,
+                'auto_close_expired_tours' => $config->auto_close_expired_tours ?? false,
+                'skip_past_periods_on_sync' => $config->skip_past_periods_on_sync ?? true,
+                'skip_disabled_tours_on_sync' => $config->skip_disabled_tours_on_sync ?? true,
+                'past_period_handling' => $config->past_period_handling ?? 'skip',
+                'past_period_threshold_days' => $config->past_period_threshold_days ?? 0,
+            ],
+        ]);
+    }
+
+    /**
+     * Update Smart Sync Settings for an integration
+     */
+    public function updateSyncSettings(Request $request, int $id): JsonResponse
+    {
+        $config = WholesalerApiConfig::findOrFail($id);
+
+        $validator = Validator::make($request->all(), [
+            'respect_manual_overrides' => 'nullable|boolean',
+            'always_sync_fields' => 'nullable|array',
+            'always_sync_fields.*' => 'string|max:100',
+            'never_sync_fields' => 'nullable|array',
+            'never_sync_fields.*' => 'string|max:100',
+            'auto_close_expired_periods' => 'nullable|boolean',
+            'auto_close_expired_tours' => 'nullable|boolean',
+            'skip_past_periods_on_sync' => 'nullable|boolean',
+            'skip_disabled_tours_on_sync' => 'nullable|boolean',
+            'past_period_handling' => 'nullable|in:skip,close,keep',
+            'past_period_threshold_days' => 'nullable|integer|min:0|max:365',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $validated = $validator->validated();
+        $config->update($validated);
+
+        Log::info('Smart Sync Settings updated', [
+            'integration_id' => $id,
+            'wholesaler_id' => $config->wholesaler_id,
+            'settings' => $validated,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Smart Sync Settings updated successfully',
+            'data' => [
+                'respect_manual_overrides' => $config->respect_manual_overrides,
+                'always_sync_fields' => $config->always_sync_fields,
+                'never_sync_fields' => $config->never_sync_fields,
+                'auto_close_expired_periods' => $config->auto_close_expired_periods,
+                'auto_close_expired_tours' => $config->auto_close_expired_tours,
+                'skip_past_periods_on_sync' => $config->skip_past_periods_on_sync,
+                'skip_disabled_tours_on_sync' => $config->skip_disabled_tours_on_sync,
+                'past_period_handling' => $config->past_period_handling,
+                'past_period_threshold_days' => $config->past_period_threshold_days,
+            ],
+        ]);
+    }
+
+    /**
+     * Run Auto-Close for expired periods and tours
+     */
+    public function runAutoClose(int $id): JsonResponse
+    {
+        $config = WholesalerApiConfig::findOrFail($id);
+
+        // Check if auto-close is enabled
+        if (!$config->auto_close_expired_periods && !$config->auto_close_expired_tours) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Auto-close is not enabled for this integration. Please enable auto_close_expired_periods or auto_close_expired_tours first.',
+            ], 400);
+        }
+
+        try {
+            // Dispatch the job synchronously for immediate feedback
+            $job = new \App\Jobs\AutoCloseExpiredJob($config->wholesaler_id);
+            $job->handle();
+
+            // Get counts of what was closed
+            $today = now()->toDateString();
+            $thresholdDate = now()->subDays($config->past_period_threshold_days ?? 0)->toDateString();
+
+            // Count closed periods (recently updated to closed status)
+            $tourIds = \App\Models\Tour::where('wholesaler_id', $config->wholesaler_id)->pluck('id');
+            $closedPeriodsCount = \App\Models\Period::whereIn('tour_id', $tourIds)
+                ->where('status', 'closed')
+                ->where('start_date', '<', $thresholdDate)
+                ->count();
+
+            // Count closed tours (tours with no upcoming periods)
+            $closedToursCount = \App\Models\Tour::where('wholesaler_id', $config->wholesaler_id)
+                ->where('status', 'closed')
+                ->count();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Auto-close completed successfully',
+                'data' => [
+                    'periods_closed' => $closedPeriodsCount,
+                    'tours_closed' => $closedToursCount,
+                    'threshold_date' => $thresholdDate,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Auto-close failed', [
+                'integration_id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Auto-close failed: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+}

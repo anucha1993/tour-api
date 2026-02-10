@@ -394,6 +394,19 @@ class TourController extends Controller
             unset($validated['city_ids']);
         }
 
+        // Track which fields are being manually updated (for Smart Sync)
+        // Only track if this is an API tour (data_source = 'api')
+        if ($tour->data_source === 'api') {
+            $fieldsToTrack = array_keys($validated);
+            // Exclude fields that shouldn't be tracked
+            $excludeFromTracking = ['sync_locked', 'is_published', 'published_at'];
+            $fieldsToTrack = array_diff($fieldsToTrack, $excludeFromTracking);
+            
+            if (!empty($fieldsToTrack)) {
+                $tour->markFieldsAsOverridden($fieldsToTrack);
+            }
+        }
+
         $tour->update($validated);
 
         // Sync countries if provided
@@ -1013,5 +1026,131 @@ class TourController extends Controller
                 'message' => 'อัปโหลด PDF ล้มเหลว: ' . $e->getMessage(),
             ], 500);
         }
+    }
+
+    // =====================================================
+    // Manual Override Fields Management (for Smart Sync)
+    // =====================================================
+
+    /**
+     * Get manual override fields for a tour
+     */
+    public function getManualOverrides(Tour $tour): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'tour_id' => $tour->id,
+                'tour_code' => $tour->tour_code,
+                'manual_override_fields' => $tour->manual_override_fields ?? [],
+                'sync_locked' => $tour->sync_locked,
+                'data_source' => $tour->data_source,
+            ],
+        ]);
+    }
+
+    /**
+     * Mark fields as manually overridden (prevent sync from overwriting)
+     */
+    public function markFieldsAsOverridden(Request $request, Tour $tour): JsonResponse
+    {
+        $request->validate([
+            'fields' => 'required|array|min:1',
+            'fields.*' => 'string|max:100',
+        ]);
+
+        $fields = $request->input('fields');
+        $tour->markFieldsAsOverridden($fields);
+        $tour->save();
+
+        Log::info('Tour fields marked as manually overridden', [
+            'tour_id' => $tour->id,
+            'tour_code' => $tour->tour_code,
+            'fields' => $fields,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Fields marked as manually overridden',
+            'data' => [
+                'manual_override_fields' => $tour->manual_override_fields,
+            ],
+        ]);
+    }
+
+    /**
+     * Clear override for specific fields (allow sync to update them again)
+     */
+    public function clearFieldOverrides(Request $request, Tour $tour): JsonResponse
+    {
+        $request->validate([
+            'fields' => 'required|array|min:1',
+            'fields.*' => 'string|max:100',
+        ]);
+
+        $fields = $request->input('fields');
+        foreach ($fields as $field) {
+            $tour->clearFieldOverride($field);
+        }
+        $tour->save();
+
+        Log::info('Tour field overrides cleared', [
+            'tour_id' => $tour->id,
+            'tour_code' => $tour->tour_code,
+            'fields' => $fields,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Field overrides cleared',
+            'data' => [
+                'manual_override_fields' => $tour->manual_override_fields,
+            ],
+        ]);
+    }
+
+    /**
+     * Clear all manual overrides (allow sync to update all fields)
+     */
+    public function clearAllOverrides(Tour $tour): JsonResponse
+    {
+        $tour->clearAllOverrides();
+        $tour->save();
+
+        Log::info('All tour field overrides cleared', [
+            'tour_id' => $tour->id,
+            'tour_code' => $tour->tour_code,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'All field overrides cleared',
+            'data' => [
+                'manual_override_fields' => $tour->manual_override_fields,
+            ],
+        ]);
+    }
+
+    /**
+     * Toggle sync lock for a tour
+     */
+    public function toggleSyncLock(Tour $tour): JsonResponse
+    {
+        $tour->sync_locked = !$tour->sync_locked;
+        $tour->save();
+
+        Log::info('Tour sync lock toggled', [
+            'tour_id' => $tour->id,
+            'tour_code' => $tour->tour_code,
+            'sync_locked' => $tour->sync_locked,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => $tour->sync_locked ? 'Tour sync locked' : 'Tour sync unlocked',
+            'data' => [
+                'sync_locked' => $tour->sync_locked,
+            ],
+        ]);
     }
 }

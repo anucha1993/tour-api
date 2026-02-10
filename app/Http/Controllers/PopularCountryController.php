@@ -155,7 +155,9 @@ class PopularCountryController extends Controller
         $countries = Country::where('is_active', true)
             ->withCount(['tours' => function ($query) {
                 // Status 'active' = เปิดใช้งาน (tour UI has 3 statuses: draft, active, closed)
+                // Exclude Sold Out tours (available_seats = 0)
                 $query->where('status', 'active')
+                      ->where('available_seats', '>', 0)
                       ->whereHas('periods', function ($q) {
                           $q->where('status', 'open')
                             ->where('start_date', '>=', now()->toDateString());

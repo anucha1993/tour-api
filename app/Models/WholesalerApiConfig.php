@@ -33,9 +33,17 @@ class WholesalerApiConfig extends Model
         'sync_schedule',
         'sync_limit',
         'full_sync_schedule',
+        // Smart Sync Settings
+        'respect_manual_overrides',
+        'always_sync_fields',
+        'never_sync_fields',
         // Past Period Handling
         'past_period_handling', // skip, close, keep
         'past_period_threshold_days',
+        'auto_close_expired_periods',
+        'auto_close_expired_tours',
+        'skip_past_periods_on_sync',
+        'skip_disabled_tours_on_sync',
         // Webhook
         'webhook_enabled',
         'webhook_secret',
@@ -80,6 +88,14 @@ class WholesalerApiConfig extends Model
         'notification_emails' => 'array',
         'notification_types' => 'array',
         'extract_cities_from_name' => 'boolean',
+        // Smart Sync Settings
+        'respect_manual_overrides' => 'boolean',
+        'always_sync_fields' => 'array',
+        'never_sync_fields' => 'array',
+        'auto_close_expired_periods' => 'boolean',
+        'auto_close_expired_tours' => 'boolean',
+        'skip_past_periods_on_sync' => 'boolean',
+        'skip_disabled_tours_on_sync' => 'boolean',
     ];
 
     /**

@@ -87,6 +87,7 @@ class RecommendedTourSection extends Model
 
         $query = Tour::query()
             ->where('status', 'active')
+            ->where('available_seats', '>', 0) // Exclude Sold Out tours
             ->whereHas('periods', function ($q) {
                 $q->where('start_date', '>=', now()->toDateString())
                   ->where('status', 'open');

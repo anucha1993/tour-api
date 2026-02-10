@@ -534,4 +534,96 @@ class Tour extends Model
         
         return $prefix . str_pad($newNum, 3, '0', STR_PAD_LEFT);
     }
+
+    // =====================================================
+    // Manual Override Fields Management (for Smart Sync)
+    // =====================================================
+
+    /**
+     * Check if a field has been manually overridden
+     */
+    public function isFieldOverridden(string $field): bool
+    {
+        $overrides = $this->manual_override_fields ?? [];
+        return isset($overrides[$field]);
+    }
+
+    /**
+     * Get list of manually overridden fields
+     */
+    public function getOverriddenFields(): array
+    {
+        return array_keys($this->manual_override_fields ?? []);
+    }
+
+    /**
+     * Mark a field as manually overridden
+     */
+    public function markFieldAsOverridden(string $field): void
+    {
+        $overrides = $this->manual_override_fields ?? [];
+        $overrides[$field] = now()->toIso8601String();
+        $this->manual_override_fields = $overrides;
+    }
+
+    /**
+     * Mark multiple fields as manually overridden
+     */
+    public function markFieldsAsOverridden(array $fields): void
+    {
+        $overrides = $this->manual_override_fields ?? [];
+        $timestamp = now()->toIso8601String();
+        foreach ($fields as $field) {
+            $overrides[$field] = $timestamp;
+        }
+        $this->manual_override_fields = $overrides;
+    }
+
+    /**
+     * Clear override flag for a field (allow sync to update it again)
+     */
+    public function clearFieldOverride(string $field): void
+    {
+        $overrides = $this->manual_override_fields ?? [];
+        unset($overrides[$field]);
+        $this->manual_override_fields = empty($overrides) ? null : $overrides;
+    }
+
+    /**
+     * Clear all override flags
+     */
+    public function clearAllOverrides(): void
+    {
+        $this->manual_override_fields = null;
+    }
+
+    /**
+     * Get fields that can be synced (not overridden)
+     * 
+     * @param array $fields Fields to check
+     * @param array|null $alwaysSyncFields Fields that should always be synced regardless of override
+     * @param array|null $neverSyncFields Fields that should never be synced
+     * @return array Fields that can be safely synced
+     */
+    public function getSyncableFields(array $fields, ?array $alwaysSyncFields = null, ?array $neverSyncFields = null): array
+    {
+        $overrides = $this->manual_override_fields ?? [];
+        $alwaysSyncFields = $alwaysSyncFields ?? [];
+        $neverSyncFields = $neverSyncFields ?? [];
+        
+        return array_filter($fields, function($field) use ($overrides, $alwaysSyncFields, $neverSyncFields) {
+            // Never sync these fields
+            if (in_array($field, $neverSyncFields)) {
+                return false;
+            }
+            
+            // Always sync these fields
+            if (in_array($field, $alwaysSyncFields)) {
+                return true;
+            }
+            
+            // Otherwise, only sync if not manually overridden
+            return !isset($overrides[$field]);
+        });
+    }
 }

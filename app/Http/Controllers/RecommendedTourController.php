@@ -379,6 +379,9 @@ class RecommendedTourController extends Controller
             ->where('start_date', '>=', now()->toDateString());
         $minDeparture = $openPeriods->min('start_date');
         $maxDeparture = $openPeriods->max('start_date');
+        
+        // Calculate available seats from open future periods
+        $availableSeats = $openPeriods->sum('available');
 
         return [
             'id' => $tour->id,
@@ -403,6 +406,7 @@ class RecommendedTourController extends Controller
             'badge' => $tour->badge,
             'rating' => $tour->rating,
             'review_count' => $tour->review_count,
+            'available_seats' => $availableSeats,
         ];
     }
 }

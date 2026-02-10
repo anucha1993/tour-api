@@ -173,6 +173,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('tours/{tour}/upload-cover-image', [TourController::class, 'uploadCoverImage']);
     Route::post('tours/{tour}/upload-pdf', [TourController::class, 'uploadPdf']);
     Route::post('tours/mass-delete', [TourController::class, 'massDelete']);
+    
+    // Tour Manual Override Management (Smart Sync)
+    Route::get('tours/{tour}/manual-overrides', [TourController::class, 'getManualOverrides']);
+    Route::post('tours/{tour}/manual-overrides/mark', [TourController::class, 'markFieldsAsOverridden']);
+    Route::post('tours/{tour}/manual-overrides/clear', [TourController::class, 'clearFieldOverrides']);
+    Route::post('tours/{tour}/manual-overrides/clear-all', [TourController::class, 'clearAllOverrides']);
+    Route::post('tours/{tour}/toggle-sync-lock', [TourController::class, 'toggleSyncLock']);
+    
     Route::apiResource('tours', TourController::class);
 
     // Tour Periods CRUD
@@ -271,6 +279,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/{id}/aggregation-config', [IntegrationController::class, 'getAggregationConfig']);
         Route::put('/{id}/aggregation-config', [IntegrationController::class, 'updateAggregationConfig']);
         
+        // Smart Sync Settings
+        Route::get('/{id}/sync-settings', [IntegrationController::class, 'getSyncSettings']);
+        Route::put('/{id}/sync-settings', [IntegrationController::class, 'updateSyncSettings']);
+        
+        // Auto-close expired periods/tours
+        Route::post('/{id}/auto-close-expired', [IntegrationController::class, 'runAutoClose']);
+        
         // Test Notification
         Route::post('/{id}/test-notification', [IntegrationController::class, 'testNotification']);
     });
@@ -293,6 +308,25 @@ Route::middleware('auth:sanctum')->group(function () {
         
         Route::get('/{key}', [SettingsController::class, 'show']);
         Route::put('/{key}', [SettingsController::class, 'update']);
+    });
+
+    // System Settings (Global settings for sync, auto-close, etc.)
+    Route::prefix('system-settings')->group(function () {
+        Route::get('/', [\App\Http\Controllers\Api\SystemSettingsController::class, 'index']);
+        Route::put('/', [\App\Http\Controllers\Api\SystemSettingsController::class, 'update']);
+        Route::post('/clear-cache', [\App\Http\Controllers\Api\SystemSettingsController::class, 'clearCache']);
+        
+        // Sync Settings (Smart Sync)
+        Route::get('/sync', [\App\Http\Controllers\Api\SystemSettingsController::class, 'getSyncSettings']);
+        Route::put('/sync', [\App\Http\Controllers\Api\SystemSettingsController::class, 'updateSyncSettings']);
+        
+        // Auto-Close Settings
+        Route::get('/auto-close', [\App\Http\Controllers\Api\SystemSettingsController::class, 'getAutoCloseSettings']);
+        Route::put('/auto-close', [\App\Http\Controllers\Api\SystemSettingsController::class, 'updateAutoCloseSettings']);
+        Route::post('/auto-close/run', [\App\Http\Controllers\Api\SystemSettingsController::class, 'runAutoClose']);
+        
+        // Get by group
+        Route::get('/group/{group}', [\App\Http\Controllers\Api\SystemSettingsController::class, 'getByGroup']);
     });
 
     // Page Content Management (จัดการเนื้อหาเว็บไซต์)

@@ -824,6 +824,10 @@ class SyncPeriodsJob implements ShouldQueue
         $stats = ['updated' => false, 'airline' => null];
         
         if (empty($rawData)) {
+            // Even with no raw data, ensure tour_transports is synced if tour has transport_id
+            if ($tour->transport_id) {
+                $this->syncTourTransport($tour, $tour->transport_id);
+            }
             return $stats;
         }
 
@@ -840,6 +844,10 @@ class SyncPeriodsJob implements ShouldQueue
         }
 
         if (empty($airlineData)) {
+            // Ensure tour_transports is synced even without airline data from API
+            if ($tour->transport_id) {
+                $this->syncTourTransport($tour, $tour->transport_id);
+            }
             return $stats;
         }
 
@@ -848,14 +856,42 @@ class SyncPeriodsJob implements ShouldQueue
         $airlineName = $airlineData['airline_name'] ?? null;
 
         if (!$airlineCode && !$airlineName) {
+            if ($tour->transport_id) {
+                $this->syncTourTransport($tour, $tour->transport_id);
+            }
             return $stats;
         }
 
         // Look up transport in database
+        // Handle duplicate IATA codes (e.g., VZ = both "Vietjet Air" and "Thai Vietjet Air")
         $transport = null;
         
         if ($airlineCode) {
-            $transport = Transport::where('code', $airlineCode)->first();
+            // 1) If tour already has transport_id, check if it matches the IATA code
+            //    This prevents overwriting a correct transport_id when duplicate codes exist
+            if ($tour->transport_id) {
+                $existingTransport = Transport::where('id', $tour->transport_id)
+                    ->where('code', $airlineCode)
+                    ->first();
+                if ($existingTransport) {
+                    $transport = $existingTransport;
+                }
+            }
+            
+            // 2) Try to match by both code AND name for better precision with duplicates
+            if (!$transport && $airlineName) {
+                $transport = Transport::where('code', $airlineCode)
+                    ->where(function($q) use ($airlineName) {
+                        $q->where('name_en', 'LIKE', "%{$airlineName}%")
+                          ->orWhere('name_th', 'LIKE', "%{$airlineName}%");
+                    })
+                    ->first();
+            }
+            
+            // 3) Fallback to just code
+            if (!$transport) {
+                $transport = Transport::where('code', $airlineCode)->first();
+            }
         }
         
         if (!$transport && $airlineName) {
@@ -881,6 +917,10 @@ class SyncPeriodsJob implements ShouldQueue
         } elseif ($transport) {
             // Make sure tour_transports table is also synced even if transport_id unchanged
             $this->syncTourTransport($tour, $transport->id);
+        } elseif ($tour->transport_id) {
+            // No transport found from API, but tour has existing transport_id
+            // Ensure tour_transports is still populated
+            $this->syncTourTransport($tour, $tour->transport_id);
         }
 
         return $stats;

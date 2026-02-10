@@ -154,13 +154,16 @@ class PopularCountrySetting extends Model
      *   (UI has 3 statuses: แบบร่าง/draft, เปิดใช้งาน/active, ปิดใช้งาน/closed)
      * - Has at least one upcoming period (status='open', start_date >= today)
      *   This excludes tours without periods or tours that have already departed
+     * - Has available seats (available_seats > 0)
+     *   This excludes sold out tours
      */
     protected function buildBaseTourQuery()
     {
         // Status 'active' = เปิดใช้งาน (ready to display on website)
         // No need to check is_published since UI doesn't have that option
         $query = Tour::query()
-            ->where('status', 'active');
+            ->where('status', 'active')
+            ->where('available_seats', '>', 0); // Exclude Sold Out tours
 
         // Apply additional filters from settings
         if (!empty($this->filters)) {
