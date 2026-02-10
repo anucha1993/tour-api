@@ -412,3 +412,5 @@ class RecommendedTourController extends Controller
             'tour_category' => $tour->tour_category,
             'hotel_star' => $tour->hotel_star,
         ];
+    }
+}
