@@ -408,6 +408,7 @@ class RecommendedTourController extends Controller
             'review_count' => $tour->review_count,
             'available_seats' => $availableSeats,
             'view_count' => $tour->view_count ?? 0,
+            'promotion_type' => $tour->promotion_type ?? 'none',
+            'tour_category' => $tour->tour_category,
+            'hotel_star' => $tour->hotel_star,
         ];
-    }
-}

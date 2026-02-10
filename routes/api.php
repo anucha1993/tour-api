@@ -221,7 +221,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('recommended-tours/{recommendedTourSection}/preview', [RecommendedTourController::class, 'preview']);
     Route::patch('recommended-tours/{recommendedTourSection}/toggle-status', [RecommendedTourController::class, 'toggleStatus']);
     Route::post('recommended-tours/reorder', [RecommendedTourController::class, 'reorder']);
-    Route::apiResource('recommended-tours', RecommendedTourController::class);
+    Route::apiResource('recommended-tours', RecommendedTourController::class)->parameters([
+        'recommended-tours' => 'recommendedTourSection',
+    ]);
 
     // Gallery Images CRUD
     Route::get('gallery/tags', [GalleryImageController::class, 'tags']);
