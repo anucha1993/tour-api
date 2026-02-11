@@ -331,6 +331,16 @@ abstract class BaseAdapter implements AdapterInterface
     }
 
     /**
+     * Clear cached OAuth2 token (force re-authentication on next request)
+     */
+    protected function clearOAuth2TokenCache(): void
+    {
+        $cacheKey = "oauth2_token_{$this->wholesalerId}";
+        cache()->forget($cacheKey);
+        Log::info('OAuth2: Cleared cached token', ['wholesaler_id' => $this->wholesalerId]);
+    }
+
+    /**
      * Get nested value from array using dot notation
      * e.g., "data.access_token" or just "access_token"
      */
@@ -392,6 +402,7 @@ abstract class BaseAdapter implements AdapterInterface
         $attempts = 0;
         $maxAttempts = $this->config->retry_attempts;
         $lastException = null;
+        $hasRetriedOAuth = false; // Track if we've already retried OAuth2 token refresh
 
         while ($attempts < $maxAttempts) {
             $attempts++;
@@ -409,7 +420,21 @@ abstract class BaseAdapter implements AdapterInterface
                     return $response->json() ?? [];
                 }
 
-                // Non-retryable error codes
+                // OAuth2 token expired/invalid: clear cache and retry once with a fresh token
+                if ($response->status() === 401 && $this->config->auth_type === 'oauth2' && !$hasRetriedOAuth) {
+                    $hasRetriedOAuth = true;
+                    Log::warning('OAuth2: Received 401, clearing cached token and retrying', [
+                        'wholesaler_id' => $this->wholesalerId,
+                        'attempt' => $attempts,
+                        'endpoint' => $endpoint,
+                    ]);
+                    $this->clearOAuth2TokenCache();
+                    // Don't count this as a regular attempt — let the loop continue
+                    // with a fresh token on next iteration
+                    continue;
+                }
+
+                // Non-retryable error codes (401 for non-OAuth2 stays non-retryable)
                 if (in_array($response->status(), [400, 401, 403, 404, 422])) {
                     $log->recordResponse(
                         $response->status(),

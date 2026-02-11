@@ -65,4 +65,12 @@ class City extends Model
     {
         return $query->where('country_id', $countryId);
     }
+
+    /**
+     * Relationship: Tours visiting this city (Many-to-Many)
+     */
+    public function tours()
+    {
+        return $this->belongsToMany(Tour::class, 'tour_cities');
+    }
 }

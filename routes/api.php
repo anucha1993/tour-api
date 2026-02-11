@@ -21,6 +21,7 @@ use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\RecommendedTourController;
 use App\Http\Controllers\PageContentController;
 use App\Http\Controllers\PublicTourController;
+use App\Http\Controllers\InternationalTourSettingController;
 
 /*
 |--------------------------------------------------------------------------
@@ -88,6 +89,21 @@ Route::post('sync/{syncLogId}/force-cancel', [IntegrationController::class, 'for
 // Public Hero Slides (for tour-web homepage)
 Route::get('hero-slides/public', [\App\Http\Controllers\HeroSlideController::class, 'publicList']);
 
+// Public Our Clients (for tour-web)
+Route::get('our-clients/public', [\App\Http\Controllers\OurClientController::class, 'publicList']);
+
+// Public Popups (for tour-web)
+Route::get('popups/public', [\App\Http\Controllers\PopupController::class, 'publicList']);
+
+// Public Menus (for tour-web header/footer)
+Route::get('menus/public', [\App\Http\Controllers\MenuController::class, 'publicList']);
+
+// Public SEO (for tour-web)
+Route::get('seo/public/{slug}', [\App\Http\Controllers\SeoController::class, 'publicShow']);
+
+// Public Site Contacts (for tour-web)
+Route::get('site-contacts/public', [\App\Http\Controllers\SeoController::class, 'contactPublic']);
+
 // Public Popular Countries (for tour-web homepage)
 Route::get('popular-countries/public', [\App\Http\Controllers\PopularCountryController::class, 'publicList']);
 
@@ -104,6 +120,13 @@ Route::get('recommended-tours/public', [RecommendedTourController::class, 'publi
 // Public Tour Detail (for tour-web tour page)
 Route::get('tours/detail/{slug}', [PublicTourController::class, 'show']);
 Route::post('tours/detail/{slug}/view', [PublicTourController::class, 'recordView']);
+
+// Public International Tours Menu (for tour-web mega menu)
+Route::get('tours/international-menu', [PublicTourController::class, 'internationalMenu']);
+
+// Public International Tours Listing (with filters, pagination, periods)
+Route::get('tours/international', [PublicTourController::class, 'internationalTours']);
+Route::get('tours/international/settings', [InternationalTourSettingController::class, 'getPublicSetting']);
 
 // Wholesaler Sync API (Public for testing - move inside auth:sanctum for production)
 Route::prefix('wholesalers/{wholesaler}/sync')->group(function () {
@@ -225,6 +248,12 @@ Route::middleware('auth:sanctum')->group(function () {
         'recommended-tours' => 'recommendedTourSection',
     ]);
 
+    // International Tour Settings (Admin)
+    Route::get('international-tour-settings/condition-options', [InternationalTourSettingController::class, 'getConditionOptions']);
+    Route::post('international-tour-settings/preview-conditions', [InternationalTourSettingController::class, 'previewConditions']);
+    Route::patch('international-tour-settings/{internationalTourSetting}/toggle-status', [InternationalTourSettingController::class, 'toggleStatus']);
+    Route::apiResource('international-tour-settings', InternationalTourSettingController::class);
+
     // Gallery Images CRUD
     Route::get('gallery/tags', [GalleryImageController::class, 'tags']);
     Route::get('gallery/statistics', [GalleryImageController::class, 'statistics']);
@@ -239,6 +268,40 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('hero-slides/{heroSlide}/toggle-status', [\App\Http\Controllers\HeroSlideController::class, 'toggleStatus']);
     Route::post('hero-slides/{heroSlide}/replace-image', [\App\Http\Controllers\HeroSlideController::class, 'replaceImage']);
     Route::apiResource('hero-slides', \App\Http\Controllers\HeroSlideController::class);
+
+    // Our Clients CRUD (ลูกค้าของเรา)
+    Route::get('our-clients/statistics', [\App\Http\Controllers\OurClientController::class, 'statistics']);
+    Route::post('our-clients/reorder', [\App\Http\Controllers\OurClientController::class, 'reorder']);
+    Route::patch('our-clients/{ourClient}/toggle-status', [\App\Http\Controllers\OurClientController::class, 'toggleStatus']);
+    Route::post('our-clients/{ourClient}/replace-image', [\App\Http\Controllers\OurClientController::class, 'replaceImage']);
+    Route::apiResource('our-clients', \App\Http\Controllers\OurClientController::class);
+
+    // Popups CRUD
+    Route::get('popups/statistics', [\App\Http\Controllers\PopupController::class, 'statistics']);
+    Route::post('popups/reorder', [\App\Http\Controllers\PopupController::class, 'reorder']);
+    Route::patch('popups/{popup}/toggle-status', [\App\Http\Controllers\PopupController::class, 'toggleStatus']);
+    Route::post('popups/{popup}/replace-image', [\App\Http\Controllers\PopupController::class, 'replaceImage']);
+    Route::apiResource('popups', \App\Http\Controllers\PopupController::class);
+
+    // Menus CRUD
+    Route::get('menus/locations', [\App\Http\Controllers\MenuController::class, 'locations']);
+    Route::post('menus/reorder', [\App\Http\Controllers\MenuController::class, 'reorder']);
+    Route::patch('menus/{menu}/toggle-status', [\App\Http\Controllers\MenuController::class, 'toggleStatus']);
+    Route::apiResource('menus', \App\Http\Controllers\MenuController::class);
+
+    // SEO Settings
+    Route::get('seo/pages', [\App\Http\Controllers\SeoController::class, 'pages']);
+    Route::get('seo', [\App\Http\Controllers\SeoController::class, 'index']);
+    Route::get('seo/{slug}', [\App\Http\Controllers\SeoController::class, 'show']);
+    Route::put('seo/{slug}', [\App\Http\Controllers\SeoController::class, 'update']);
+    Route::post('seo/{slug}/og-image', [\App\Http\Controllers\SeoController::class, 'uploadOgImage']);
+
+    // Site Contacts
+    Route::get('site-contacts', [\App\Http\Controllers\SeoController::class, 'contactIndex']);
+    Route::post('site-contacts', [\App\Http\Controllers\SeoController::class, 'contactStore']);
+    Route::put('site-contacts/{siteContact}', [\App\Http\Controllers\SeoController::class, 'contactUpdate']);
+    Route::delete('site-contacts/{siteContact}', [\App\Http\Controllers\SeoController::class, 'contactDestroy']);
+    Route::patch('site-contacts/{siteContact}/toggle', [\App\Http\Controllers\SeoController::class, 'contactToggle']);
 
     // Popular Countries CRUD
     Route::get('popular-countries/filter-options', [\App\Http\Controllers\PopularCountryController::class, 'filterOptions']);

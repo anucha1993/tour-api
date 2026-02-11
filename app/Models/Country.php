@@ -92,4 +92,12 @@ class Country extends Model
     {
         return $this->hasMany(City::class);
     }
+
+    /**
+     * Relationship: Tours visiting this country (Many-to-Many)
+     */
+    public function tours()
+    {
+        return $this->belongsToMany(Tour::class, 'tour_countries');
+    }
 }
