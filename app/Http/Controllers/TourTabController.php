@@ -47,7 +47,7 @@ class TourTabController extends Controller
             'badge_icon' => 'nullable|string|max:10',
             'badge_expires_at' => 'nullable|date',
             'conditions' => 'nullable|array',
-            'display_limit' => 'nullable|integer|min:1|max:500',
+            'display_limit' => 'nullable|integer|min:1',
             'sort_by' => 'nullable|string|in:popular,price_asc,price_desc,newest,departure_date',
             'sort_order' => 'nullable|integer|min:0',
             'is_active' => 'boolean',
@@ -100,11 +100,11 @@ class TourTabController extends Controller
             'icon' => 'nullable|string|max:50',
             'badge_text' => 'nullable|string|max:50',
             'badge_color' => 'nullable|string|max:20',
-            'display_mode' => 'nullable|string|in:tab,badge,both',
+            'display_mode' => 'nullable|string|in:tab,badge,both,period',
             'badge_icon' => 'nullable|string|max:10',
             'badge_expires_at' => 'nullable|date',
             'conditions' => 'nullable|array',
-            'display_limit' => 'nullable|integer|min:1|max:500',
+            'display_limit' => 'nullable|integer|min:1',
             'sort_by' => 'nullable|string|in:popular,price_asc,price_desc,newest,departure_date',
             'sort_order' => 'nullable|integer|min:0',
             'is_active' => 'boolean',
@@ -217,7 +217,7 @@ class TourTabController extends Controller
         $validated = $request->validate([
             'conditions' => 'nullable|array',
             'sort_by' => 'nullable|string|in:popular,price_asc,price_desc,newest,departure_date',
-            'display_limit' => 'nullable|integer|min:1|max:500',
+            'display_limit' => 'nullable|integer|min:1',
         ]);
 
         $conditions = $validated['conditions'] ?? [];
@@ -389,7 +389,7 @@ class TourTabController extends Controller
     public function publicBadges(Request $request): JsonResponse
     {
         $tabs = TourTab::active()
-            ->whereIn('display_mode', ['badge', 'both'])
+            ->whereIn('display_mode', ['badge', 'both', 'period'])
             ->where(function ($q) {
                 $q->whereNull('badge_expires_at')
                   ->orWhere('badge_expires_at', '>', now());
@@ -401,6 +401,15 @@ class TourTabController extends Controller
             $tours = $tab->getTours($tab->display_limit);
             $tourIds = $tours->pluck('id')->toArray();
 
+            // Extract discount_min_amount from conditions for period-level badge matching
+            $discountMinAmount = null;
+            $conditions = is_array($tab->conditions) ? $tab->conditions : json_decode($tab->conditions, true) ?? [];
+            foreach ($conditions as $cond) {
+                if (($cond['type'] ?? '') === 'discount_min_amount') {
+                    $discountMinAmount = (float) ($cond['value'] ?? 0);
+                }
+            }
+
             return [
                 'id' => $tab->id,
                 'name' => $tab->name,
@@ -408,6 +417,8 @@ class TourTabController extends Controller
                 'badge_color' => $tab->badge_color,
                 'badge_icon' => $tab->badge_icon,
                 'tour_ids' => $tourIds,
+                'discount_min_amount' => $discountMinAmount,
+                'display_mode' => $tab->display_mode,
             ];
         });
 

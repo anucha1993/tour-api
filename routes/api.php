@@ -252,6 +252,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('international-tour-settings/condition-options', [InternationalTourSettingController::class, 'getConditionOptions']);
     Route::post('international-tour-settings/preview-conditions', [InternationalTourSettingController::class, 'previewConditions']);
     Route::patch('international-tour-settings/{internationalTourSetting}/toggle-status', [InternationalTourSettingController::class, 'toggleStatus']);
+    Route::post('international-tour-settings/{internationalTourSetting}/cover-image', [InternationalTourSettingController::class, 'uploadCoverImage']);
+    Route::delete('international-tour-settings/{internationalTourSetting}/cover-image', [InternationalTourSettingController::class, 'deleteCoverImage']);
     Route::apiResource('international-tour-settings', InternationalTourSettingController::class);
 
     // Gallery Images CRUD

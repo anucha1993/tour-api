@@ -348,7 +348,7 @@ class PublicTourController extends Controller
             'id' => $c->id,
             'name' => $c->name_th ?? $c->name_en,
             'name_en' => $c->name_en,
-            'iso2' => $c->iso2,
+            'iso2' => strtolower($c->iso2 ?? ''),
             'flag_emoji' => $c->flag_emoji,
         ]);
 
@@ -378,7 +378,7 @@ class PublicTourController extends Controller
             'primary_country' => $tour->primaryCountry ? [
                 'id' => $tour->primaryCountry->id,
                 'name' => $tour->primaryCountry->name_th ?? $tour->primaryCountry->name_en,
-                'iso2' => $tour->primaryCountry->iso2,
+                'iso2' => strtolower($tour->primaryCountry->iso2 ?? ''),
                 'flag_emoji' => $tour->primaryCountry->flag_emoji,
             ] : null,
             'countries' => $countries,
@@ -589,8 +589,12 @@ class PublicTourController extends Controller
             'search' => $request->input('search'),
             'airline_id' => $request->input('airline_id'),
             'departure_month' => $request->input('departure_month'),
+            'departure_date_from' => $request->input('departure_date_from'),
+            'departure_date_to' => $request->input('departure_date_to'),
+            'return_date' => $request->input('return_date'),
             'price_min' => $request->input('price_min'),
             'price_max' => $request->input('price_max'),
+            'min_seats' => $request->input('min_seats'),
             'sort_by' => $request->input('sort_by'),
         ];
 
@@ -629,6 +633,8 @@ class PublicTourController extends Controller
                 'filter_departure_month' => $setting->filter_departure_month ?? true,
                 'filter_price_range' => $setting->filter_price_range ?? true,
                 'sort_options' => InternationalTourSetting::SORT_OPTIONS,
+                'cover_image_url' => $setting->cover_image_url,
+                'cover_image_position' => $setting->cover_image_position ?? 'center',
             ],
             'active_filters' => [
                 'country' => $countryId ? Country::find($countryId, ['id', 'name_th', 'name_en', 'slug', 'iso2']) : null,
@@ -666,6 +672,9 @@ class PublicTourController extends Controller
             'total_departures' => $tour->total_departures,
             'pdf_url' => $tour->pdf_url,
             'highlights' => $this->ensureArray($tour->highlights),
+            'shopping_highlights' => $this->ensureArray($tour->shopping_highlights),
+            'food_highlights' => $this->ensureArray($tour->food_highlights),
+            'hashtags' => $this->ensureArray($tour->hashtags),
             'departure_airports' => $this->ensureArray($tour->departure_airports),
             'country' => $tour->primaryCountry ? [
                 'id' => $tour->primaryCountry->id,
@@ -684,6 +693,19 @@ class PublicTourController extends Controller
             $item['hotel_star'] = $tour->hotel_star;
             $item['hotel_star_min'] = $tour->hotel_star_min;
             $item['hotel_star_max'] = $tour->hotel_star_max;
+        }
+
+        // Meal count (computed from itineraries)
+        if ($setting->show_meal_count) {
+            $breakfasts = $tour->itineraries->where('has_breakfast', true)->count();
+            $lunches = $tour->itineraries->where('has_lunch', true)->count();
+            $dinners = $tour->itineraries->where('has_dinner', true)->count();
+            $item['meal_count'] = [
+                'breakfast' => $breakfasts,
+                'lunch' => $lunches,
+                'dinner' => $dinners,
+                'total' => $breakfasts + $lunches + $dinners,
+            ];
         }
 
         // Transport / Airlines
@@ -779,6 +801,7 @@ class PublicTourController extends Controller
                 ->map(fn($c) => [
                     'id' => $c->id,
                     'name_th' => $c->name_th,
+                    'slug' => $c->slug,
                     'iso2' => strtolower($c->iso2 ?? ''),
                     'tour_count' => $c->tours_count,
                 ]);

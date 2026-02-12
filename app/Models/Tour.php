@@ -286,6 +286,11 @@ class Tour extends Model
 
         // Get all prices from offers
         $prices = $openPeriods->map(fn($p) => $p->offer?->price_adult)->filter()->values();
+        $netPrices = $openPeriods->map(function($p) {
+            if (!$p->offer || !$p->offer->price_adult) return null;
+            $discount = $p->offer->discount_adult ?? 0;
+            return $p->offer->price_adult - $discount;
+        })->filter()->values();
         $discounts = $openPeriods->map(fn($p) => $p->offer?->discount_adult)->filter()->values();
         
         // Calculate price_adult using config method
@@ -294,12 +299,12 @@ class Tour extends Model
         // Calculate discount_adult using config method
         $discountAdult = $this->aggregateValue($discounts, $config['discount_adult'] ?? 'max');
         
-        // Calculate min/max prices
-        $minPrice = $this->aggregateValue($prices, $config['min_price'] ?? 'min');
-        $maxPrice = $this->aggregateValue($prices, $config['max_price'] ?? 'max');
+        // Calculate min/max prices from net prices (after discount)
+        $minPrice = $this->aggregateValue($netPrices->isNotEmpty() ? $netPrices : $prices, $config['min_price'] ?? 'min');
+        $maxPrice = $this->aggregateValue($netPrices->isNotEmpty() ? $netPrices : $prices, $config['max_price'] ?? 'max');
         
-        // Calculate display_price using config method
-        $displayPrice = $this->aggregateValue($prices, $config['display_price'] ?? 'min');
+        // Calculate display_price from net prices (after discount)
+        $displayPrice = $this->aggregateValue($netPrices->isNotEmpty() ? $netPrices : $prices, $config['display_price'] ?? 'min');
         
         // หาส่วนลดจาก promotion (max discount)
         $maxPromoDiscount = 0;

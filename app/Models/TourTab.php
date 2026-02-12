@@ -39,11 +39,13 @@ class TourTab extends Model
     const DISPLAY_TAB = 'tab';
     const DISPLAY_BADGE = 'badge';
     const DISPLAY_BOTH = 'both';
+    const DISPLAY_PERIOD = 'period';
 
     const DISPLAY_MODES = [
         self::DISPLAY_TAB => 'แท็บหน้าแรก',
         self::DISPLAY_BADGE => 'Badge ทุกหน้า',
         self::DISPLAY_BOTH => 'ทั้งแท็บ + Badge',
+        self::DISPLAY_PERIOD => 'แสดงในรอบเดินทาง',
     ];
 
     // Sort options
@@ -71,6 +73,8 @@ class TourTab extends Model
         'departure_within_days' => 'เดินทางภายใน (วัน)',
         'has_discount' => 'มีส่วนลด',
         'discount_min_percent' => 'ส่วนลดขั้นต่ำ (%)',
+        'discount_min_amount' => 'ส่วนลดรอบเดินทางขั้นต่ำ (บาท)',
+        'discount_total_min_amount' => 'ส่วนลดรวมขั้นต่ำ (บาท)',
         'tour_type' => 'ประเภททัวร์',
         'min_days' => 'จำนวนวันขั้นต่ำ',
         'max_days' => 'จำนวนวันสูงสุด',
@@ -192,6 +196,7 @@ class TourTab extends Model
             $query->where(function ($q) {
                 $q->where('has_promotion', true)
                   ->orWhere('discount_adult', '>', 0)
+                  ->orWhere('discount_amount', '>', 0)
                   ->orWhere('max_discount_percent', '>', 0);
             });
         }
@@ -199,6 +204,16 @@ class TourTab extends Model
         // Discount min percent - use tours.max_discount_percent
         if (!empty($conditions['discount_min_percent'])) {
             $query->where('max_discount_percent', '>=', $conditions['discount_min_percent']);
+        }
+
+        // Discount min amount (baht) - ส่วนลดจากรอบเดินทาง (offers.discount_adult -> tours.discount_adult)
+        if (!empty($conditions['discount_min_amount'])) {
+            $query->where('discount_adult', '>=', $conditions['discount_min_amount']);
+        }
+
+        // Discount total min amount (baht) - ส่วนลดรวมทั้งหมด (รอบเดินทาง + โปรโมชั่น -> tours.discount_amount)
+        if (!empty($conditions['discount_total_min_amount'])) {
+            $query->where('discount_amount', '>=', $conditions['discount_total_min_amount']);
         }
 
         // Tour type

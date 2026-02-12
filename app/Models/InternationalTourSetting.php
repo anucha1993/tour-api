@@ -14,6 +14,9 @@ class InternationalTourSetting extends Model
         'name',
         'slug',
         'description',
+        'cover_image_url',
+        'cover_image_cf_id',
+        'cover_image_position',
         'conditions',
         'display_limit',
         'per_page',
@@ -134,7 +137,7 @@ class InternationalTourSetting extends Model
 
         $perPage = $perPage ?? $this->per_page;
 
-        return $query->with([
+        $eagerLoads = [
             'primaryCountry:id,name_th,name_en,iso2,flag_emoji',
             'cities:id,name_th,name_en,slug',
             'transports' => function ($q) {
@@ -149,7 +152,15 @@ class InternationalTourSetting extends Model
                   ->limit($this->max_periods_display);
             },
             'periods.offer',
-        ])->paginate($perPage);
+        ];
+
+        if ($this->show_meal_count) {
+            $eagerLoads['itineraries'] = function ($q) {
+                $q->select('id', 'tour_id', 'has_breakfast', 'has_lunch', 'has_dinner');
+            };
+        }
+
+        return $query->with($eagerLoads)->paginate($perPage);
     }
 
     /**
@@ -263,6 +274,39 @@ class InternationalTourSetting extends Model
             $query->whereHas('periods', function ($q) use ($month) {
                 $q->where('status', 'open')
                   ->whereRaw("DATE_FORMAT(start_date, '%Y-%m') = ?", [$month]);
+            });
+        }
+
+        // Departure date range filter
+        if (!empty($filters['departure_date_from']) || !empty($filters['departure_date_to'])) {
+            $dateFrom = $filters['departure_date_from'] ?? null;
+            $dateTo = $filters['departure_date_to'] ?? null;
+            $query->whereHas('periods', function ($q) use ($dateFrom, $dateTo) {
+                $q->where('status', 'open');
+                if ($dateFrom) {
+                    $q->where('start_date', '>=', $dateFrom);
+                }
+                if ($dateTo) {
+                    $q->where('start_date', '<=', $dateTo);
+                }
+            });
+        }
+
+        // Return date filter (exact match)
+        if (!empty($filters['return_date'])) {
+            $returnDate = $filters['return_date'];
+            $query->whereHas('periods', function ($q) use ($returnDate) {
+                $q->where('status', 'open')
+                  ->where('end_date', $returnDate);
+            });
+        }
+
+        // Minimum available seats filter
+        if (!empty($filters['min_seats'])) {
+            $minSeats = (int) $filters['min_seats'];
+            $query->whereHas('periods', function ($q) use ($minSeats) {
+                $q->where('status', 'open')
+                  ->whereRaw('(capacity - booked) >= ?', [$minSeats]);
             });
         }
 

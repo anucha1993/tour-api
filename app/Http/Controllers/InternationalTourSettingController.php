@@ -7,11 +7,19 @@ use App\Models\Country;
 use App\Models\Tour;
 use App\Models\Transport;
 use App\Models\Wholesaler;
+use App\Services\CloudflareImagesService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
 class InternationalTourSettingController extends Controller
 {
+    protected CloudflareImagesService $cloudflare;
+
+    public function __construct(CloudflareImagesService $cloudflare)
+    {
+        $this->cloudflare = $cloudflare;
+    }
+
     /**
      * List all settings
      */
@@ -50,6 +58,7 @@ class InternationalTourSettingController extends Controller
             'filter_airline' => 'boolean',
             'filter_departure_month' => 'boolean',
             'filter_price_range' => 'boolean',
+            'sort_order' => 'integer|min:0',
             'is_active' => 'boolean',
         ]);
 
@@ -102,6 +111,8 @@ class InternationalTourSettingController extends Controller
             'filter_airline' => 'boolean',
             'filter_departure_month' => 'boolean',
             'filter_price_range' => 'boolean',
+            'cover_image_position' => 'string|in:top,center,bottom,left top,left center,left bottom,right top,right center,right bottom',
+            'sort_order' => 'integer|min:0',
             'is_active' => 'boolean',
         ]);
 
@@ -119,11 +130,82 @@ class InternationalTourSettingController extends Controller
      */
     public function destroy(InternationalTourSetting $internationalTourSetting)
     {
+        // ลบภาพ cover จาก Cloudflare ถ้ามี
+        if ($internationalTourSetting->cover_image_cf_id) {
+            $this->cloudflare->delete($internationalTourSetting->cover_image_cf_id);
+        }
+
         $internationalTourSetting->delete();
 
         return response()->json([
             'success' => true,
             'message' => 'ลบการตั้งค่าสำเร็จ',
+        ]);
+    }
+
+    /**
+     * Upload cover image
+     */
+    public function uploadCoverImage(Request $request, InternationalTourSetting $internationalTourSetting)
+    {
+        $request->validate([
+            'cover_image' => 'required|file|mimes:jpeg,jpg,png,gif,webp|max:10240',
+        ]);
+
+        $file = $request->file('cover_image');
+
+        // ลบภาพเดิมถ้ามี
+        if ($internationalTourSetting->cover_image_cf_id) {
+            $this->cloudflare->delete($internationalTourSetting->cover_image_cf_id);
+        }
+
+        $customId = 'intl-tour-cover-' . $internationalTourSetting->id . '-' . time();
+        $metadata = [
+            'type' => 'international_tour_cover',
+            'setting_id' => $internationalTourSetting->id,
+        ];
+
+        $result = $this->cloudflare->uploadFromFile($file, $customId, $metadata);
+
+        if (!$result) {
+            return response()->json([
+                'success' => false,
+                'message' => 'อัปโหลดภาพไม่สำเร็จ',
+            ], 500);
+        }
+
+        $url = $this->cloudflare->getDisplayUrl($result['id'], 'public');
+
+        $internationalTourSetting->update([
+            'cover_image_url' => $url,
+            'cover_image_cf_id' => $result['id'],
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $internationalTourSetting->fresh(),
+            'message' => 'อัปโหลดภาพ Cover สำเร็จ',
+        ]);
+    }
+
+    /**
+     * Delete cover image
+     */
+    public function deleteCoverImage(InternationalTourSetting $internationalTourSetting)
+    {
+        if ($internationalTourSetting->cover_image_cf_id) {
+            $this->cloudflare->delete($internationalTourSetting->cover_image_cf_id);
+        }
+
+        $internationalTourSetting->update([
+            'cover_image_url' => null,
+            'cover_image_cf_id' => null,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $internationalTourSetting->fresh(),
+            'message' => 'ลบภาพ Cover สำเร็จ',
         ]);
     }
 
@@ -240,6 +322,8 @@ class InternationalTourSettingController extends Controller
                     'filter_departure_month' => true,
                     'filter_price_range' => true,
                     'sort_options' => InternationalTourSetting::SORT_OPTIONS,
+                    'cover_image_url' => null,
+                    'cover_image_position' => 'center',
                 ],
             ]);
         }
@@ -263,6 +347,8 @@ class InternationalTourSettingController extends Controller
                 'filter_departure_month' => $setting->filter_departure_month,
                 'filter_price_range' => $setting->filter_price_range,
                 'sort_options' => InternationalTourSetting::SORT_OPTIONS,
+                'cover_image_url' => $setting->cover_image_url,
+                'cover_image_position' => $setting->cover_image_position ?? 'center',
             ],
         ]);
     }
