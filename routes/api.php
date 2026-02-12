@@ -22,6 +22,7 @@ use App\Http\Controllers\RecommendedTourController;
 use App\Http\Controllers\PageContentController;
 use App\Http\Controllers\PublicTourController;
 use App\Http\Controllers\InternationalTourSettingController;
+use App\Http\Controllers\TourReviewAdminController;
 
 /*
 |--------------------------------------------------------------------------
@@ -121,6 +122,12 @@ Route::get('recommended-tours/public', [RecommendedTourController::class, 'publi
 // Public Tour Detail (for tour-web tour page)
 Route::get('tours/detail/{slug}', [PublicTourController::class, 'show']);
 Route::post('tours/detail/{slug}/view', [PublicTourController::class, 'recordView']);
+
+// Public Tour Reviews (for tour-web)
+Route::get('tours/{tourSlug}/reviews', [\App\Http\Controllers\Web\WebTourReviewController::class, 'index']);
+Route::get('tours/{tourSlug}/reviews/summary', [\App\Http\Controllers\Web\WebTourReviewController::class, 'summary']);
+Route::post('reviews/{reviewId}/helpful', [\App\Http\Controllers\Web\WebTourReviewController::class, 'markHelpful']);
+Route::get('review-tags', [\App\Http\Controllers\Web\WebTourReviewController::class, 'tags']);
 
 // Public International Tours Menu (for tour-web mega menu)
 Route::get('tours/international-menu', [PublicTourController::class, 'internationalMenu']);
@@ -250,6 +257,29 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // International Tour Settings (Admin)
     Route::get('international-tour-settings/condition-options', [InternationalTourSettingController::class, 'getConditionOptions']);
+
+    // Tour Reviews Management (Admin)
+    Route::prefix('tour-reviews')->group(function () {
+        Route::get('/', [TourReviewAdminController::class, 'index']);
+        Route::get('/{id}', [TourReviewAdminController::class, 'show']);
+        Route::post('/assisted', [TourReviewAdminController::class, 'createAssisted']);
+        Route::post('/bulk-approve', [TourReviewAdminController::class, 'bulkApprove']);
+        Route::patch('/{id}/approve', [TourReviewAdminController::class, 'approve']);
+        Route::patch('/{id}/reject', [TourReviewAdminController::class, 'reject']);
+        Route::post('/{id}/reply', [TourReviewAdminController::class, 'reply']);
+        Route::patch('/{id}/toggle-featured', [TourReviewAdminController::class, 'toggleFeatured']);
+        Route::delete('/{id}', [TourReviewAdminController::class, 'destroy']);
+    });
+
+    // Review Tags Management (Admin)
+    Route::prefix('admin/review-tags')->group(function () {
+        Route::get('/', [TourReviewAdminController::class, 'tagIndex']);
+        Route::post('/', [TourReviewAdminController::class, 'tagStore']);
+        Route::put('/{id}', [TourReviewAdminController::class, 'tagUpdate']);
+        Route::delete('/{id}', [TourReviewAdminController::class, 'tagDestroy']);
+        Route::patch('/{id}/toggle', [TourReviewAdminController::class, 'tagToggle']);
+        Route::post('/reorder', [TourReviewAdminController::class, 'tagReorder']);
+    });
     Route::post('international-tour-settings/preview-conditions', [InternationalTourSettingController::class, 'previewConditions']);
     Route::patch('international-tour-settings/{internationalTourSetting}/toggle-status', [InternationalTourSettingController::class, 'toggleStatus']);
     Route::post('international-tour-settings/{internationalTourSetting}/cover-image', [InternationalTourSettingController::class, 'uploadCoverImage']);
@@ -476,6 +506,13 @@ Route::prefix('web')->group(function () {
             Route::put('/{id}', [\App\Http\Controllers\Web\WebBillingAddressController::class, 'update']);
             Route::delete('/{id}', [\App\Http\Controllers\Web\WebBillingAddressController::class, 'destroy']);
             Route::put('/{id}/default', [\App\Http\Controllers\Web\WebBillingAddressController::class, 'setDefault']);
+        });
+
+        // Tour Reviews (member)
+        Route::prefix('reviews')->group(function () {
+            Route::get('/my', [\App\Http\Controllers\Web\WebTourReviewController::class, 'myReviews']);
+            Route::get('/{tourSlug}/can-review', [\App\Http\Controllers\Web\WebTourReviewController::class, 'canReview']);
+            Route::post('/{tourSlug}', [\App\Http\Controllers\Web\WebTourReviewController::class, 'store']);
         });
     });
 });
