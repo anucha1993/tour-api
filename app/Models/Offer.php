@@ -112,40 +112,4 @@ class Offer extends Model
         $discount = $this->discount_adult ?? 0;
         return round(($discount / $this->price_adult) * 100, 2);
     }
-
-    /**
-     * ประเภท Promotion ตาม threshold ที่ตั้งไว้
-     * - fire_sale: โปรไฟไหม้ (discount >= fire_sale_min_percent)
-     * - normal: โปรธรรมดา (discount > 0 และ < fire_sale_min_percent)
-     * - none: ไม่มีโปร (discount = 0)
-     */
-    public function getPromotionTypeAttribute(): string
-    {
-        $thresholds = Setting::get('promotion_thresholds', [
-            'fire_sale_min_percent' => 30,
-            'normal_promo_min_percent' => 1,
-        ]);
-        
-        $discountPercent = $this->discount_percent;
-        
-        if ($discountPercent >= $thresholds['fire_sale_min_percent']) {
-            return 'fire_sale';
-        } elseif ($discountPercent >= $thresholds['normal_promo_min_percent']) {
-            return 'normal';
-        }
-        
-        return 'none';
-    }
-
-    /**
-     * Label ภาษาไทยของ promotion type
-     */
-    public function getPromotionTypeLabelAttribute(): string
-    {
-        return match($this->promotion_type) {
-            'fire_sale' => 'โปรไฟไหม้',
-            'normal' => 'โปรโมชั่น',
-            default => 'ไม่มีโปร',
-        };
-    }
 }

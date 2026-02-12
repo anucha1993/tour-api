@@ -112,6 +112,7 @@ Route::get('promotions/public', [PromotionController::class, 'publicList']);
 
 // Public Tour Tabs (for tour-web homepage)
 Route::get('tour-tabs/public', [TourTabController::class, 'publicList']);
+Route::get('tour-tabs/public/badges', [TourTabController::class, 'publicBadges']);
 Route::get('tour-tabs/public/{slug}', [TourTabController::class, 'publicShow']);
 
 // Public Recommended Tours (for tour-web homepage)
@@ -190,7 +191,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('tours/preview-slug', [TourController::class, 'previewSlug']);
     Route::get('tours/{tour}/debug', [TourController::class, 'debug']);
     Route::patch('tours/{tour}/toggle-status', [TourController::class, 'toggleStatus']);
-    Route::patch('tours/{tour}/toggle-publish', [TourController::class, 'togglePublish']);
     Route::post('tours/{tour}/generate-slug', [TourController::class, 'generateSlug']);
     Route::post('tours/{tour}/recalculate', [TourController::class, 'recalculate']);
     Route::post('tours/{tour}/upload-cover-image', [TourController::class, 'uploadCoverImage']);

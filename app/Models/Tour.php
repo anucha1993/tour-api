@@ -55,17 +55,6 @@ class Tour extends Model
         'LIMITED' => 'จำนวนจำกัด',
     ];
 
-    // Promotion Types
-    public const PROMOTION_TYPE_NONE = 'none';
-    public const PROMOTION_TYPE_NORMAL = 'normal';
-    public const PROMOTION_TYPE_FIRE_SALE = 'fire_sale';
-
-    public const PROMOTION_TYPES = [
-        self::PROMOTION_TYPE_NONE => 'ไม่มีโปร',
-        self::PROMOTION_TYPE_NORMAL => 'โปรโมชั่น',
-        self::PROMOTION_TYPE_FIRE_SALE => 'โปรไฟไหม้',
-    ];
-
     // Tour Types
     public const TOUR_TYPES = [
         'join' => 'Join Tour',
@@ -133,21 +122,17 @@ class Tour extends Model
         'discount_adult',
         'discount_amount',
         'discount_label',
-        'promotion_type',
         'max_discount_percent',
         'next_departure_date',
         'total_departures',
         'available_seats',
         'has_promotion',
         'badge',
-        'tour_category',
         'transport_id',
         'popularity_score',
         'sort_order',
         'status',
         'view_count',
-        'is_published',
-        'published_at',
         'updated_at_source',
     ];
 
@@ -172,8 +157,6 @@ class Tour extends Model
         'discount_amount' => 'decimal:2',
         'next_departure_date' => 'date',
         'has_promotion' => 'boolean',
-        'is_published' => 'boolean',
-        'published_at' => 'datetime',
         'updated_at_source' => 'datetime',
     ];
 
@@ -264,11 +247,6 @@ class Tour extends Model
         return $query->where('status', 'active');
     }
 
-    public function scopePublished($query)
-    {
-        return $query->where('is_published', true);
-    }
-
     public function scopeInRegion($query, string $region)
     {
         return $query->where('region', $region);
@@ -356,7 +334,7 @@ class Tour extends Model
             ->whereNotNull('hotel_star')
             ->pluck('hotel_star');
         
-        // คำนวณ max_discount_percent และ promotion_type
+        // คำนวณ max_discount_percent
         $maxDiscountPercent = 0;
         foreach ($openPeriods as $period) {
             if ($period->offer && $period->offer->price_adult > 0) {
@@ -364,20 +342,6 @@ class Tour extends Model
                 $percent = ($discount / $period->offer->price_adult) * 100;
                 $maxDiscountPercent = max($maxDiscountPercent, $percent);
             }
-        }
-        
-        // Get promotion thresholds from settings
-        $thresholds = Setting::get('promotion_thresholds', [
-            'fire_sale_min_percent' => 30,
-            'normal_promo_min_percent' => 1,
-        ]);
-        
-        // Determine promotion_type based on max discount percent
-        $promotionType = 'none';
-        if ($maxDiscountPercent >= ($thresholds['fire_sale_min_percent'] ?? 30)) {
-            $promotionType = 'fire_sale';
-        } elseif ($maxDiscountPercent >= ($thresholds['normal_promo_min_percent'] ?? 1)) {
-            $promotionType = 'normal';
         }
 
         // คำนวณ hotel_star หลัก: ใช้ค่าที่พบบ่อยสุด (mode), ถ้าเท่ากันใช้ค่าสูงสุด
@@ -404,7 +368,6 @@ class Tour extends Model
             'hotel_star' => $hotelStar,
             'hotel_star_min' => $hotelStars->min(),
             'hotel_star_max' => $hotelStars->max(),
-            'promotion_type' => $promotionType,
             'max_discount_percent' => round($maxDiscountPercent, 2),
         ]);
     }
@@ -459,57 +422,6 @@ class Tour extends Model
             'last' => $values->last(),
             default => $values->min(),
         };
-    }
-
-    /**
-     * Get promotion type label in Thai
-     */
-    public function getPromotionTypeLabelAttribute(): string
-    {
-        return self::PROMOTION_TYPES[$this->promotion_type] ?? 'ไม่มีโปร';
-    }
-
-    /**
-     * Check if tour has fire sale promotion
-     */
-    public function isFireSale(): bool
-    {
-        return $this->promotion_type === self::PROMOTION_TYPE_FIRE_SALE;
-    }
-
-    /**
-     * Check if tour has any promotion
-     */
-    public function hasPromotion(): bool
-    {
-        return $this->promotion_type !== self::PROMOTION_TYPE_NONE;
-    }
-
-    /**
-     * Scope: Filter by promotion type
-     */
-    public function scopePromoType($query, string $type)
-    {
-        return $query->where('promotion_type', $type);
-    }
-
-    /**
-     * Scope: Only fire sale tours
-     */
-    public function scopeFireSale($query)
-    {
-        return $query->where('promotion_type', self::PROMOTION_TYPE_FIRE_SALE);
-    }
-
-    /**
-     * Scope: Tours with any promotion (normal or fire_sale)
-     */
-    public function scopeWithPromotion($query)
-    {
-        return $query->whereIn('promotion_type', [
-            self::PROMOTION_TYPE_NORMAL,
-            self::PROMOTION_TYPE_FIRE_SALE,
-        ]);
     }
 
     /**

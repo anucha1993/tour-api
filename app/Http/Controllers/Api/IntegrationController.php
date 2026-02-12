@@ -1388,7 +1388,7 @@ class IntegrationController extends Controller
             $tourSection = $transformedData['tour'] ?? [];
             
             // รวบรวม fields ที่เปิดใช้งานใน tour section
-            $tourFieldsAll = ['external_id', 'tour_code', 'wholesaler_tour_code', 'title', 'tour_type', 'duration_days', 'duration_nights', 'primary_country_id', 'region', 'transport_id', 'hotel_star', 'tour_category', 'themes', 'suitable_for'];
+            $tourFieldsAll = ['external_id', 'tour_code', 'wholesaler_tour_code', 'title', 'tour_type', 'duration_days', 'duration_nights', 'primary_country_id', 'region', 'transport_id', 'hotel_star', 'themes', 'suitable_for'];
             $tourEnabledFields = [];
             $tourTestedFields = [];
             

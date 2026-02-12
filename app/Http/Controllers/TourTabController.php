@@ -43,8 +43,11 @@ class TourTabController extends Controller
             'icon' => 'nullable|string|max:50',
             'badge_text' => 'nullable|string|max:50',
             'badge_color' => 'nullable|string|max:20',
+            'display_mode' => 'nullable|string|in:tab,badge,both',
+            'badge_icon' => 'nullable|string|max:10',
+            'badge_expires_at' => 'nullable|date',
             'conditions' => 'nullable|array',
-            'display_limit' => 'nullable|integer|min:1|max:50',
+            'display_limit' => 'nullable|integer|min:1|max:500',
             'sort_by' => 'nullable|string|in:popular,price_asc,price_desc,newest,departure_date',
             'sort_order' => 'nullable|integer|min:0',
             'is_active' => 'boolean',
@@ -97,8 +100,11 @@ class TourTabController extends Controller
             'icon' => 'nullable|string|max:50',
             'badge_text' => 'nullable|string|max:50',
             'badge_color' => 'nullable|string|max:20',
+            'display_mode' => 'nullable|string|in:tab,badge,both',
+            'badge_icon' => 'nullable|string|max:10',
+            'badge_expires_at' => 'nullable|date',
             'conditions' => 'nullable|array',
-            'display_limit' => 'nullable|integer|min:1|max:50',
+            'display_limit' => 'nullable|integer|min:1|max:500',
             'sort_by' => 'nullable|string|in:popular,price_asc,price_desc,newest,departure_date',
             'sort_order' => 'nullable|integer|min:0',
             'is_active' => 'boolean',
@@ -211,7 +217,7 @@ class TourTabController extends Controller
         $validated = $request->validate([
             'conditions' => 'nullable|array',
             'sort_by' => 'nullable|string|in:popular,price_asc,price_desc,newest,departure_date',
-            'display_limit' => 'nullable|integer|min:1|max:50',
+            'display_limit' => 'nullable|integer|min:1|max:500',
         ]);
 
         $conditions = $validated['conditions'] ?? [];
@@ -271,6 +277,7 @@ class TourTabController extends Controller
             'data' => [
                 'condition_types' => TourTab::CONDITION_TYPES,
                 'sort_options' => TourTab::SORT_OPTIONS,
+                'display_modes' => TourTab::DISPLAY_MODES,
                 'countries' => Country::orderBy('name_th')->get(['id', 'name_th', 'name_en', 'iso2']),
                 'regions' => Tour::REGIONS,
                 'wholesalers' => Wholesaler::where('is_active', true)->get(['id', 'name', 'code']),
@@ -334,15 +341,18 @@ class TourTabController extends Controller
             'review_count' => $tour->review_count,
             'available_seats' => $availableSeats,
             'view_count' => $tour->view_count ?? 0,
-            'promotion_type' => $tour->promotion_type ?? 'none',
-            'tour_category' => $tour->tour_category,
             'hotel_star' => $tour->hotel_star,
         ];
     }
 
     public function publicList(Request $request): JsonResponse
     {
-        $tabs = TourTab::active()->ordered()->get();
+        $tabs = TourTab::active()->ordered()
+            ->where(function ($q) {
+                $q->whereNull('badge_expires_at')
+                  ->orWhere('badge_expires_at', '>', now());
+            })
+            ->get();
 
         $result = $tabs->map(function ($tab) {
             $tours = $tab->getTours();
@@ -360,7 +370,44 @@ class TourTabController extends Controller
                 'icon' => $tab->icon,
                 'badge_text' => $tab->badge_text,
                 'badge_color' => $tab->badge_color,
+                'display_mode' => $tab->display_mode ?? 'tab',
+                'badge_icon' => $tab->badge_icon,
                 'tours' => $formattedTours,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => $result,
+        ]);
+    }
+
+    /**
+     * Get badge-type tabs with tour IDs for global badge display
+     * ใช้สำหรับทุกหน้าเว็บเพื่อแสดง badge บนการ์ดทัวร์
+     */
+    public function publicBadges(Request $request): JsonResponse
+    {
+        $tabs = TourTab::active()
+            ->whereIn('display_mode', ['badge', 'both'])
+            ->where(function ($q) {
+                $q->whereNull('badge_expires_at')
+                  ->orWhere('badge_expires_at', '>', now());
+            })
+            ->ordered()
+            ->get();
+
+        $result = $tabs->map(function ($tab) {
+            $tours = $tab->getTours($tab->display_limit);
+            $tourIds = $tours->pluck('id')->toArray();
+
+            return [
+                'id' => $tab->id,
+                'name' => $tab->name,
+                'badge_text' => $tab->badge_text,
+                'badge_color' => $tab->badge_color,
+                'badge_icon' => $tab->badge_icon,
+                'tour_ids' => $tourIds,
             ];
         });
 

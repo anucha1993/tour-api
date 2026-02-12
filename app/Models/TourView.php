@@ -24,7 +24,6 @@ class TourView extends Model
         'region',
         'sub_region',
         'price',
-        'promotion_type',
         'duration_days',
         'referrer',
         'utm_source',

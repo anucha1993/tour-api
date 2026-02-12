@@ -23,7 +23,6 @@ class DashboardController extends Controller
         $totalWholesalers = Wholesaler::count();
         $activeWholesalers = Wholesaler::where('is_active', true)->count();
         $totalTours = Tour::count();
-        $publishedTours = Tour::where('is_published', true)->count();
         $totalPeriods = DB::table('periods')->count();
         $upcomingPeriods = DB::table('periods')
             ->where('start_date', '>=', $now->toDateString())
@@ -79,7 +78,6 @@ class DashboardController extends Controller
                     'total_wholesalers' => $totalWholesalers,
                     'active_wholesalers' => $activeWholesalers,
                     'total_tours' => $totalTours,
-                    'published_tours' => $publishedTours,
                     'total_periods' => $totalPeriods,
                     'upcoming_periods' => $upcomingPeriods,
                     'today_syncs' => $todaySyncs,

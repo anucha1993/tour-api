@@ -71,16 +71,6 @@ class TourController extends Controller
             $query->where('data_source', $request->data_source);
         }
 
-        // Filter by promotion_type (fire_sale / normal / none)
-        if ($request->filled('promotion_type')) {
-            $query->where('promotion_type', $request->promotion_type);
-        }
-
-        // Filter by published
-        if ($request->has('is_published')) {
-            $query->where('is_published', filter_var($request->is_published, FILTER_VALIDATE_BOOLEAN));
-        }
-
         // Price range
         if ($request->filled('min_price')) {
             $query->where('display_price', '>=', $request->min_price);
@@ -150,11 +140,6 @@ class TourController extends Controller
                     'draft' => Tour::where('status', 'draft')->count(),
                     'inactive' => Tour::where('status', 'inactive')->count(),
                 ],
-                'by_promotion_type' => [
-                    'fire_sale' => Tour::where('promotion_type', 'fire_sale')->count(),
-                    'normal' => Tour::where('promotion_type', 'normal')->count(),
-                    'none' => Tour::where('promotion_type', 'none')->count(),
-                ],
             ],
         ]);
     }
@@ -204,7 +189,6 @@ class TourController extends Controller
             'suitable_for' => 'nullable|array',
             'departure_airports' => 'nullable|array',
             'badge' => 'nullable|string|max:20',
-            'tour_category' => 'nullable|in:budget,premium',
             'status' => 'nullable|in:draft,active,inactive',
         ]);
 
@@ -359,21 +343,13 @@ class TourController extends Controller
             'suitable_for' => 'nullable|array',
             'departure_airports' => 'nullable|array',
             'badge' => 'nullable|string|max:20',
-            'tour_category' => 'nullable|in:budget,premium',
             'transport_id' => 'nullable|integer|exists:transports,id',
             'price_adult' => 'nullable|numeric|min:0',
             'discount_adult' => 'nullable|numeric|min:0',
             'sort_order' => 'nullable|integer',
             'status' => 'nullable|in:draft,active,inactive',
-            'promotion_type' => 'nullable|in:none,normal,fire_sale',
             'sync_locked' => 'nullable|boolean',
-            'is_published' => 'nullable|boolean',
         ]);
-
-        // Handle publish
-        if (isset($validated['is_published']) && $validated['is_published'] && !$tour->is_published) {
-            $validated['published_at'] = now();
-        }
 
         // Extract country_ids before updating
         $countryIds = null;
@@ -399,7 +375,7 @@ class TourController extends Controller
         if ($tour->data_source === 'api') {
             $fieldsToTrack = array_keys($validated);
             // Exclude fields that shouldn't be tracked
-            $excludeFromTracking = ['sync_locked', 'is_published', 'published_at'];
+            $excludeFromTracking = ['sync_locked'];
             $fieldsToTrack = array_diff($fieldsToTrack, $excludeFromTracking);
             
             if (!empty($fieldsToTrack)) {
@@ -691,23 +667,6 @@ class TourController extends Controller
     }
 
     /**
-     * Toggle tour publish status.
-     */
-    public function togglePublish(Tour $tour): JsonResponse
-    {
-        $tour->update([
-            'is_published' => !$tour->is_published,
-            'published_at' => !$tour->is_published ? now() : $tour->published_at,
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'data' => $tour,
-            'message' => $tour->is_published ? 'Tour published' : 'Tour unpublished',
-        ]);
-    }
-
-    /**
      * Debug - Get raw tour data for debugging.
      */
     public function debug(Tour $tour): JsonResponse
@@ -767,12 +726,10 @@ class TourController extends Controller
             'suitable_for' => $tour->suitable_for,
             'departure_airports' => $tour->departure_airports,
             'badge' => $tour->badge,
-            'tour_category' => $tour->tour_category,
             'transport_id' => $tour->transports->first()?->transport_id,
             'price_adult' => $tour->display_price,
             'discount_adult' => $tour->discount_amount,
             'status' => $tour->status,
-            'is_published' => $tour->is_published,
         ];
 
         return response()->json([
@@ -793,7 +750,6 @@ class TourController extends Controller
                 'timestamps' => [
                     'created_at' => $tour->created_at?->toISOString(),
                     'updated_at' => $tour->updated_at?->toISOString(),
-                    'published_at' => $tour->published_at?->toISOString(),
                 ],
             ],
         ]);
@@ -807,7 +763,6 @@ class TourController extends Controller
         $stats = [
             'total' => Tour::count(),
             'active' => Tour::where('status', 'active')->count(),
-            'published' => Tour::where('is_published', true)->count(),
             'with_promotion' => Tour::where('has_promotion', true)->count(),
             'by_region' => Tour::selectRaw('region, COUNT(*) as count')
                 ->whereNotNull('region')

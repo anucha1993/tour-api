@@ -40,7 +40,6 @@ $fieldsToMark = [
     'region',
     'sub_region',
     'badge',
-    'promotion_type',
     'seo_title',
     'seo_description',
     'seo_keywords',

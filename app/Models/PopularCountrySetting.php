@@ -160,7 +160,6 @@ class PopularCountrySetting extends Model
     protected function buildBaseTourQuery()
     {
         // Status 'active' = เปิดใช้งาน (ready to display on website)
-        // No need to check is_published since UI doesn't have that option
         $query = Tour::query()
             ->where('status', 'active')
             ->where('available_seats', '>', 0); // Exclude Sold Out tours
@@ -172,11 +171,6 @@ class PopularCountrySetting extends Model
             // Filter by wholesaler
             if (!empty($filters['wholesaler_ids'])) {
                 $query->whereIn('wholesaler_id', $filters['wholesaler_ids']);
-            }
-
-            // Filter by promotion type
-            if (!empty($filters['promotion_types'])) {
-                $query->whereIn('promotion_type', $filters['promotion_types']);
             }
 
             // Filter by themes
@@ -503,7 +497,6 @@ class PopularCountrySetting extends Model
         return [
             'selection_modes' => self::SELECTION_MODES,
             'sort_options' => self::SORT_OPTIONS,
-            'promotion_types' => Tour::PROMOTION_TYPES,
             'themes' => Tour::THEMES,
             'regions' => Country::REGIONS,
         ];

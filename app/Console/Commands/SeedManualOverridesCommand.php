@@ -34,7 +34,6 @@ class SeedManualOverridesCommand extends Command
         'region',
         'sub_region',
         'badge',
-        'promotion_type',
         'seo_title',
         'seo_description',
         'seo_keywords',

@@ -17,6 +17,9 @@ class TourTab extends Model
         'icon',
         'badge_text',
         'badge_color',
+        'display_mode',
+        'badge_icon',
+        'badge_expires_at',
         'conditions',
         'display_limit',
         'sort_by',
@@ -29,6 +32,18 @@ class TourTab extends Model
         'display_limit' => 'integer',
         'sort_order' => 'integer',
         'is_active' => 'boolean',
+        'badge_expires_at' => 'datetime',
+    ];
+
+    // Display mode options
+    const DISPLAY_TAB = 'tab';
+    const DISPLAY_BADGE = 'badge';
+    const DISPLAY_BOTH = 'both';
+
+    const DISPLAY_MODES = [
+        self::DISPLAY_TAB => 'แท็บหน้าแรก',
+        self::DISPLAY_BADGE => 'Badge ทุกหน้า',
+        self::DISPLAY_BOTH => 'ทั้งแท็บ + Badge',
     ];
 
     // Sort options

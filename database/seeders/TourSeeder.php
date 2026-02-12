@@ -230,8 +230,6 @@ class TourSeeder extends Seeder
                 'popularity_score' => rand(100, 1000),
                 'sort_order' => $index,
                 'status' => 'active',
-                'is_published' => true,
-                'published_at' => now(),
             ]);
 
             // Create locations

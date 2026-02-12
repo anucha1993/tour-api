@@ -114,7 +114,6 @@ class PublicTourController extends Controller
             'region' => $tour->region,
             'sub_region' => $tour->sub_region,
             'price' => $tour->min_price ?? $tour->display_price,
-            'promotion_type' => $tour->promotion_type,
             'duration_days' => $tour->duration_days,
             'referrer' => $request->input('referrer'),
             'utm_source' => $request->input('utm_source'),
@@ -215,12 +214,6 @@ class PublicTourController extends Controller
             ->groupBy('device_type')
             ->get();
 
-        // Promotion type breakdown
-        $promoBreakdown = TourView::where('viewed_at', '>=', $since)
-            ->select('promotion_type', DB::raw('COUNT(*) as views'))
-            ->groupBy('promotion_type')
-            ->get();
-
         // Duration breakdown
         $durationBreakdown = TourView::where('viewed_at', '>=', $since)
             ->whereNotNull('duration_days')
@@ -254,7 +247,6 @@ class PublicTourController extends Controller
                 'top_regions' => $topRegions,
                 'top_tours' => $topTours,
                 'device_breakdown' => $deviceBreakdown,
-                'promotion_type_breakdown' => $promoBreakdown,
                 'duration_breakdown' => $durationBreakdown,
                 'daily_trend' => $dailyTrend,
             ],
@@ -428,7 +420,6 @@ class PublicTourController extends Controller
             'suitable_for' => $this->ensureArray($tour->suitable_for),
             'keywords' => $this->ensureArray($tour->keywords),
             'badge' => $tour->badge,
-            'tour_category' => $tour->tour_category,
 
             // Pricing (aggregated)
             'min_price' => $tour->min_price ? (float) $tour->min_price : null,
@@ -437,7 +428,6 @@ class PublicTourController extends Controller
             'discount_adult' => $tour->discount_adult ? (float) $tour->discount_adult : null,
             'discount_amount' => $tour->discount_amount ? (float) $tour->discount_amount : null,
             'max_discount_percent' => $tour->max_discount_percent ? (float) $tour->max_discount_percent : null,
-            'promotion_type' => $tour->promotion_type,
             'discount_label' => $tour->discount_label,
 
             // Departures & transport
@@ -669,10 +659,8 @@ class PublicTourController extends Controller
             'discount_adult' => $tour->discount_adult,
             'discount_amount' => $tour->discount_amount,
             'max_discount_percent' => $tour->max_discount_percent,
-            'promotion_type' => $tour->promotion_type,
             'discount_label' => $tour->discount_label,
             'badge' => $tour->badge,
-            'tour_category' => $tour->tour_category,
             'available_seats' => $tour->available_seats,
             'next_departure_date' => $tour->next_departure_date,
             'total_departures' => $tour->total_departures,
