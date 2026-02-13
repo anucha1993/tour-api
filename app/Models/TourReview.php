@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class TourReview extends Model
 {
@@ -74,6 +75,11 @@ class TourReview extends Model
     public function assistedByAdmin(): BelongsTo
     {
         return $this->belongsTo(User::class, 'assisted_by_admin_id');
+    }
+
+    public function images(): HasMany
+    {
+        return $this->hasMany(ReviewImage::class, 'tour_review_id')->orderBy('sort_order');
     }
 
     // ==================== Scopes ====================

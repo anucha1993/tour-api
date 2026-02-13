@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Setting;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Storage;
 
 class SettingsController extends Controller
 {
@@ -406,6 +407,153 @@ class SettingsController extends Controller
     }
 
     /**
+     * Get footer configuration
+     */
+    public function getFooterConfig(): JsonResponse
+    {
+        $footerConfig = Setting::get('footer_config', [
+            'newsletter_title' => 'ติดตามเพื่อรับโปรโมชั่น',
+            'newsletter_show' => true,
+            'scam_warning_title' => 'ระวัง !! กลุ่มมิจฉาชีพขายทัวร์และบริการอื่นๆ',
+            'scam_warning_text' => 'โดยแอบอ้างใช้ชื่อบริษัทเน็กซ์ ทริป ฮอลิเดย์ กรุณาชำระค่าบริการผ่านธนาคารชื่อบัญชีบริษัท "เน็กซ์ ทริป ฮอลิเดย์ จำกัด" เท่านั้น',
+            'scam_warning_show' => true,
+            'company_description' => 'บริษัททัวร์ชั้นนำ ให้บริการจัดทัวร์ท่องเที่ยวทั้งในและต่างประเทศ ด้วยประสบการณ์กว่า 10 ปี พร้อมทีมงานมืออาชีพดูแลตลอดการเดินทาง',
+            'license_number' => 'TAT: 11/07440',
+            'line_id' => '@nexttripholiday',
+            'line_url' => 'https://line.me/R/ti/p/@nexttripholiday',
+            'line_qr_image' => '',
+            'col1_title' => 'ทัวร์ยอดนิยม',
+            'col2_title' => 'บริษัท',
+            'col3_title' => 'ช่วยเหลือ',
+            'features' => [
+                ['icon' => 'Shield', 'label' => 'ใบอนุญาตถูกต้อง'],
+                ['icon' => 'CreditCard', 'label' => 'ชำระเงินปลอดภัย'],
+                ['icon' => 'Headphones', 'label' => 'บริการ 24 ชม.'],
+            ],
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $footerConfig,
+        ]);
+    }
+
+    /**
+     * Get footer configuration (public - no auth)
+     */
+    public function getFooterConfigPublic(): JsonResponse
+    {
+        $footerConfig = Setting::get('footer_config', [
+            'newsletter_title' => 'ติดตามเพื่อรับโปรโมชั่น',
+            'newsletter_show' => true,
+            'scam_warning_title' => 'ระวัง !! กลุ่มมิจฉาชีพขายทัวร์และบริการอื่นๆ',
+            'scam_warning_text' => 'โดยแอบอ้างใช้ชื่อบริษัทเน็กซ์ ทริป ฮอลิเดย์ กรุณาชำระค่าบริการผ่านธนาคารชื่อบัญชีบริษัท "เน็กซ์ ทริป ฮอลิเดย์ จำกัด" เท่านั้น',
+            'scam_warning_show' => true,
+            'company_description' => 'บริษัททัวร์ชั้นนำ ให้บริการจัดทัวร์ท่องเที่ยวทั้งในและต่างประเทศ ด้วยประสบการณ์กว่า 10 ปี พร้อมทีมงานมืออาชีพดูแลตลอดการเดินทาง',
+            'license_number' => 'TAT: 11/07440',
+            'line_id' => '@nexttripholiday',
+            'line_url' => 'https://line.me/R/ti/p/@nexttripholiday',
+            'line_qr_image' => '',
+            'col1_title' => 'ทัวร์ยอดนิยม',
+            'col2_title' => 'บริษัท',
+            'col3_title' => 'ช่วยเหลือ',
+            'features' => [
+                ['icon' => 'Shield', 'label' => 'ใบอนุญาตถูกต้อง'],
+                ['icon' => 'CreditCard', 'label' => 'ชำระเงินปลอดภัย'],
+                ['icon' => 'Headphones', 'label' => 'บริการ 24 ชม.'],
+            ],
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $footerConfig,
+        ]);
+    }
+
+    /**
+     * Update footer configuration
+     */
+    public function updateFooterConfig(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'newsletter_title' => 'nullable|string|max:255',
+            'newsletter_show' => 'nullable|boolean',
+            'scam_warning_title' => 'nullable|string|max:500',
+            'scam_warning_text' => 'nullable|string|max:1000',
+            'scam_warning_show' => 'nullable|boolean',
+            'company_description' => 'nullable|string|max:1000',
+            'license_number' => 'nullable|string|max:100',
+            'line_id' => 'nullable|string|max:100',
+            'line_url' => 'nullable|string|max:500',
+            'col1_title' => 'nullable|string|max:100',
+            'col2_title' => 'nullable|string|max:100',
+            'col3_title' => 'nullable|string|max:100',
+            'features' => 'nullable|array|max:10',
+            'features.*.icon' => 'required_with:features|string|max:50',
+            'features.*.label' => 'required_with:features|string|max:100',
+        ]);
+
+        // Merge with current config
+        $currentConfig = Setting::get('footer_config', []);
+        $newConfig = array_merge($currentConfig, $validated);
+
+        Setting::set('footer_config', $newConfig, 'footer', 'json');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Footer configuration updated successfully',
+            'data' => Setting::get('footer_config'),
+        ]);
+    }
+
+    /**
+     * Upload LINE QR code image
+     */
+    public function uploadLineQrImage(Request $request): JsonResponse
+    {
+        $request->validate([
+            'image' => 'required|image|mimes:jpeg,jpg,png,gif,webp|max:2048',
+        ]);
+
+        try {
+            $file = $request->file('image');
+            $disk = Storage::disk('r2');
+
+            // Delete old QR if exists
+            $currentConfig = Setting::get('footer_config', []);
+            if (!empty($currentConfig['line_qr_image'])) {
+                $r2Url = rtrim(env('R2_URL'), '/');
+                $oldPath = str_replace($r2Url . '/', '', $currentConfig['line_qr_image']);
+                if ($oldPath && $disk->exists($oldPath)) {
+                    $disk->delete($oldPath);
+                }
+            }
+
+            // Upload new QR image
+            $filename = 'line-qr-' . time() . '.' . $file->getClientOriginalExtension();
+            $path = $disk->putFileAs('footer', $file, $filename);
+            $imageUrl = rtrim(env('R2_URL'), '/') . '/' . $path;
+
+            // Update config
+            $currentConfig['line_qr_image'] = $imageUrl;
+            Setting::set('footer_config', $currentConfig, 'footer', 'json');
+
+            return response()->json([
+                'success' => true,
+                'message' => 'QR code image uploaded successfully',
+                'data' => [
+                    'line_qr_image' => $imageUrl,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Upload failed: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Get OTP configuration
      */
     public function getOtpConfig(): JsonResponse
@@ -556,5 +704,74 @@ class SettingsController extends Controller
                 'message' => 'เกิดข้อผิดพลาด: ' . $e->getMessage(),
             ], 500);
         }
+    }
+
+    // ==================== Why Choose Us ====================
+
+    private function whyChooseUsDefaults(): array
+    {
+        return [
+            'title' => 'ทำไมต้องเลือกเรา?',
+            'subtitle' => 'NextTrip พร้อมให้บริการคุณด้วยมาตรฐานสูงสุด',
+            'show' => true,
+            'items' => [
+                ['icon' => 'Shield', 'title' => 'ใบอนุญาตถูกต้อง', 'description' => 'ได้รับใบอนุญาตจาก ททท. และ กรมการท่องเที่ยว'],
+                ['icon' => 'Award', 'title' => 'ประสบการณ์กว่า 10 ปี', 'description' => 'ทีมงานมืออาชีพพร้อมดูแลตลอดการเดินทาง'],
+                ['icon' => 'Clock', 'title' => 'บริการ 24 ชั่วโมง', 'description' => 'ติดต่อเราได้ตลอดเวลาทั้งก่อนและระหว่างเดินทาง'],
+                ['icon' => 'Plane', 'title' => 'สายการบินชั้นนำ', 'description' => 'ร่วมกับสายการบินชั้นนำระดับโลก'],
+            ],
+        ];
+    }
+
+    public function getWhyChooseUsConfig(): JsonResponse
+    {
+        $config = Setting::get('why_choose_us_config', $this->whyChooseUsDefaults());
+
+        return response()->json([
+            'success' => true,
+            'data' => $config,
+        ]);
+    }
+
+    public function getWhyChooseUsConfigPublic(): JsonResponse
+    {
+        $config = Setting::get('why_choose_us_config', $this->whyChooseUsDefaults());
+
+        // If hidden, return empty
+        if (empty($config['show'])) {
+            return response()->json([
+                'success' => true,
+                'data' => null,
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $config,
+        ]);
+    }
+
+    public function updateWhyChooseUsConfig(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'title' => 'nullable|string|max:255',
+            'subtitle' => 'nullable|string|max:500',
+            'show' => 'nullable|boolean',
+            'items' => 'nullable|array|max:12',
+            'items.*.icon' => 'required_with:items|string|max:50',
+            'items.*.title' => 'required_with:items|string|max:100',
+            'items.*.description' => 'required_with:items|string|max:500',
+        ]);
+
+        $currentConfig = Setting::get('why_choose_us_config', $this->whyChooseUsDefaults());
+        $newConfig = array_merge($currentConfig, $validated);
+
+        Setting::set('why_choose_us_config', $newConfig, 'website', 'json');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Why Choose Us configuration updated successfully',
+            'data' => Setting::get('why_choose_us_config'),
+        ]);
     }
 }

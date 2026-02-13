@@ -4,8 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\TourReview;
 use App\Models\ReviewTag;
+use App\Models\ReviewImage;
 use App\Models\Tour;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -17,9 +19,10 @@ class TourReviewAdminController extends Controller
     public function index(Request $request)
     {
         $query = TourReview::with([
-            'tour:id,tour_name,slug',
+            'tour:id,title,slug,tour_code',
             'user:id,first_name,last_name,avatar',
             'moderator:id,name',
+            'images',
         ]);
 
         // Filter by status
@@ -54,7 +57,7 @@ class TourReviewAdminController extends Controller
                 $q->where('reviewer_name', 'like', "%{$search}%")
                   ->orWhere('comment', 'like', "%{$search}%")
                   ->orWhereHas('tour', function ($tq) use ($search) {
-                      $tq->where('tour_name', 'like', "%{$search}%");
+                      $tq->where('title', 'like', "%{$search}%");
                   });
             });
         }
@@ -88,11 +91,12 @@ class TourReviewAdminController extends Controller
     public function show($id)
     {
         $review = TourReview::with([
-            'tour:id,tour_name,slug,cover_image',
+            'tour:id,title,slug,cover_image_url',
             'user:id,first_name,last_name,email,phone,avatar',
             'moderator:id,name',
             'replier:id,name',
             'assistedByAdmin:id,name',
+            'images',
         ])->findOrFail($id);
 
         return response()->json([
@@ -213,6 +217,7 @@ class TourReviewAdminController extends Controller
         $validator = Validator::make($request->all(), [
             'tour_id' => 'required|exists:tours,id',
             'reviewer_name' => 'required|string|max:100',
+            'reviewer_avatar' => 'nullable|image|max:2048',
             'rating' => 'required|integer|min:1|max:5',
             'category_ratings' => 'nullable|array',
             'category_ratings.guide' => 'nullable|integer|min:1|max:5',
@@ -226,8 +231,15 @@ class TourReviewAdminController extends Controller
             'comment' => 'required|string|max:200',
             'approved_by_customer' => 'required|boolean',
             'approval_screenshot' => 'nullable|image|max:5120',
+            'review_source' => 'nullable|in:self,assisted,internal',
+            'status' => 'nullable|in:pending,approved,rejected',
+            'images' => 'nullable|array|max:6',
+            'images.*' => 'image|max:5120',
         ], [
             'tour_id.required' => 'กรุณาเลือกทัวร์',
+            'images.max' => 'อัปโหลดภาพได้สูงสุด 6 ภาพ',
+            'images.*.image' => 'ไฟล์ต้องเป็นรูปภาพเท่านั้น',
+            'images.*.max' => 'ขนาดรูปภาพต้องไม่เกิน 5MB',
             'reviewer_name.required' => 'กรุณาระบุชื่อผู้รีวิว',
             'rating.required' => 'กรุณาให้คะแนน',
             'comment.required' => 'กรุณาเขียนความคิดเห็น',
@@ -241,32 +253,64 @@ class TourReviewAdminController extends Controller
             ], 422);
         }
 
-        // Upload approval screenshot if provided
+        // Upload reviewer avatar to R2
+        $avatarUrl = null;
+        if ($request->hasFile('reviewer_avatar')) {
+            $disk = Storage::disk('r2');
+            $file = $request->file('reviewer_avatar');
+            $path = 'review-avatars/' . Str::uuid() . '.' . $file->getClientOriginalExtension();
+            $disk->put($path, file_get_contents($file->getRealPath()), 'public');
+            $avatarUrl = rtrim(env('R2_URL'), '/') . '/' . $path;
+        }
+
+        // Upload approval screenshot to R2
         $screenshotUrl = null;
         if ($request->hasFile('approval_screenshot')) {
-            $screenshotUrl = $request->file('approval_screenshot')
-                ->store('review-screenshots', 'public');
-            $screenshotUrl = '/storage/' . $screenshotUrl;
+            $disk = Storage::disk('r2');
+            $file = $request->file('approval_screenshot');
+            $path = 'review-screenshots/' . Str::uuid() . '.' . $file->getClientOriginalExtension();
+            $disk->put($path, file_get_contents($file->getRealPath()), 'public');
+            $screenshotUrl = rtrim(env('R2_URL'), '/') . '/' . $path;
         }
 
         $review = TourReview::create([
             'tour_id' => $request->tour_id,
             'reviewer_name' => $request->reviewer_name,
+            'reviewer_avatar_url' => $avatarUrl,
             'rating' => $request->rating,
             'category_ratings' => $request->category_ratings,
             'tags' => $request->tags,
             'comment' => $request->comment,
-            'review_source' => 'assisted',
+            'review_source' => $request->input('review_source', 'assisted'),
             'approved_by_customer' => $request->approved_by_customer,
             'approval_screenshot_url' => $screenshotUrl,
             'assisted_by_admin_id' => $admin->id,
-            'status' => 'approved', // Assisted reviews auto-approved
+            'status' => $request->input('status', 'approved'),
         ]);
+
+        // Upload review images to R2
+        if ($request->hasFile('images')) {
+            $disk = Storage::disk('r2');
+            foreach ($request->file('images') as $index => $imageFile) {
+                $path = 'review-images/' . Str::uuid() . '.' . $imageFile->getClientOriginalExtension();
+                $disk->put($path, file_get_contents($imageFile->getRealPath()), 'public');
+                $imageUrl = rtrim(env('R2_URL'), '/') . '/' . $path;
+                ReviewImage::create([
+                    'tour_review_id' => $review->id,
+                    'image_url' => $imageUrl,
+                    'sort_order' => $index,
+                ]);
+            }
+        }
+
+        $review->load('images');
 
         // Increment tag usage
         if ($request->tags && is_array($request->tags)) {
-            foreach ($request->tags as $tagSlug) {
-                ReviewTag::where('slug', $tagSlug)->increment('usage_count');
+            foreach ($request->tags as $tagName) {
+                ReviewTag::where('name', $tagName)
+                    ->orWhere('slug', $tagName)
+                    ->increment('usage_count');
             }
         }
 
@@ -278,16 +322,156 @@ class TourReviewAdminController extends Controller
     }
 
     /**
-     * Delete a review
+     * Delete a review and its R2 files
      */
     public function destroy($id)
     {
-        $review = TourReview::findOrFail($id);
+        $review = TourReview::with('images')->findOrFail($id);
+        $disk = Storage::disk('r2');
+        $r2Url = rtrim(env('R2_URL'), '/');
+
+        // Delete review images from R2
+        foreach ($review->images as $image) {
+            if ($image->image_url && str_starts_with($image->image_url, $r2Url)) {
+                $r2Path = str_replace($r2Url . '/', '', $image->image_url);
+                $disk->delete($r2Path);
+            }
+            $image->delete();
+        }
+
+        // Delete reviewer avatar from R2
+        if ($review->reviewer_avatar_url && str_starts_with($review->reviewer_avatar_url, $r2Url)) {
+            $r2Path = str_replace($r2Url . '/', '', $review->reviewer_avatar_url);
+            $disk->delete($r2Path);
+        }
+
+        // Delete approval screenshot from R2
+        if ($review->approval_screenshot_url && str_starts_with($review->approval_screenshot_url, $r2Url)) {
+            $r2Path = str_replace($r2Url . '/', '', $review->approval_screenshot_url);
+            $disk->delete($r2Path);
+        }
+
         $review->delete();
 
         return response()->json([
             'success' => true,
             'message' => 'ลบรีวิวสำเร็จ',
+        ]);
+    }
+
+    /**
+     * Update a review (admin edit)
+     */
+    public function update(Request $request, $id)
+    {
+        $review = TourReview::findOrFail($id);
+
+        $validator = Validator::make($request->all(), [
+            'reviewer_name' => 'required|string|max:100',
+            'reviewer_avatar' => 'nullable|image|max:2048',
+            'rating' => 'required|integer|min:1|max:5',
+            'category_ratings' => 'nullable|array',
+            'category_ratings.guide' => 'nullable|integer|min:1|max:5',
+            'category_ratings.food' => 'nullable|integer|min:1|max:5',
+            'category_ratings.hotel' => 'nullable|integer|min:1|max:5',
+            'category_ratings.value' => 'nullable|integer|min:1|max:5',
+            'category_ratings.program_accuracy' => 'nullable|integer|min:1|max:5',
+            'category_ratings.would_return' => 'nullable|integer|min:1|max:5',
+            'comment' => 'required|string|max:200',
+            'review_source' => 'nullable|in:self,assisted,internal',
+            'status' => 'nullable|in:pending,approved,rejected',
+            'tags' => 'nullable|array',
+            'tags.*' => 'string|max:50',
+            'images' => 'nullable|array|max:6',
+            'images.*' => 'image|max:5120',
+            'remove_image_ids' => 'nullable|array',
+            'remove_image_ids.*' => 'integer',
+            'remove_avatar' => 'nullable|boolean',
+        ], [
+            'reviewer_name.required' => 'กรุณาระบุชื่อผู้รีวิว',
+            'rating.required' => 'กรุณาให้คะแนน',
+            'comment.required' => 'กรุณาเขียนความคิดเห็น',
+            'images.max' => 'อัปโหลดภาพได้สูงสุด 6 ภาพ',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $disk = Storage::disk('r2');
+        $r2Url = rtrim(env('R2_URL'), '/');
+
+        // Upload reviewer avatar to R2
+        if ($request->hasFile('reviewer_avatar')) {
+            // Delete old avatar from R2
+            if ($review->reviewer_avatar_url && str_starts_with($review->reviewer_avatar_url, $r2Url)) {
+                $oldPath = str_replace($r2Url . '/', '', $review->reviewer_avatar_url);
+                $disk->delete($oldPath);
+            }
+            $file = $request->file('reviewer_avatar');
+            $path = 'review-avatars/' . Str::uuid() . '.' . $file->getClientOriginalExtension();
+            $disk->put($path, file_get_contents($file->getRealPath()), 'public');
+            $review->reviewer_avatar_url = $r2Url . '/' . $path;
+        } elseif ($request->boolean('remove_avatar')) {
+            // Delete old avatar from R2
+            if ($review->reviewer_avatar_url && str_starts_with($review->reviewer_avatar_url, $r2Url)) {
+                $oldPath = str_replace($r2Url . '/', '', $review->reviewer_avatar_url);
+                $disk->delete($oldPath);
+            }
+            $review->reviewer_avatar_url = null;
+        }
+
+        $review->reviewer_name = $request->reviewer_name;
+        $review->rating = $request->rating;
+        $review->category_ratings = $request->category_ratings;
+        $review->tags = $request->tags;
+        $review->comment = $request->comment;
+        if ($request->filled('review_source')) {
+            $review->review_source = $request->review_source;
+        }
+        if ($request->filled('status')) {
+            $review->status = $request->status;
+        }
+        $review->save();
+
+        // Remove specified images (delete from R2)
+        if ($request->filled('remove_image_ids')) {
+            $imagesToRemove = ReviewImage::where('tour_review_id', $review->id)
+                ->whereIn('id', $request->remove_image_ids)
+                ->get();
+            foreach ($imagesToRemove as $img) {
+                if ($img->image_url && str_starts_with($img->image_url, $r2Url)) {
+                    $r2Path = str_replace($r2Url . '/', '', $img->image_url);
+                    $disk->delete($r2Path);
+                }
+                $img->delete();
+            }
+        }
+
+        // Upload new images to R2
+        if ($request->hasFile('images')) {
+            $currentCount = $review->images()->count();
+            foreach ($request->file('images') as $index => $imageFile) {
+                $path = 'review-images/' . Str::uuid() . '.' . $imageFile->getClientOriginalExtension();
+                $disk->put($path, file_get_contents($imageFile->getRealPath()), 'public');
+                $imageUrl = $r2Url . '/' . $path;
+                ReviewImage::create([
+                    'tour_review_id' => $review->id,
+                    'image_url' => $imageUrl,
+                    'sort_order' => $currentCount + $index,
+                ]);
+            }
+        }
+
+        $review->load('images');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'แก้ไขรีวิวสำเร็จ',
+            'data' => $review,
         ]);
     }
 

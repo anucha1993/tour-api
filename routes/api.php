@@ -23,6 +23,7 @@ use App\Http\Controllers\PageContentController;
 use App\Http\Controllers\PublicTourController;
 use App\Http\Controllers\InternationalTourSettingController;
 use App\Http\Controllers\TourReviewAdminController;
+use App\Http\Controllers\SubscriberController;
 
 /*
 |--------------------------------------------------------------------------
@@ -105,6 +106,15 @@ Route::get('seo/public/{slug}', [\App\Http\Controllers\SeoController::class, 'pu
 // Public Site Contacts (for tour-web)
 Route::get('site-contacts/public', [\App\Http\Controllers\SeoController::class, 'contactPublic']);
 
+// Public Footer Config (for tour-web)
+Route::get('footer-config/public', [SettingsController::class, 'getFooterConfigPublic']);
+Route::get('why-choose-us/public', [SettingsController::class, 'getWhyChooseUsConfigPublic']);
+
+// Public Subscriber endpoints
+Route::post('subscribers/subscribe', [SubscriberController::class, 'subscribe']);
+Route::get('subscribers/confirm/{token}', [SubscriberController::class, 'confirm']);
+Route::get('subscribers/unsubscribe/{token}', [SubscriberController::class, 'unsubscribe']);
+
 // Public Popular Countries (for tour-web homepage)
 Route::get('popular-countries/public', [\App\Http\Controllers\PopularCountryController::class, 'publicList']);
 
@@ -124,6 +134,7 @@ Route::get('tours/detail/{slug}', [PublicTourController::class, 'show']);
 Route::post('tours/detail/{slug}/view', [PublicTourController::class, 'recordView']);
 
 // Public Tour Reviews (for tour-web)
+Route::get('reviews/featured', [\App\Http\Controllers\Web\WebTourReviewController::class, 'featured']);
 Route::get('tours/{tourSlug}/reviews', [\App\Http\Controllers\Web\WebTourReviewController::class, 'index']);
 Route::get('tours/{tourSlug}/reviews/summary', [\App\Http\Controllers\Web\WebTourReviewController::class, 'summary']);
 Route::post('reviews/{reviewId}/helpful', [\App\Http\Controllers\Web\WebTourReviewController::class, 'markHelpful']);
@@ -268,6 +279,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('/{id}/reject', [TourReviewAdminController::class, 'reject']);
         Route::post('/{id}/reply', [TourReviewAdminController::class, 'reply']);
         Route::patch('/{id}/toggle-featured', [TourReviewAdminController::class, 'toggleFeatured']);
+        Route::post('/{id}/update', [TourReviewAdminController::class, 'update']);
         Route::delete('/{id}', [TourReviewAdminController::class, 'destroy']);
     });
 
@@ -402,9 +414,43 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/otp', [SettingsController::class, 'getOtpConfig']);
         Route::put('/otp', [SettingsController::class, 'updateOtpConfig']);
         Route::post('/otp/test', [SettingsController::class, 'testOtpConfig']);
+
+        // Footer Settings
+        Route::get('/footer', [SettingsController::class, 'getFooterConfig']);
+        Route::put('/footer', [SettingsController::class, 'updateFooterConfig']);
+        Route::post('/footer/upload-qr', [SettingsController::class, 'uploadLineQrImage']);
+
+        // Why Choose Us Settings
+        Route::get('/why-choose-us', [SettingsController::class, 'getWhyChooseUsConfig']);
+        Route::put('/why-choose-us', [SettingsController::class, 'updateWhyChooseUsConfig']);
+
+        // Subscriber SMTP Settings
+        Route::get('/subscriber-smtp', [SubscriberController::class, 'getSubscriberSmtp']);
+        Route::put('/subscriber-smtp', [SubscriberController::class, 'updateSubscriberSmtp']);
+        Route::post('/subscriber-smtp/test', [SubscriberController::class, 'testSubscriberSmtp']);
         
         Route::get('/{key}', [SettingsController::class, 'show']);
         Route::put('/{key}', [SettingsController::class, 'update']);
+    });
+
+    // Subscribers & Newsletters
+    Route::prefix('subscribers')->group(function () {
+        Route::get('/', [SubscriberController::class, 'index']);
+        Route::get('/stats', [SubscriberController::class, 'stats']);
+        Route::get('/export', [SubscriberController::class, 'export']);
+        Route::get('/{subscriber}', [SubscriberController::class, 'show']);
+        Route::delete('/{subscriber}', [SubscriberController::class, 'destroy']);
+    });
+
+    Route::prefix('newsletters')->group(function () {
+        Route::get('/', [SubscriberController::class, 'newsletterIndex']);
+        Route::post('/', [SubscriberController::class, 'newsletterStore']);
+        Route::post('/preview-count', [SubscriberController::class, 'newsletterPreviewCount']);
+        Route::get('/{newsletter}', [SubscriberController::class, 'newsletterShow']);
+        Route::put('/{newsletter}', [SubscriberController::class, 'newsletterUpdate']);
+        Route::delete('/{newsletter}', [SubscriberController::class, 'newsletterDestroy']);
+        Route::post('/{newsletter}/send', [SubscriberController::class, 'newsletterSend']);
+        Route::post('/{newsletter}/cancel', [SubscriberController::class, 'newsletterCancel']);
     });
 
     // System Settings (Global settings for sync, auto-close, etc.)

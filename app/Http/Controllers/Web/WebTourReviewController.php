@@ -5,10 +5,13 @@ namespace App\Http\Controllers\Web;
 use App\Http\Controllers\Controller;
 use App\Models\TourReview;
 use App\Models\ReviewTag;
+use App\Models\ReviewImage;
 use App\Models\Tour;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class WebTourReviewController extends Controller
 {
@@ -21,7 +24,7 @@ class WebTourReviewController extends Controller
 
         $query = TourReview::where('tour_id', $tour->id)
             ->approved()
-            ->with(['user:id,first_name,last_name,avatar']);
+            ->with(['user:id,first_name,last_name,avatar', 'images']);
 
         // Sort
         $sort = $request->get('sort', 'latest');
@@ -75,6 +78,43 @@ class WebTourReviewController extends Controller
     }
 
     /**
+     * Get featured reviews for homepage (public)
+     */
+    public function featured(Request $request)
+    {
+        $limit = min((int) $request->get('limit', 10), 20);
+
+        $reviews = TourReview::approved()
+            ->where('is_featured', true)
+            ->with(['tour:id,title,slug,tour_code,cover_image_url', 'images'])
+            ->orderByDesc('created_at')
+            ->limit($limit)
+            ->get();
+
+        // If not enough featured, fill with latest approved high-rating reviews
+        if ($reviews->count() < $limit) {
+            $remaining = $limit - $reviews->count();
+            $excludeIds = $reviews->pluck('id')->toArray();
+
+            $extraReviews = TourReview::approved()
+                ->whereNotIn('id', $excludeIds)
+                ->where('rating', '>=', 4)
+                ->with(['tour:id,title,slug,tour_code,cover_image_url', 'images'])
+                ->orderByDesc('rating')
+                ->orderByDesc('created_at')
+                ->limit($remaining)
+                ->get();
+
+            $reviews = $reviews->concat($extraReviews);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $reviews,
+        ]);
+    }
+
+    /**
      * Submit a review (authenticated member)
      */
     public function store(Request $request, $tourSlug)
@@ -106,8 +146,16 @@ class WebTourReviewController extends Controller
             'tags' => 'nullable|array',
             'tags.*' => 'string|max:50',
             'comment' => 'required|string|max:200',
+            'reviewer_avatar' => 'nullable|image|max:2048',
+            'images' => 'required|array|min:1|max:6',
+            'images.*' => 'image|max:5120',
         ], [
             'rating.required' => 'กรุณาให้คะแนนรีวิว',
+            'images.required' => 'กรุณาอัปโหลดรูปภาพอย่างน้อย 1 รูป',
+            'images.min' => 'กรุณาอัปโหลดรูปภาพอย่างน้อย 1 รูป',
+            'images.max' => 'อัปโหลดภาพได้สูงสุด 6 ภาพ',
+            'images.*.image' => 'ไฟล์ต้องเป็นรูปภาพเท่านั้น',
+            'images.*.max' => 'ขนาดรูปภาพต้องไม่เกิน 5MB',
             'rating.min' => 'คะแนนต้องอย่างน้อย 1 ดาว',
             'rating.max' => 'คะแนนสูงสุด 5 ดาว',
             'comment.required' => 'กรุณาเขียนความคิดเห็น',
@@ -121,11 +169,21 @@ class WebTourReviewController extends Controller
             ], 422);
         }
 
+        // Upload reviewer avatar to R2
+        $avatarUrl = $member->avatar;
+        if ($request->hasFile('reviewer_avatar')) {
+            $disk = Storage::disk('r2');
+            $file = $request->file('reviewer_avatar');
+            $path = 'review-avatars/' . Str::uuid() . '.' . $file->getClientOriginalExtension();
+            $disk->put($path, file_get_contents($file->getRealPath()), 'public');
+            $avatarUrl = rtrim(env('R2_URL'), '/') . '/' . $path;
+        }
+
         $review = TourReview::create([
             'tour_id' => $tour->id,
             'user_id' => $member->id,
             'reviewer_name' => $member->first_name . ' ' . $member->last_name,
-            'reviewer_avatar_url' => $member->avatar,
+            'reviewer_avatar_url' => $avatarUrl,
             'rating' => $request->rating,
             'category_ratings' => $request->category_ratings,
             'tags' => $request->tags,
@@ -133,6 +191,23 @@ class WebTourReviewController extends Controller
             'review_source' => 'self',
             'status' => 'pending', // Needs approval
         ]);
+
+        // Upload review images to R2
+        if ($request->hasFile('images')) {
+            $disk = Storage::disk('r2');
+            $r2Url = rtrim(env('R2_URL'), '/');
+            foreach ($request->file('images') as $index => $imageFile) {
+                $path = 'review-images/' . Str::uuid() . '.' . $imageFile->getClientOriginalExtension();
+                $disk->put($path, file_get_contents($imageFile->getRealPath()), 'public');
+                ReviewImage::create([
+                    'tour_review_id' => $review->id,
+                    'image_url' => $r2Url . '/' . $path,
+                    'sort_order' => $index,
+                ]);
+            }
+        }
+
+        $review->load('images');
 
         // Increment tag usage counts
         if ($request->tags && is_array($request->tags)) {
@@ -163,7 +238,7 @@ class WebTourReviewController extends Controller
         $member = $request->user();
 
         $reviews = TourReview::where('user_id', $member->id)
-            ->with(['tour:id,tour_name,slug,cover_image'])
+            ->with(['tour:id,title,slug,cover_image_url', 'images'])
             ->orderByDesc('created_at')
             ->paginate(10);
 
@@ -244,8 +319,8 @@ class WebTourReviewController extends Controller
         $schema = [
             '@context' => 'https://schema.org',
             '@type' => 'Product',
-            'name' => $tour->tour_name,
-            'description' => $tour->description ?? $tour->tour_name,
+            'name' => $tour->title,
+            'description' => $tour->description ?? $tour->title,
             'aggregateRating' => [
                 '@type' => 'AggregateRating',
                 'ratingValue' => $summary['average_rating'],
