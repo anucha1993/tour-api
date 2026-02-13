@@ -753,6 +753,10 @@ class SubscriberController extends Controller
                 . "ลิงก์นี้จะหมดอายุใน 24 ชั่วโมง\n"
                 . "หากคุณไม่ได้สมัคร กรุณาเพิกเฉยอีเมลนี้";
 
+            // API URL for List-Unsubscribe header (Gmail sends POST here directly)
+            $apiUrl = rtrim(env('APP_URL', 'https://api.nexttrip.asia'), '/') . '/api';
+            $apiUnsubscribeUrl = $apiUrl . '/subscribers/unsubscribe/' . $subscriber->unsubscribe_token;
+
             $email = (new \Symfony\Component\Mime\Email())
                 ->from(new \Symfony\Component\Mime\Address(
                     $smtpConfig['from_address'],
@@ -762,6 +766,10 @@ class SubscriberController extends Controller
                 ->subject('ยืนยันการสมัครรับข่าวสาร - NextTrip Holiday')
                 ->html($html)
                 ->text($text);
+
+            // Add List-Unsubscribe headers (Gmail sends POST to this URL for One-Click)
+            $email->getHeaders()->addTextHeader('List-Unsubscribe', '<' . $apiUnsubscribeUrl . '>');
+            $email->getHeaders()->addTextHeader('List-Unsubscribe-Post', 'List-Unsubscribe=One-Click');
 
             if (!empty($smtpConfig['reply_to'])) {
                 $email->replyTo($smtpConfig['reply_to']);
@@ -823,6 +831,10 @@ class SubscriberController extends Controller
 
             $html = $this->getWelcomeEmailHtml($frontendUrl, $unsubscribeUrl);
 
+            // API URL for List-Unsubscribe header (Gmail sends POST here directly)
+            $apiUrl = rtrim(env('APP_URL', 'https://api.nexttrip.asia'), '/') . '/api';
+            $apiUnsubscribeUrl = $apiUrl . '/subscribers/unsubscribe/' . $subscriber->unsubscribe_token;
+
             $email = (new \Symfony\Component\Mime\Email())
                 ->from(new \Symfony\Component\Mime\Address(
                     $smtpConfig['from_address'],
@@ -832,6 +844,10 @@ class SubscriberController extends Controller
                 ->subject('ยินดีต้อนรับสู่ NextTrip Holiday! 🎉')
                 ->html($html)
                 ->text("ยินดีต้อนรับสู่ NextTrip Holiday!\n\nขอบคุณที่สมัครรับข่าวสาร คุณจะได้รับโปรโมชั่นและข่าวสารดีๆ จากเรา\n\nยกเลิกรับข่าวสาร: {$unsubscribeUrl}");
+
+            // Add List-Unsubscribe headers (Gmail sends POST to this URL for One-Click)
+            $email->getHeaders()->addTextHeader('List-Unsubscribe', '<' . $apiUnsubscribeUrl . '>');
+            $email->getHeaders()->addTextHeader('List-Unsubscribe-Post', 'List-Unsubscribe=One-Click');
 
             if (!empty($smtpConfig['reply_to'])) {
                 $email->replyTo($smtpConfig['reply_to']);

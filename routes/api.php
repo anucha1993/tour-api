@@ -114,6 +114,7 @@ Route::get('why-choose-us/public', [SettingsController::class, 'getWhyChooseUsCo
 Route::post('subscribers/subscribe', [SubscriberController::class, 'subscribe']);
 Route::get('subscribers/confirm/{token}', [SubscriberController::class, 'confirm']);
 Route::get('subscribers/unsubscribe/{token}', [SubscriberController::class, 'unsubscribe']);
+Route::post('subscribers/unsubscribe/{token}', [SubscriberController::class, 'unsubscribe']); // Gmail One-Click Unsubscribe
 
 // Public Popular Countries (for tour-web homepage)
 Route::get('popular-countries/public', [\App\Http\Controllers\PopularCountryController::class, 'publicList']);

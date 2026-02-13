@@ -105,6 +105,10 @@ class SendNewsletterJob implements ShouldQueue
                     try {
                         $unsubscribeUrl = $frontendUrl . '/subscribe/unsubscribe?token=' . $log->subscriber->unsubscribe_token;
 
+                        // API URL for List-Unsubscribe header (Gmail sends POST here)
+                        $apiUrl = rtrim(env('APP_URL', 'https://api.nexttrip.asia'), '/') . '/api';
+                        $apiUnsubscribeUrl = $apiUrl . '/subscribers/unsubscribe/' . $log->subscriber->unsubscribe_token;
+
                         // Add unsubscribe link to HTML
                         $htmlContent = $newsletter->content_html;
                         $htmlContent .= '<div style="text-align:center;padding:20px;border-top:1px solid #e5e7eb;margin-top:30px;">'
@@ -126,8 +130,8 @@ class SendNewsletterJob implements ShouldQueue
                             $email->replyTo($smtpConfig['reply_to']);
                         }
 
-                        // Add List-Unsubscribe header
-                        $email->getHeaders()->addTextHeader('List-Unsubscribe', '<' . $unsubscribeUrl . '>');
+                        // Add List-Unsubscribe header (points to API for Gmail One-Click)
+                        $email->getHeaders()->addTextHeader('List-Unsubscribe', '<' . $apiUnsubscribeUrl . '>');
                         $email->getHeaders()->addTextHeader('List-Unsubscribe-Post', 'List-Unsubscribe=One-Click');
 
                         $mailer->send($email);
