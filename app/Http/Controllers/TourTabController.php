@@ -43,7 +43,8 @@ class TourTabController extends Controller
             'icon' => 'nullable|string|max:50',
             'badge_text' => 'nullable|string|max:50',
             'badge_color' => 'nullable|string|max:20',
-            'display_mode' => 'nullable|string|in:tab,badge,both',
+            'display_modes' => 'nullable|array',
+            'display_modes.*' => 'string|in:tab,badge,period,promotion',
             'badge_icon' => 'nullable|string|max:10',
             'badge_expires_at' => 'nullable|date',
             'conditions' => 'nullable|array',
@@ -100,7 +101,8 @@ class TourTabController extends Controller
             'icon' => 'nullable|string|max:50',
             'badge_text' => 'nullable|string|max:50',
             'badge_color' => 'nullable|string|max:20',
-            'display_mode' => 'nullable|string|in:tab,badge,both,period',
+            'display_modes' => 'nullable|array',
+            'display_modes.*' => 'string|in:tab,badge,period,promotion',
             'badge_icon' => 'nullable|string|max:10',
             'badge_expires_at' => 'nullable|date',
             'conditions' => 'nullable|array',
@@ -370,7 +372,7 @@ class TourTabController extends Controller
                 'icon' => $tab->icon,
                 'badge_text' => $tab->badge_text,
                 'badge_color' => $tab->badge_color,
-                'display_mode' => $tab->display_mode ?? 'tab',
+                'display_modes' => $tab->display_modes ?? ['tab'],
                 'badge_icon' => $tab->badge_icon,
                 'tours' => $formattedTours,
             ];
@@ -389,7 +391,10 @@ class TourTabController extends Controller
     public function publicBadges(Request $request): JsonResponse
     {
         $tabs = TourTab::active()
-            ->whereIn('display_mode', ['badge', 'both', 'period'])
+            ->where(function ($q) {
+                $q->whereJsonContains('display_modes', 'badge')
+                  ->orWhereJsonContains('display_modes', 'period');
+            })
             ->where(function ($q) {
                 $q->whereNull('badge_expires_at')
                   ->orWhere('badge_expires_at', '>', now());
@@ -418,7 +423,7 @@ class TourTabController extends Controller
                 'badge_icon' => $tab->badge_icon,
                 'tour_ids' => $tourIds,
                 'discount_min_amount' => $discountMinAmount,
-                'display_mode' => $tab->display_mode,
+                'display_modes' => $tab->display_modes ?? [],
             ];
         });
 
@@ -455,6 +460,48 @@ class TourTabController extends Controller
                 ],
                 'tours' => $formattedTours,
             ],
+        ]);
+    }
+
+    /**
+     * Get all promotion-type tour tabs with their tours (public)
+     * สำหรับหน้า "ทัวร์โปรโมชั่น" ของ tour-web
+     */
+    public function publicPromotions(Request $request): JsonResponse
+    {
+        $tabs = TourTab::active()->ordered()
+            ->whereJsonContains('display_modes', 'promotion')
+            ->where(function ($q) {
+                $q->whereNull('badge_expires_at')
+                  ->orWhere('badge_expires_at', '>', now());
+            })
+            ->get();
+
+        $result = $tabs->map(function ($tab) {
+            $tours = $tab->getTours();
+
+            // Eager-load relations for airline & departure dates
+            $tours->load(['transports.transport', 'periods', 'country']);
+
+            $formattedTours = $tours->map(fn ($tour) => $this->formatTourForTab($tour));
+
+            return [
+                'id' => $tab->id,
+                'name' => $tab->name,
+                'slug' => $tab->slug,
+                'description' => $tab->description,
+                'icon' => $tab->icon,
+                'badge_text' => $tab->badge_text,
+                'badge_color' => $tab->badge_color,
+                'badge_icon' => $tab->badge_icon,
+                'display_modes' => $tab->display_modes ?? [],
+                'tours' => $formattedTours,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => $result,
         ]);
     }
 }

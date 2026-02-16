@@ -6,6 +6,7 @@ use App\Models\GalleryImage;
 use App\Models\Tour;
 use App\Models\TourView;
 use App\Models\InternationalTourSetting;
+use App\Models\DomesticTourSetting;
 use App\Models\Country;
 use App\Models\City;
 use App\Models\Transport;
@@ -825,6 +826,338 @@ class PublicTourController extends Controller
         }
 
         // Airlines
+        if ($setting->filter_airline ?? true) {
+            $airlineIds = DB::table('tour_transports')
+                ->whereIn('tour_id', $activeTourIds)
+                ->whereNotNull('transport_id')
+                ->distinct()
+                ->pluck('transport_id');
+
+            $filters['airlines'] = Transport::whereIn('id', $airlineIds)
+                ->active()
+                ->orderBy('name')
+                ->get()
+                ->map(fn($t) => [
+                    'id' => $t->id,
+                    'code' => $t->code,
+                    'name' => $t->name,
+                    'image' => $t->image,
+                ]);
+        }
+
+        // Departure months
+        if ($setting->filter_departure_month ?? true) {
+            $filters['departure_months'] = DB::table('periods')
+                ->join('tours', 'tours.id', '=', 'periods.tour_id')
+                ->whereIn('tours.id', $activeTourIds)
+                ->where('periods.status', 'open')
+                ->where('periods.start_date', '>=', $today)
+                ->selectRaw("DISTINCT DATE_FORMAT(periods.start_date, '%Y-%m') as month")
+                ->orderBy('month')
+                ->pluck('month')
+                ->map(fn($m) => [
+                    'value' => $m,
+                    'label' => $this->formatThaiMonth($m),
+                ]);
+        }
+
+        return $filters;
+    }
+
+    // ===================== Domestic Tours =====================
+
+    /**
+     * เมนูทัวร์ในประเทศ - จังหวัด/เมืองที่มีทัวร์
+     * GET /tours/domestic-menu
+     */
+    public function domesticMenu(): JsonResponse
+    {
+        $today = now()->toDateString();
+        $thailandId = DomesticTourSetting::THAILAND_ID;
+
+        // Active domestic tour IDs
+        $activeTourIds = Tour::where('status', 'active')
+            ->where('primary_country_id', $thailandId)
+            ->whereHas('periods', function ($q) use ($today) {
+                $q->where('status', 'open')
+                  ->where('start_date', '>=', $today);
+            })
+            ->pluck('id');
+
+        if ($activeTourIds->isEmpty()) {
+            return response()->json([
+                'success' => true,
+                'data' => [],
+            ]);
+        }
+
+        // ดึงเมืองในไทยที่มีทัวร์ active
+        $cities = City::active()
+            ->where('country_id', $thailandId)
+            ->whereHas('tours', function ($q) use ($activeTourIds) {
+                $q->whereIn('tours.id', $activeTourIds);
+            })
+            ->withCount(['tours' => function ($q) use ($activeTourIds) {
+                $q->whereIn('tours.id', $activeTourIds);
+            }])
+            ->orderBy('name_th')
+            ->get()
+            ->map(fn($city) => [
+                'id' => $city->id,
+                'name_th' => $city->name_th,
+                'name_en' => $city->name_en,
+                'slug' => $city->slug,
+                'tour_count' => $city->tours_count,
+            ])
+            ->sortByDesc('tour_count')
+            ->values();
+
+        return response()->json([
+            'success' => true,
+            'data' => $cities,
+            'total_tours' => $activeTourIds->count(),
+        ]);
+    }
+
+    /**
+     * รายการทัวร์ในประเทศ (ไทย) — พร้อม filter, pagination, periods
+     * GET /tours/domestic
+     */
+    public function domesticTours(Request $request): JsonResponse
+    {
+        // Get active setting or use defaults
+        $setting = DomesticTourSetting::active()->orderBy('sort_order')->first();
+
+        if (!$setting) {
+            $setting = new DomesticTourSetting([
+                'conditions' => [],
+                'sort_by' => 'popular',
+                'display_limit' => 50,
+                'per_page' => 10,
+                'max_periods_display' => 6,
+            ]);
+        }
+
+        $cityId = $request->input('city_id');
+        if (!$cityId && $request->input('city_slug')) {
+            $cityId = City::where('slug', $request->input('city_slug'))->value('id');
+        }
+
+        $filters = [
+            'city_id' => $cityId,
+            'search' => $request->input('search'),
+            'airline_id' => $request->input('airline_id'),
+            'departure_month' => $request->input('departure_month'),
+            'departure_date_from' => $request->input('departure_date_from'),
+            'departure_date_to' => $request->input('departure_date_to'),
+            'return_date' => $request->input('return_date'),
+            'price_min' => $request->input('price_min'),
+            'price_max' => $request->input('price_max'),
+            'min_seats' => $request->input('min_seats'),
+            'sort_by' => $request->input('sort_by'),
+        ];
+
+        $perPage = $request->input('per_page', $setting->per_page);
+        $tours = $setting->getTours($perPage, $filters);
+
+        // Format response - reuse the same formatter
+        $formattedTours = collect($tours->items())->map(function ($tour) use ($setting) {
+            return $this->formatDomesticTourListItem($tour, $setting);
+        });
+
+        // Get filter options
+        $filterOptions = $this->getDomesticFilterOptions($setting);
+
+        return response()->json([
+            'success' => true,
+            'data' => $formattedTours,
+            'meta' => [
+                'current_page' => $tours->currentPage(),
+                'last_page' => $tours->lastPage(),
+                'per_page' => $tours->perPage(),
+                'total' => $tours->total(),
+            ],
+            'filters' => $filterOptions,
+            'settings' => [
+                'show_periods' => $setting->show_periods,
+                'max_periods_display' => $setting->max_periods_display,
+                'show_transport' => $setting->show_transport,
+                'show_hotel_star' => $setting->show_hotel_star,
+                'show_meal_count' => $setting->show_meal_count,
+                'show_commission' => $setting->show_commission,
+                'filter_search' => $setting->filter_search ?? true,
+                'filter_city' => $setting->filter_city ?? true,
+                'filter_airline' => $setting->filter_airline ?? true,
+                'filter_departure_month' => $setting->filter_departure_month ?? true,
+                'filter_price_range' => $setting->filter_price_range ?? true,
+                'sort_options' => DomesticTourSetting::SORT_OPTIONS,
+                'cover_image_url' => $setting->cover_image_url,
+                'cover_image_position' => $setting->cover_image_position ?? 'center',
+            ],
+            'active_filters' => [
+                'city' => $cityId ? City::find($cityId, ['id', 'name_th', 'name_en', 'slug', 'country_id']) : null,
+            ],
+        ]);
+    }
+
+    /**
+     * Format a domestic tour for the listing page
+     */
+    private function formatDomesticTourListItem(Tour $tour, DomesticTourSetting $setting): array
+    {
+        $item = [
+            'id' => $tour->id,
+            'slug' => $tour->slug,
+            'tour_code' => $tour->tour_code,
+            'title' => $tour->title,
+            'tour_type' => $tour->tour_type,
+            'description' => $tour->description,
+            'cover_image_url' => $tour->cover_image_url,
+            'cover_image_alt' => $tour->cover_image_alt,
+            'duration_days' => $tour->duration_days,
+            'duration_nights' => $tour->duration_nights,
+            'min_price' => $tour->min_price,
+            'display_price' => $tour->display_price,
+            'price_adult' => $tour->price_adult,
+            'discount_adult' => $tour->discount_adult,
+            'discount_amount' => $tour->discount_amount,
+            'max_discount_percent' => $tour->max_discount_percent,
+            'discount_label' => $tour->discount_label,
+            'badge' => $tour->badge,
+            'available_seats' => $tour->available_seats,
+            'next_departure_date' => $tour->next_departure_date,
+            'total_departures' => $tour->total_departures,
+            'pdf_url' => $tour->pdf_url,
+            'highlights' => $this->ensureArray($tour->highlights),
+            'shopping_highlights' => $this->ensureArray($tour->shopping_highlights),
+            'food_highlights' => $this->ensureArray($tour->food_highlights),
+            'hashtags' => $this->ensureArray($tour->hashtags),
+            'departure_airports' => $this->ensureArray($tour->departure_airports),
+            'country' => $tour->primaryCountry ? [
+                'id' => $tour->primaryCountry->id,
+                'name_th' => $tour->primaryCountry->name_th,
+                'iso2' => strtolower($tour->primaryCountry->iso2 ?? ''),
+            ] : null,
+            'cities' => $tour->cities->map(fn($city) => [
+                'id' => $city->id,
+                'name_th' => $city->name_th,
+                'slug' => $city->slug,
+            ])->values(),
+        ];
+
+        if ($setting->show_hotel_star) {
+            $item['hotel_star'] = $tour->hotel_star;
+            $item['hotel_star_min'] = $tour->hotel_star_min;
+            $item['hotel_star_max'] = $tour->hotel_star_max;
+        }
+
+        if ($setting->show_meal_count) {
+            $breakfasts = $tour->itineraries->where('has_breakfast', true)->count();
+            $lunches = $tour->itineraries->where('has_lunch', true)->count();
+            $dinners = $tour->itineraries->where('has_dinner', true)->count();
+            $item['meal_count'] = [
+                'breakfast' => $breakfasts,
+                'lunch' => $lunches,
+                'dinner' => $dinners,
+                'total' => $breakfasts + $lunches + $dinners,
+            ];
+        }
+
+        if ($setting->show_transport) {
+            $item['transports'] = $tour->transports->map(fn($t) => [
+                'flight_no' => $t->flight_no,
+                'route_from' => $t->route_from,
+                'route_to' => $t->route_to,
+                'depart_time' => $t->depart_time ? $t->depart_time->format('H:i') : null,
+                'arrive_time' => $t->arrive_time ? $t->arrive_time->format('H:i') : null,
+                'transport_type' => $t->transport_type,
+                'airline' => $t->transport ? [
+                    'code' => $t->transport->code,
+                    'name' => $t->transport->name,
+                    'image' => $t->transport->image,
+                ] : null,
+            ])->values();
+        }
+
+        if ($setting->show_periods) {
+            $item['periods'] = $tour->periods->map(function ($period) use ($setting) {
+                $periodData = [
+                    'id' => $period->id,
+                    'start_date' => $period->start_date?->format('Y-m-d'),
+                    'end_date' => $period->end_date?->format('Y-m-d'),
+                    'capacity' => $period->capacity,
+                    'booked' => $period->booked,
+                    'available' => $period->available,
+                    'status' => $period->status,
+                    'sale_status' => $period->sale_status,
+                    'guarantee_status' => $period->guarantee_status ?? 'pending',
+                ];
+
+                if ($period->offer) {
+                    $offer = $period->offer;
+                    $periodData['offer'] = [
+                        'price_adult' => (float) $offer->price_adult,
+                        'discount_adult' => (float) $offer->discount_adult,
+                        'net_price_adult' => (float) ($offer->price_adult - $offer->discount_adult),
+                        'price_child' => $offer->price_child ? (float) $offer->price_child : null,
+                        'price_child_nobed' => $offer->price_child_nobed ? (float) $offer->price_child_nobed : null,
+                        'price_infant' => $offer->price_infant ? (float) $offer->price_infant : null,
+                        'price_joinland' => $offer->price_joinland ? (float) $offer->price_joinland : null,
+                        'price_single' => $offer->price_single ? (float) $offer->price_single : null,
+                        'discount_single' => (float) ($offer->discount_single ?? 0),
+                        'net_price_single' => $offer->price_single ? (float) ($offer->price_single - ($offer->discount_single ?? 0)) : null,
+                        'deposit' => $offer->deposit ? (float) $offer->deposit : null,
+                    ];
+
+                    if ($setting->show_commission) {
+                        $periodData['offer']['commission_agent'] = $offer->commission_agent;
+                        $periodData['offer']['commission_sale'] = $offer->commission_sale;
+                    }
+                } else {
+                    $periodData['offer'] = null;
+                }
+
+                return $periodData;
+            })->values();
+        }
+
+        return $item;
+    }
+
+    /**
+     * Get filter options for the domestic tours page
+     */
+    private function getDomesticFilterOptions(DomesticTourSetting $setting): array
+    {
+        $today = now()->toDateString();
+        $thailandId = DomesticTourSetting::THAILAND_ID;
+
+        // Active domestic tour IDs
+        $activeTourIds = Tour::where('status', 'active')
+            ->where('primary_country_id', $thailandId)
+            ->whereHas('periods', fn($q) => $q->where('status', 'open')->where('start_date', '>=', $today))
+            ->pluck('id');
+
+        $filters = [];
+
+        // Cities in Thailand
+        if ($setting->filter_city ?? true) {
+            $filters['cities'] = City::active()
+                ->where('country_id', $thailandId)
+                ->whereHas('tours', fn($q) => $q->whereIn('tours.id', $activeTourIds))
+                ->withCount(['tours' => fn($q) => $q->whereIn('tours.id', $activeTourIds)])
+                ->orderBy('name_th')
+                ->get()
+                ->map(fn($c) => [
+                    'id' => $c->id,
+                    'name_th' => $c->name_th,
+                    'country_id' => $c->country_id,
+                    'country_name' => 'ประเทศไทย',
+                    'tour_count' => $c->tours_count,
+                ]);
+        }
+
+        // Airlines / Transport
         if ($setting->filter_airline ?? true) {
             $airlineIds = DB::table('tour_transports')
                 ->whereIn('tour_id', $activeTourIds)

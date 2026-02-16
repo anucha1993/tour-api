@@ -17,7 +17,7 @@ class TourTab extends Model
         'icon',
         'badge_text',
         'badge_color',
-        'display_mode',
+        'display_modes',
         'badge_icon',
         'badge_expires_at',
         'conditions',
@@ -29,24 +29,42 @@ class TourTab extends Model
 
     protected $casts = [
         'conditions' => 'array',
+        'display_modes' => 'array',
         'display_limit' => 'integer',
         'sort_order' => 'integer',
         'is_active' => 'boolean',
         'badge_expires_at' => 'datetime',
     ];
 
-    // Display mode options
+    // Display mode options (multi-select)
     const DISPLAY_TAB = 'tab';
     const DISPLAY_BADGE = 'badge';
-    const DISPLAY_BOTH = 'both';
     const DISPLAY_PERIOD = 'period';
+    const DISPLAY_PROMOTION = 'promotion';
 
     const DISPLAY_MODES = [
         self::DISPLAY_TAB => 'แท็บหน้าแรก',
         self::DISPLAY_BADGE => 'Badge ทุกหน้า',
-        self::DISPLAY_BOTH => 'ทั้งแท็บ + Badge',
         self::DISPLAY_PERIOD => 'แสดงในรอบเดินทาง',
+        self::DISPLAY_PROMOTION => 'แสดงหน้า ทัวร์โปรโมชั่น',
     ];
+
+    /**
+     * Check if this tab has a specific display mode
+     */
+    public function hasDisplayMode(string $mode): bool
+    {
+        $modes = $this->display_modes ?? ['tab'];
+        return in_array($mode, $modes);
+    }
+
+    /**
+     * Scope for tabs that include a specific display mode
+     */
+    public function scopeWithDisplayMode($query, string $mode)
+    {
+        return $query->whereJsonContains('display_modes', $mode);
+    }
 
     // Sort options
     const SORT_POPULAR = 'popular';

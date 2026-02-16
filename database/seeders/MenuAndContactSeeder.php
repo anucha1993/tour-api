@@ -54,12 +54,7 @@ class MenuAndContactSeeder extends Seeder
             [
                 'title' => 'ทัวร์ตามเทศกาล',
                 'url' => '/tours/festival',
-                'children' => [
-                    ['title' => 'ทัวร์ปีใหม่', 'url' => '/tours/festival/new-year'],
-                    ['title' => 'ทัวร์สงกรานต์', 'url' => '/tours/festival/songkran'],
-                    ['title' => 'ทัวร์วันหยุดยาว', 'url' => '/tours/festival/long-weekend'],
-                    ['title' => 'ดูทั้งหมด', 'url' => '/tours/festival'],
-                ],
+                'children' => [],
             ],
             [
                 'title' => 'แพ็คเกจทัวร์',

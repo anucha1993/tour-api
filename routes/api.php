@@ -22,6 +22,9 @@ use App\Http\Controllers\RecommendedTourController;
 use App\Http\Controllers\PageContentController;
 use App\Http\Controllers\PublicTourController;
 use App\Http\Controllers\InternationalTourSettingController;
+use App\Http\Controllers\DomesticTourSettingController;
+use App\Http\Controllers\FestivalHolidayController;
+use App\Http\Controllers\SearchController;
 use App\Http\Controllers\TourReviewAdminController;
 use App\Http\Controllers\SubscriberController;
 
@@ -125,6 +128,7 @@ Route::get('promotions/public', [PromotionController::class, 'publicList']);
 // Public Tour Tabs (for tour-web homepage)
 Route::get('tour-tabs/public', [TourTabController::class, 'publicList']);
 Route::get('tour-tabs/public/badges', [TourTabController::class, 'publicBadges']);
+Route::get('tour-tabs/public/promotions', [TourTabController::class, 'publicPromotions']);
 Route::get('tour-tabs/public/{slug}', [TourTabController::class, 'publicShow']);
 
 // Public Recommended Tours (for tour-web homepage)
@@ -147,6 +151,24 @@ Route::get('tours/international-menu', [PublicTourController::class, 'internatio
 // Public International Tours Listing (with filters, pagination, periods)
 Route::get('tours/international', [PublicTourController::class, 'internationalTours']);
 Route::get('tours/international/settings', [InternationalTourSettingController::class, 'getPublicSetting']);
+
+// Public Domestic Tours Menu & Listing
+Route::get('tours/domestic-menu', [PublicTourController::class, 'domesticMenu']);
+Route::get('tours/domestic', [PublicTourController::class, 'domesticTours']);
+Route::get('tours/domestic/settings', [DomesticTourSettingController::class, 'getPublicSetting']);
+
+// Public Festival Tours
+Route::get('tours/festival', [FestivalHolidayController::class, 'publicList']);
+Route::get('tours/festival-badges', [FestivalHolidayController::class, 'publicBadges']);
+Route::get('tours/festival/page-settings', [FestivalHolidayController::class, 'publicPageSettings']);
+Route::get('tours/festival/{slug}', [FestivalHolidayController::class, 'publicShow']);
+
+// Public Search & Autocomplete
+Route::get('search/autocomplete', [SearchController::class, 'autocomplete']);
+Route::get('search/popular', [SearchController::class, 'popular']);
+Route::get('search/suggestions', [SearchController::class, 'suggestions']);
+Route::post('search/track', [SearchController::class, 'trackKeyword']);
+Route::get('search', [SearchController::class, 'search']);
 
 // Wholesaler Sync API (Public for testing - move inside auth:sanctum for production)
 Route::prefix('wholesalers/{wholesaler}/sync')->group(function () {
@@ -298,6 +320,27 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('international-tour-settings/{internationalTourSetting}/cover-image', [InternationalTourSettingController::class, 'uploadCoverImage']);
     Route::delete('international-tour-settings/{internationalTourSetting}/cover-image', [InternationalTourSettingController::class, 'deleteCoverImage']);
     Route::apiResource('international-tour-settings', InternationalTourSettingController::class);
+
+    // Domestic Tour Settings (Admin)
+    Route::get('domestic-tour-settings/condition-options', [DomesticTourSettingController::class, 'getConditionOptions']);
+    Route::post('domestic-tour-settings/preview-conditions', [DomesticTourSettingController::class, 'previewConditions']);
+    Route::patch('domestic-tour-settings/{domesticTourSetting}/toggle-status', [DomesticTourSettingController::class, 'toggleStatus']);
+    Route::post('domestic-tour-settings/{domesticTourSetting}/cover-image', [DomesticTourSettingController::class, 'uploadCoverImage']);
+    Route::delete('domestic-tour-settings/{domesticTourSetting}/cover-image', [DomesticTourSettingController::class, 'deleteCoverImage']);
+    Route::apiResource('domestic-tour-settings', DomesticTourSettingController::class);
+
+    // Festival Holidays (Admin)
+    Route::get('festival-page-settings', [FestivalHolidayController::class, 'getPageSettings']);
+    Route::put('festival-page-settings', [FestivalHolidayController::class, 'updatePageSettings']);
+    Route::post('festival-page-settings/cover-image', [FestivalHolidayController::class, 'uploadPageCoverImage']);
+    Route::delete('festival-page-settings/cover-image', [FestivalHolidayController::class, 'deletePageCoverImage']);
+    Route::patch('festival-holidays/{festivalHoliday}/toggle-status', [FestivalHolidayController::class, 'toggleStatus']);
+    Route::post('festival-holidays/{festivalHoliday}/image', [FestivalHolidayController::class, 'uploadImage']);
+    Route::delete('festival-holidays/{festivalHoliday}/image', [FestivalHolidayController::class, 'deleteImage']);
+    Route::post('festival-holidays/{festivalHoliday}/cover-image', [FestivalHolidayController::class, 'uploadCoverImage']);
+    Route::delete('festival-holidays/{festivalHoliday}/cover-image', [FestivalHolidayController::class, 'deleteCoverImage']);
+    Route::get('festival-holidays/{festivalHoliday}/preview', [FestivalHolidayController::class, 'previewTours']);
+    Route::apiResource('festival-holidays', FestivalHolidayController::class);
 
     // Gallery Images CRUD
     Route::get('gallery/tags', [GalleryImageController::class, 'tags']);
