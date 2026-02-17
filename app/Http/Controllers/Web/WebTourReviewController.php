@@ -146,6 +146,7 @@ class WebTourReviewController extends Controller
             'tags' => 'nullable|array',
             'tags.*' => 'string|max:50',
             'comment' => 'required|string|max:200',
+            'tour_type' => 'nullable|in:individual,private,corporate',
             'reviewer_avatar' => 'nullable|image|max:2048',
             'images' => 'required|array|min:1|max:6',
             'images.*' => 'image|max:5120',
@@ -188,6 +189,7 @@ class WebTourReviewController extends Controller
             'category_ratings' => $request->category_ratings,
             'tags' => $request->tags,
             'comment' => $request->comment,
+            'tour_type' => $request->input('tour_type', 'individual'),
             'review_source' => 'self',
             'status' => 'pending', // Needs approval
         ]);

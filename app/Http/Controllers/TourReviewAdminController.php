@@ -50,6 +50,16 @@ class TourReviewAdminController extends Controller
             $query->where('is_featured', $request->boolean('is_featured'));
         }
 
+        // Filter by tour_type (supports comma-separated values e.g. "private,corporate")
+        if ($request->filled('tour_type')) {
+            $tourTypes = explode(',', $request->tour_type);
+            if (count($tourTypes) > 1) {
+                $query->whereIn('tour_type', $tourTypes);
+            } else {
+                $query->where('tour_type', $request->tour_type);
+            }
+        }
+
         // Search
         if ($request->filled('search')) {
             $search = $request->search;
@@ -232,6 +242,7 @@ class TourReviewAdminController extends Controller
             'approved_by_customer' => 'required|boolean',
             'approval_screenshot' => 'nullable|image|max:5120',
             'review_source' => 'nullable|in:self,assisted,internal',
+            'tour_type' => 'nullable|in:individual,private,corporate',
             'status' => 'nullable|in:pending,approved,rejected',
             'images' => 'nullable|array|max:6',
             'images.*' => 'image|max:5120',
@@ -282,6 +293,7 @@ class TourReviewAdminController extends Controller
             'tags' => $request->tags,
             'comment' => $request->comment,
             'review_source' => $request->input('review_source', 'assisted'),
+            'tour_type' => $request->input('tour_type', 'individual'),
             'approved_by_customer' => $request->approved_by_customer,
             'approval_screenshot_url' => $screenshotUrl,
             'assisted_by_admin_id' => $admin->id,
@@ -379,6 +391,7 @@ class TourReviewAdminController extends Controller
             'category_ratings.would_return' => 'nullable|integer|min:1|max:5',
             'comment' => 'required|string|max:200',
             'review_source' => 'nullable|in:self,assisted,internal',
+            'tour_type' => 'nullable|in:individual,private,corporate',
             'status' => 'nullable|in:pending,approved,rejected',
             'tags' => 'nullable|array',
             'tags.*' => 'string|max:50',
@@ -431,6 +444,9 @@ class TourReviewAdminController extends Controller
         $review->comment = $request->comment;
         if ($request->filled('review_source')) {
             $review->review_source = $request->review_source;
+        }
+        if ($request->filled('tour_type')) {
+            $review->tour_type = $request->tour_type;
         }
         if ($request->filled('status')) {
             $review->status = $request->status;

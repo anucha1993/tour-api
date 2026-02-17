@@ -22,6 +22,7 @@ class TourReview extends Model
         'tags',
         'comment',
         'review_source',
+        'tour_type',
         'approved_by_customer',
         'approval_screenshot_url',
         'assisted_by_admin_id',
@@ -113,6 +114,12 @@ class TourReview extends Model
         'value' => 'ความคุ้มค่า',
         'program_accuracy' => 'โปรแกรมตรงปก',
         'would_return' => 'อยากกลับไปอีก',
+    ];
+
+    public const TOUR_TYPE_LABELS = [
+        'individual' => 'บุคคล/ทั่วไป',
+        'private' => 'เหมาส่วนตัว',
+        'corporate' => 'กรุ๊ปเหมาบริษัท',
     ];
 
     // ==================== Helpers ====================

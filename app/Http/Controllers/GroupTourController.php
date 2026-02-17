@@ -4,8 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\GroupTourPageSetting;
 use App\Models\GroupTourPortfolio;
-use App\Models\GroupTourTestimonial;
 use App\Models\GroupTourInquiry;
+use App\Models\TourReview;
 use App\Services\CloudflareImagesService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -247,82 +247,6 @@ class GroupTourController extends Controller
     }
 
     // ============================
-    // Admin: Testimonials
-    // ============================
-
-    public function listTestimonials(): JsonResponse
-    {
-        $items = GroupTourTestimonial::orderBy('sort_order')->orderByDesc('created_at')->get();
-        return response()->json(['success' => true, 'data' => $items]);
-    }
-
-    public function storeTestimonial(Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            'company_name' => 'required|string|max:255',
-            'reviewer_name' => 'nullable|string|max:255',
-            'reviewer_position' => 'nullable|string|max:255',
-            'content' => 'required|string',
-            'rating' => 'integer|min:1|max:5',
-            'sort_order' => 'integer|min:0',
-            'is_active' => 'boolean',
-        ]);
-
-        $item = GroupTourTestimonial::create($validated);
-
-        return response()->json(['success' => true, 'data' => $item, 'message' => 'เพิ่มรีวิวสำเร็จ'], 201);
-    }
-
-    public function updateTestimonial(Request $request, GroupTourTestimonial $testimonial): JsonResponse
-    {
-        $validated = $request->validate([
-            'company_name' => 'sometimes|required|string|max:255',
-            'reviewer_name' => 'nullable|string|max:255',
-            'reviewer_position' => 'nullable|string|max:255',
-            'content' => 'sometimes|required|string',
-            'rating' => 'integer|min:1|max:5',
-            'sort_order' => 'integer|min:0',
-            'is_active' => 'boolean',
-        ]);
-
-        $testimonial->update($validated);
-
-        return response()->json(['success' => true, 'data' => $testimonial->fresh(), 'message' => 'อัปเดตรีวิวสำเร็จ']);
-    }
-
-    public function destroyTestimonial(GroupTourTestimonial $testimonial): JsonResponse
-    {
-        if ($testimonial->logo_cf_id) {
-            try { $this->cloudflare->delete($testimonial->logo_cf_id); } catch (\Exception $e) {}
-        }
-
-        $testimonial->delete();
-
-        return response()->json(['success' => true, 'message' => 'ลบรีวิวสำเร็จ']);
-    }
-
-    public function uploadTestimonialLogo(Request $request, GroupTourTestimonial $testimonial): JsonResponse
-    {
-        $request->validate(['image' => 'required|image|max:5120']);
-
-        if ($testimonial->logo_cf_id) {
-            try { $this->cloudflare->delete($testimonial->logo_cf_id); } catch (\Exception $e) {}
-        }
-
-        $result = $this->cloudflare->uploadFromFile(
-            $request->file('image'),
-            'group-tour-testimonial-' . $testimonial->id . '-' . time()
-        );
-
-        $testimonial->update([
-            'logo_url' => $this->cloudflare->getDisplayUrl($result['id'], 'public'),
-            'logo_cf_id' => $result['id'],
-        ]);
-
-        return response()->json(['success' => true, 'data' => $testimonial->fresh(), 'message' => 'อัปโหลดโลโก้สำเร็จ']);
-    }
-
-    // ============================
     // Admin: Inquiries
     // ============================
 
@@ -403,18 +327,24 @@ class GroupTourController extends Controller
                 'image_url' => $p->image_url,
             ]);
 
-        $testimonials = GroupTourTestimonial::active()
-            ->orderBy('sort_order')
+        $testimonials = TourReview::where('status', 'approved')
+            ->whereIn('tour_type', ['private', 'corporate'])
+            ->with('tour:id,title,slug')
+            ->orderByDesc('is_featured')
             ->orderByDesc('created_at')
+            ->limit(18)
             ->get()
-            ->map(fn($t) => [
-                'id' => $t->id,
-                'company_name' => $t->company_name,
-                'reviewer_name' => $t->reviewer_name,
-                'reviewer_position' => $t->reviewer_position,
-                'logo_url' => $t->logo_url,
-                'content' => $t->content,
-                'rating' => $t->rating,
+            ->map(fn($r) => [
+                'id' => $r->id,
+                'reviewer_name' => $r->reviewer_name,
+                'reviewer_avatar_url' => $r->reviewer_avatar_url,
+                'comment' => $r->comment,
+                'rating' => $r->rating,
+                'tour_type' => $r->tour_type,
+                'tags' => $r->tags,
+                'is_featured' => $r->is_featured,
+                'tour' => $r->tour ? ['title' => $r->tour->title, 'slug' => $r->tour->slug] : null,
+                'created_at' => $r->created_at->toISOString(),
             ]);
 
         return response()->json([
