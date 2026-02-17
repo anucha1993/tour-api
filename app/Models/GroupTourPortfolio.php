@@ -13,6 +13,9 @@ class GroupTourPortfolio extends Model
         'destination',
         'image_url',
         'image_cf_id',
+        'logo_url',
+        'logo_cf_id',
+        'group_type',
         'sort_order',
         'is_active',
     ];

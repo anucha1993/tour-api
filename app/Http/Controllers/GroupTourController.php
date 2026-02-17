@@ -199,6 +199,7 @@ class GroupTourController extends Controller
             'caption' => 'nullable|string|max:500',
             'group_size' => 'nullable|string|max:100',
             'destination' => 'nullable|string|max:255',
+            'group_type' => 'nullable|string|max:100',
             'sort_order' => 'integer|min:0',
             'is_active' => 'boolean',
         ]);
@@ -215,6 +216,7 @@ class GroupTourController extends Controller
             'caption' => 'nullable|string|max:500',
             'group_size' => 'nullable|string|max:100',
             'destination' => 'nullable|string|max:255',
+            'group_type' => 'nullable|string|max:100',
             'sort_order' => 'integer|min:0',
             'is_active' => 'boolean',
         ]);
@@ -254,6 +256,38 @@ class GroupTourController extends Controller
         ]);
 
         return response()->json(['success' => true, 'data' => $portfolio->fresh(), 'message' => 'อัปโหลดรูปสำเร็จ']);
+    }
+
+    public function uploadPortfolioLogo(Request $request, GroupTourPortfolio $portfolio): JsonResponse
+    {
+        $request->validate(['logo' => 'required|image|max:5120']);
+
+        if ($portfolio->logo_cf_id) {
+            try { $this->cloudflare->delete($portfolio->logo_cf_id); } catch (\Exception $e) {}
+        }
+
+        $result = $this->cloudflare->uploadFromFile(
+            $request->file('logo'),
+            'group-tour-portfolio-logo-' . $portfolio->id . '-' . time()
+        );
+
+        $portfolio->update([
+            'logo_url' => $this->cloudflare->getDisplayUrl($result['id'], 'public'),
+            'logo_cf_id' => $result['id'],
+        ]);
+
+        return response()->json(['success' => true, 'data' => $portfolio->fresh(), 'message' => 'อัปโหลดโลโก้สำเร็จ']);
+    }
+
+    public function deletePortfolioLogo(GroupTourPortfolio $portfolio): JsonResponse
+    {
+        if ($portfolio->logo_cf_id) {
+            try { $this->cloudflare->delete($portfolio->logo_cf_id); } catch (\Exception $e) {}
+        }
+
+        $portfolio->update(['logo_url' => null, 'logo_cf_id' => null]);
+
+        return response()->json(['success' => true, 'data' => $portfolio->fresh(), 'message' => 'ลบโลโก้สำเร็จ']);
     }
 
     // ============================
@@ -335,6 +369,8 @@ class GroupTourController extends Controller
                 'group_size' => $p->group_size,
                 'destination' => $p->destination,
                 'image_url' => $p->image_url,
+                'logo_url' => $p->logo_url,
+                'group_type' => $p->group_type,
             ]);
 
         $testimonials = collect();

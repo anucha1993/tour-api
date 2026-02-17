@@ -389,6 +389,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('group-tour-portfolios/{portfolio}', [GroupTourController::class, 'updatePortfolio']);
     Route::delete('group-tour-portfolios/{portfolio}', [GroupTourController::class, 'destroyPortfolio']);
     Route::post('group-tour-portfolios/{portfolio}/image', [GroupTourController::class, 'uploadPortfolioImage']);
+    Route::post('group-tour-portfolios/{portfolio}/logo', [GroupTourController::class, 'uploadPortfolioLogo']);
+    Route::delete('group-tour-portfolios/{portfolio}/logo', [GroupTourController::class, 'deletePortfolioLogo']);
     Route::get('group-tour-inquiries/count-new', [GroupTourController::class, 'countNewInquiries']);
     Route::get('group-tour-inquiries', [GroupTourController::class, 'listInquiries']);
     Route::get('group-tour-inquiries/{inquiry}', [GroupTourController::class, 'showInquiry']);
