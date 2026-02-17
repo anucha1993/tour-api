@@ -24,9 +24,13 @@ use App\Http\Controllers\PublicTourController;
 use App\Http\Controllers\InternationalTourSettingController;
 use App\Http\Controllers\DomesticTourSettingController;
 use App\Http\Controllers\FestivalHolidayController;
+use App\Http\Controllers\TourPackageController;
 use App\Http\Controllers\SearchController;
+use App\Http\Controllers\GroupTourController;
+use App\Http\Controllers\BlogController;
 use App\Http\Controllers\TourReviewAdminController;
 use App\Http\Controllers\SubscriberController;
+use App\Http\Controllers\AboutController;
 
 /*
 |--------------------------------------------------------------------------
@@ -162,6 +166,24 @@ Route::get('tours/festival', [FestivalHolidayController::class, 'publicList']);
 Route::get('tours/festival-badges', [FestivalHolidayController::class, 'publicBadges']);
 Route::get('tours/festival/page-settings', [FestivalHolidayController::class, 'publicPageSettings']);
 Route::get('tours/festival/{slug}', [FestivalHolidayController::class, 'publicShow']);
+
+// Public Tour Packages
+Route::get('tours/packages', [TourPackageController::class, 'publicList']);
+Route::get('tours/packages/page-settings', [TourPackageController::class, 'publicPageSettings']);
+Route::get('tours/packages/{slug}', [TourPackageController::class, 'publicShow']);
+
+// Public Group Tours
+Route::get('tours/group', [GroupTourController::class, 'publicPage']);
+Route::post('tours/group/inquiry', [GroupTourController::class, 'publicSubmitInquiry']);
+
+// Public Blog
+Route::get('blog/settings', [BlogController::class, 'publicSettings']);
+Route::get('blog/categories', [BlogController::class, 'publicCategories']);
+Route::get('blog/posts', [BlogController::class, 'publicPosts']);
+Route::get('blog/posts/{slug}', [BlogController::class, 'publicShow']);
+
+// Public About Page
+Route::get('about/public', [AboutController::class, 'publicPage']);
 
 // Public Search & Autocomplete
 Route::get('search/autocomplete', [SearchController::class, 'autocomplete']);
@@ -341,6 +363,95 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('festival-holidays/{festivalHoliday}/cover-image', [FestivalHolidayController::class, 'deleteCoverImage']);
     Route::get('festival-holidays/{festivalHoliday}/preview', [FestivalHolidayController::class, 'previewTours']);
     Route::apiResource('festival-holidays', FestivalHolidayController::class);
+
+    // Tour Packages (Admin)
+    Route::get('tour-package-page-settings', [TourPackageController::class, 'getPageSettings']);
+    Route::put('tour-package-page-settings', [TourPackageController::class, 'updatePageSettings']);
+    Route::post('tour-package-page-settings/cover-image', [TourPackageController::class, 'uploadPageCoverImage']);
+    Route::delete('tour-package-page-settings/cover-image', [TourPackageController::class, 'deletePageCoverImage']);
+    Route::patch('tour-packages/{tourPackage}/toggle-status', [TourPackageController::class, 'toggleStatus']);
+    Route::post('tour-packages/{tourPackage}/image', [TourPackageController::class, 'uploadImage']);
+    Route::delete('tour-packages/{tourPackage}/image', [TourPackageController::class, 'deleteImage']);
+    Route::post('tour-packages/{tourPackage}/pdf', [TourPackageController::class, 'uploadPdf']);
+    Route::delete('tour-packages/{tourPackage}/pdf', [TourPackageController::class, 'deletePdf']);
+    Route::apiResource('tour-packages', TourPackageController::class);
+
+    // Group Tours (Admin)
+    Route::get('group-tour-settings', [GroupTourController::class, 'getSettings']);
+    Route::put('group-tour-settings', [GroupTourController::class, 'updateSettings']);
+    Route::post('group-tour-settings/hero-image', [GroupTourController::class, 'uploadHeroImage']);
+    Route::delete('group-tour-settings/hero-image', [GroupTourController::class, 'deleteHeroImage']);
+    Route::post('group-tour-settings/advantages-image', [GroupTourController::class, 'uploadAdvantagesImage']);
+    Route::delete('group-tour-settings/advantages-image', [GroupTourController::class, 'deleteAdvantagesImage']);
+    Route::get('group-tour-portfolios', [GroupTourController::class, 'listPortfolios']);
+    Route::post('group-tour-portfolios/reorder', [GroupTourController::class, 'reorderPortfolios']);
+    Route::post('group-tour-portfolios', [GroupTourController::class, 'storePortfolio']);
+    Route::put('group-tour-portfolios/{portfolio}', [GroupTourController::class, 'updatePortfolio']);
+    Route::delete('group-tour-portfolios/{portfolio}', [GroupTourController::class, 'destroyPortfolio']);
+    Route::post('group-tour-portfolios/{portfolio}/image', [GroupTourController::class, 'uploadPortfolioImage']);
+    Route::get('group-tour-testimonials', [GroupTourController::class, 'listTestimonials']);
+    Route::post('group-tour-testimonials', [GroupTourController::class, 'storeTestimonial']);
+    Route::put('group-tour-testimonials/{testimonial}', [GroupTourController::class, 'updateTestimonial']);
+    Route::delete('group-tour-testimonials/{testimonial}', [GroupTourController::class, 'destroyTestimonial']);
+    Route::post('group-tour-testimonials/{testimonial}/logo', [GroupTourController::class, 'uploadTestimonialLogo']);
+    Route::get('group-tour-inquiries/count-new', [GroupTourController::class, 'countNewInquiries']);
+    Route::get('group-tour-inquiries', [GroupTourController::class, 'listInquiries']);
+    Route::get('group-tour-inquiries/{inquiry}', [GroupTourController::class, 'showInquiry']);
+    Route::put('group-tour-inquiries/{inquiry}', [GroupTourController::class, 'updateInquiry']);
+    Route::delete('group-tour-inquiries/{inquiry}', [GroupTourController::class, 'destroyInquiry']);
+
+    // Blog (Admin)
+    Route::get('blog-categories', [BlogController::class, 'listCategories']);
+    Route::post('blog-categories', [BlogController::class, 'storeCategory']);
+    Route::put('blog-categories/{category}', [BlogController::class, 'updateCategory']);
+    Route::delete('blog-categories/{category}', [BlogController::class, 'destroyCategory']);
+    Route::post('blog-categories/reorder', [BlogController::class, 'reorderCategories']);
+    Route::get('blog-posts', [BlogController::class, 'listPosts']);
+    Route::post('blog-posts', [BlogController::class, 'storePost']);
+    Route::get('blog-posts/{post}', [BlogController::class, 'showPost']);
+    Route::put('blog-posts/{post}', [BlogController::class, 'updatePost']);
+    Route::delete('blog-posts/{post}', [BlogController::class, 'destroyPost']);
+    Route::post('blog-posts/{post}/cover-image', [BlogController::class, 'uploadCoverImage']);
+    Route::delete('blog-posts/{post}/cover-image', [BlogController::class, 'deleteCoverImage']);
+    Route::get('blog-settings', [BlogController::class, 'getPageSettings']);
+    Route::put('blog-settings', [BlogController::class, 'updatePageSettings']);
+    Route::post('blog-settings/hero-image', [BlogController::class, 'uploadHeroImage']);
+    Route::delete('blog-settings/hero-image', [BlogController::class, 'deleteHeroImage']);
+
+    // About Page (Admin)
+    Route::get('about-settings', [AboutController::class, 'getSettings']);
+    Route::put('about-settings', [AboutController::class, 'updateSettings']);
+    Route::post('about-settings/hero-image', [AboutController::class, 'uploadHeroImage']);
+    Route::delete('about-settings/hero-image', [AboutController::class, 'deleteHeroImage']);
+    Route::post('about-settings/license-image', [AboutController::class, 'uploadLicenseImage']);
+    Route::delete('about-settings/license-image', [AboutController::class, 'deleteLicenseImage']);
+
+    Route::get('about-associations', [AboutController::class, 'listAssociations']);
+    Route::post('about-associations', [AboutController::class, 'storeAssociation']);
+    Route::put('about-associations/{id}', [AboutController::class, 'updateAssociation']);
+    Route::delete('about-associations/{id}', [AboutController::class, 'destroyAssociation']);
+    Route::post('about-associations/{id}/logo', [AboutController::class, 'uploadAssociationLogo']);
+    Route::post('about-associations/reorder', [AboutController::class, 'reorderAssociations']);
+
+    Route::get('about-services', [AboutController::class, 'listServices']);
+    Route::post('about-services', [AboutController::class, 'storeService']);
+    Route::put('about-services/{id}', [AboutController::class, 'updateService']);
+    Route::delete('about-services/{id}', [AboutController::class, 'destroyService']);
+    Route::post('about-services/reorder', [AboutController::class, 'reorderServices']);
+
+    Route::get('about-customer-groups', [AboutController::class, 'listCustomerGroups']);
+    Route::post('about-customer-groups', [AboutController::class, 'storeCustomerGroup']);
+    Route::put('about-customer-groups/{id}', [AboutController::class, 'updateCustomerGroup']);
+    Route::delete('about-customer-groups/{id}', [AboutController::class, 'destroyCustomerGroup']);
+    Route::post('about-customer-groups/{id}/image', [AboutController::class, 'uploadCustomerGroupImage']);
+    Route::post('about-customer-groups/reorder', [AboutController::class, 'reorderCustomerGroups']);
+
+    Route::get('about-awards', [AboutController::class, 'listAwards']);
+    Route::post('about-awards', [AboutController::class, 'storeAward']);
+    Route::put('about-awards/{id}', [AboutController::class, 'updateAward']);
+    Route::delete('about-awards/{id}', [AboutController::class, 'destroyAward']);
+    Route::post('about-awards/{id}/image', [AboutController::class, 'uploadAwardImage']);
+    Route::post('about-awards/reorder', [AboutController::class, 'reorderAwards']);
 
     // Gallery Images CRUD
     Route::get('gallery/tags', [GalleryImageController::class, 'tags']);
