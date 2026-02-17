@@ -30,6 +30,14 @@ class GroupTourPageSetting extends Model
         'seo_description',
         'seo_keywords',
         'is_active',
+        'testimonial_title',
+        'testimonial_subtitle',
+        'testimonial_limit',
+        'testimonial_pinned_ids',
+        'testimonial_show_section',
+        'testimonial_tour_types',
+        'testimonial_sort_by',
+        'testimonial_min_rating',
     ];
 
     protected $casts = [
@@ -39,6 +47,11 @@ class GroupTourPageSetting extends Model
         'process_steps' => 'array',
         'faqs' => 'array',
         'is_active' => 'boolean',
+        'testimonial_pinned_ids' => 'array',
+        'testimonial_show_section' => 'boolean',
+        'testimonial_tour_types' => 'array',
+        'testimonial_limit' => 'integer',
+        'testimonial_min_rating' => 'integer',
     ];
 
     /**

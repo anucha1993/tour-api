@@ -64,6 +64,16 @@ class GroupTourController extends Controller
             'seo_description' => 'nullable|string',
             'seo_keywords' => 'nullable|string|max:255',
             'is_active' => 'boolean',
+            'testimonial_title' => 'nullable|string|max:255',
+            'testimonial_subtitle' => 'nullable|string|max:500',
+            'testimonial_limit' => 'nullable|integer|min:1|max:30',
+            'testimonial_pinned_ids' => 'nullable|array',
+            'testimonial_pinned_ids.*' => 'integer',
+            'testimonial_show_section' => 'boolean',
+            'testimonial_tour_types' => 'nullable|array',
+            'testimonial_tour_types.*' => 'string|in:individual,private,corporate',
+            'testimonial_sort_by' => 'nullable|string|in:newest,oldest,rating_high,rating_low,featured',
+            'testimonial_min_rating' => 'nullable|integer|min:1|max:5',
         ]);
 
         $settings->update($validated);
@@ -327,25 +337,65 @@ class GroupTourController extends Controller
                 'image_url' => $p->image_url,
             ]);
 
-        $testimonials = TourReview::where('status', 'approved')
-            ->whereIn('tour_type', ['private', 'corporate'])
-            ->with('tour:id,title,slug')
-            ->orderByDesc('is_featured')
-            ->orderByDesc('created_at')
-            ->limit(18)
-            ->get()
-            ->map(fn($r) => [
-                'id' => $r->id,
-                'reviewer_name' => $r->reviewer_name,
-                'reviewer_avatar_url' => $r->reviewer_avatar_url,
-                'comment' => $r->comment,
-                'rating' => $r->rating,
-                'tour_type' => $r->tour_type,
-                'tags' => $r->tags,
-                'is_featured' => $r->is_featured,
-                'tour' => $r->tour ? ['title' => $r->tour->title, 'slug' => $r->tour->slug] : null,
-                'created_at' => $r->created_at->toISOString(),
-            ]);
+        $testimonials = collect();
+        $testimonialSettings = [
+            'title' => $settings->testimonial_title ?? 'เสียงจากลูกค้า',
+            'subtitle' => $settings->testimonial_subtitle,
+            'show_section' => $settings->testimonial_show_section ?? true,
+        ];
+
+        if ($testimonialSettings['show_section']) {
+            $tourTypes = $settings->testimonial_tour_types ?? ['private', 'corporate'];
+            $limit = $settings->testimonial_limit ?? 6;
+            $minRating = $settings->testimonial_min_rating ?? 1;
+            $sortBy = $settings->testimonial_sort_by ?? 'newest';
+            $pinnedIds = $settings->testimonial_pinned_ids ?? [];
+
+            $query = TourReview::where('status', 'approved')
+                ->whereIn('tour_type', $tourTypes)
+                ->where('rating', '>=', $minRating)
+                ->with('tour:id,title,slug');
+
+            // Pinned reviews always come first
+            if (!empty($pinnedIds)) {
+                $query->orderByRaw('FIELD(id, ' . implode(',', array_map('intval', $pinnedIds)) . ') DESC');
+            }
+
+            // Then sort by chosen criteria
+            switch ($sortBy) {
+                case 'oldest':
+                    $query->orderBy('created_at', 'asc');
+                    break;
+                case 'rating_high':
+                    $query->orderByDesc('rating')->orderByDesc('created_at');
+                    break;
+                case 'rating_low':
+                    $query->orderBy('rating')->orderByDesc('created_at');
+                    break;
+                case 'featured':
+                    $query->orderByDesc('is_featured')->orderByDesc('created_at');
+                    break;
+                case 'newest':
+                default:
+                    $query->orderByDesc('created_at');
+                    break;
+            }
+
+            $testimonials = $query->limit($limit)
+                ->get()
+                ->map(fn($r) => [
+                    'id' => $r->id,
+                    'reviewer_name' => $r->reviewer_name,
+                    'reviewer_avatar_url' => $r->reviewer_avatar_url,
+                    'comment' => $r->comment,
+                    'rating' => $r->rating,
+                    'tour_type' => $r->tour_type,
+                    'tags' => $r->tags,
+                    'is_featured' => $r->is_featured,
+                    'tour' => $r->tour ? ['title' => $r->tour->title, 'slug' => $r->tour->slug] : null,
+                    'created_at' => $r->created_at->toISOString(),
+                ]);
+        }
 
         return response()->json([
             'success' => true,
@@ -374,6 +424,7 @@ class GroupTourController extends Controller
                 ],
                 'portfolios' => $portfolios,
                 'testimonials' => $testimonials,
+                'testimonial_settings' => $testimonialSettings,
             ],
         ]);
     }
