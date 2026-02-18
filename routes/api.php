@@ -13,6 +13,7 @@ use App\Http\Controllers\PeriodController;
 use App\Http\Controllers\PromotionController;
 use App\Http\Controllers\TourTabController;
 use App\Http\Controllers\GalleryImageController;
+use App\Http\Controllers\GalleryVideoController;
 use App\Http\Controllers\Api\IntegrationController;
 use App\Http\Controllers\Api\WholesalerSyncController;
 use App\Http\Controllers\Api\TourSearchController;
@@ -477,6 +478,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('gallery/bulk-upload', [GalleryImageController::class, 'bulkUpload']);
     Route::patch('gallery/{gallery}/toggle-status', [GalleryImageController::class, 'toggleStatus']);
     Route::apiResource('gallery', GalleryImageController::class)->parameters(['gallery' => 'gallery']);
+
+    // Gallery Videos CRUD
+    Route::get('gallery-videos/tags', [GalleryVideoController::class, 'tags']);
+    Route::get('gallery-videos/statistics', [GalleryVideoController::class, 'statistics']);
+    Route::patch('gallery-videos/{galleryVideo}/toggle-status', [GalleryVideoController::class, 'toggleStatus']);
+    Route::post('gallery-videos/{galleryVideo}/replace-thumbnail', [GalleryVideoController::class, 'replaceThumbnail']);
+    Route::apiResource('gallery-videos', GalleryVideoController::class);
 
     // Hero Slides CRUD
     Route::get('hero-slides/statistics', [\App\Http\Controllers\HeroSlideController::class, 'statistics']);

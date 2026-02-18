@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\GalleryImage;
+use App\Models\GalleryVideo;
 use App\Models\Tour;
 use App\Models\TourView;
 use App\Models\InternationalTourSetting;
@@ -413,6 +414,7 @@ class PublicTourController extends Controller
             'cover_image_alt' => $tour->cover_image_alt,
             'gallery' => $gallery,
             'gallery_images' => $this->getGalleryImagesForTour($tour),
+            'gallery_videos' => $this->getGalleryVideosForTour($tour),
             'pdf_url' => $tour->pdf_url,
 
             // Tags & classification
@@ -455,19 +457,25 @@ class PublicTourController extends Controller
     }
 
     /**
-     * Get gallery images matching tour's hashtags only
-     * Random images from GalleryImage table where tags match tour hashtags
+     * Get gallery images matching tour's hashtags, city names, or country name
+     * Random images from GalleryImage table where tags match
      */
     private function getGalleryImagesForTour(Tour $tour): array
     {
         $hashtags = $this->ensureArray($tour->hashtags);
+        $cityNames = $tour->cities->pluck('name_th')->filter()->values()->toArray();
+        $countryName = $tour->primaryCountry?->name_th;
 
-        if (empty($hashtags) || !is_array($hashtags)) {
+        $allTags = array_values(array_unique(array_filter(
+            array_merge($hashtags, $cityNames, $countryName ? [$countryName] : [])
+        )));
+
+        if (empty($allTags)) {
             return [];
         }
 
         $images = GalleryImage::active()
-            ->byTags($hashtags)
+            ->byTags($allTags)
             ->inRandomOrder()
             ->limit(6)
             ->get();
@@ -477,6 +485,40 @@ class PublicTourController extends Controller
             'thumbnail_url' => $img->thumbnail_url,
             'alt' => $img->alt,
             'caption' => $img->caption,
+        ])->values()->toArray();
+    }
+
+    /**
+     * Get gallery videos matching tour's hashtags, city names, or country name
+     * Random videos from GalleryVideo table where tags match, limit 3
+     */
+    private function getGalleryVideosForTour(Tour $tour): array
+    {
+        // Collect all possible matching tags: hashtags + city names + country name
+        $hashtags = $this->ensureArray($tour->hashtags);
+        $cityNames = $tour->cities->pluck('name_th')->filter()->values()->toArray();
+        $countryName = $tour->primaryCountry?->name_th;
+
+        $allTags = array_values(array_unique(array_filter(
+            array_merge($hashtags, $cityNames, $countryName ? [$countryName] : [])
+        )));
+
+        if (empty($allTags)) {
+            return [];
+        }
+
+        $videos = GalleryVideo::active()
+            ->byTags($allTags)
+            ->inRandomOrder()
+            ->limit(3)
+            ->get();
+
+        return $videos->map(fn($v) => [
+            'id' => $v->id,
+            'video_url' => $v->video_url,
+            'thumbnail_url' => $v->thumbnail_url,
+            'title' => $v->title,
+            'description' => $v->description,
         ])->values()->toArray();
     }
 
