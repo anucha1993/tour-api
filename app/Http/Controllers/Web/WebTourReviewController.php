@@ -315,6 +315,17 @@ class WebTourReviewController extends Controller
             'rating' => $request->rating,
         ]);
 
+        // ให้คะแนนสำหรับการรีวิว
+        try {
+            app(\App\Services\PointService::class)->earnPoints(
+                $member, 'review', 0,
+                TourReview::class, $review->id,
+                "รีวิวทัวร์: {$tour->title}"
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Failed to earn review points', ['error' => $e->getMessage()]);
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'ส่งรีวิวสำเร็จ จะแสดงผลหลังจากตรวจสอบ',

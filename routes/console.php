@@ -15,6 +15,12 @@ Schedule::job(new AutoCloseExpiredJob())->dailyAt('01:00')
     ->withoutOverlapping()
     ->onOneServer();
 
+// Expire member points - runs daily at 2:00 AM
+Schedule::command('points:expire')->dailyAt('02:00')
+    ->name('expire-member-points')
+    ->withoutOverlapping()
+    ->onOneServer();
+
 // Artisan command to run auto-close manually (global setting)
 Artisan::command('tours:auto-close', function () {
     $this->info('Running auto-close for expired periods and tours (global mode)...');

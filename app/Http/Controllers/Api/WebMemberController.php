@@ -19,7 +19,7 @@ class WebMemberController extends Controller
      */
     public function index(Request $request)
     {
-        $query = WebMember::query();
+        $query = WebMember::with('level');
 
         // Search by name, email, phone
         if ($search = $request->input('search')) {

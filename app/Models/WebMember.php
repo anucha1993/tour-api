@@ -33,6 +33,13 @@ class WebMember extends Authenticatable
         'avatar',
         'birth_date',
         'gender',
+        'total_points',
+        'lifetime_points',
+        'lifetime_spending',
+        'current_level_id',
+        'level_upgraded_at',
+        'referral_code',
+        'referred_by',
     ];
 
     protected $hidden = [
@@ -53,6 +60,10 @@ class WebMember extends Authenticatable
         'birth_date' => 'date',
         'locked_until' => 'datetime',
         'password' => 'hashed',
+        'total_points' => 'integer',
+        'lifetime_points' => 'integer',
+        'lifetime_spending' => 'decimal:2',
+        'level_upgraded_at' => 'datetime',
     ];
 
     /**
@@ -170,5 +181,49 @@ class WebMember extends Authenticatable
         }
 
         throw new \InvalidArgumentException('Invalid Thai phone number format');
+    }
+
+    // ===== Point System Relationships =====
+
+    public function level(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(MemberLevel::class, 'current_level_id');
+    }
+
+    public function pointTransactions(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(PointTransaction::class, 'member_id');
+    }
+
+    public function pointRedemptions(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(PointRedemption::class, 'member_id');
+    }
+
+    public function referrer(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(self::class, 'referred_by');
+    }
+
+    public function referrals(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(self::class, 'referred_by');
+    }
+
+    /**
+     * Generate unique referral code
+     */
+    public function generateReferralCode(): string
+    {
+        if ($this->referral_code) {
+            return $this->referral_code;
+        }
+
+        do {
+            $code = strtoupper(substr(md5($this->id . microtime()), 0, 8));
+        } while (self::where('referral_code', $code)->exists());
+
+        $this->update(['referral_code' => $code]);
+        return $code;
     }
 }

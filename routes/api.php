@@ -231,6 +231,25 @@ Route::middleware('auth:sanctum')->group(function () {
     });
     Route::apiResource('web-members', \App\Http\Controllers\Api\WebMemberController::class)->only(['index', 'show', 'destroy']);
 
+    // Member Points Admin
+    Route::prefix('member-points')->group(function () {
+        // Stats dashboard
+        Route::get('/stats', [\App\Http\Controllers\MemberPointAdminController::class, 'stats']);
+        // Levels CRUD
+        Route::get('/levels', [\App\Http\Controllers\MemberPointAdminController::class, 'listLevels']);
+        Route::post('/levels', [\App\Http\Controllers\MemberPointAdminController::class, 'createLevel']);
+        Route::put('/levels/{id}', [\App\Http\Controllers\MemberPointAdminController::class, 'updateLevel']);
+        Route::delete('/levels/{id}', [\App\Http\Controllers\MemberPointAdminController::class, 'deleteLevel']);
+        // Rules CRUD
+        Route::get('/rules', [\App\Http\Controllers\MemberPointAdminController::class, 'listRules']);
+        Route::put('/rules/{id}', [\App\Http\Controllers\MemberPointAdminController::class, 'updateRule']);
+        // Members
+        Route::get('/members', [\App\Http\Controllers\MemberPointAdminController::class, 'listMembers']);
+        Route::get('/members/{id}', [\App\Http\Controllers\MemberPointAdminController::class, 'getMemberDetail']);
+        Route::get('/members/{id}/transactions', [\App\Http\Controllers\MemberPointAdminController::class, 'getMemberTransactions']);
+        Route::post('/members/{id}/adjust', [\App\Http\Controllers\MemberPointAdminController::class, 'adjustMemberPoints']);
+    });
+
     // Wholesalers CRUD
     Route::patch('wholesalers/{wholesaler}/toggle-active', [WholesalerController::class, 'toggleActive']);
     Route::apiResource('wholesalers', WholesalerController::class);
@@ -753,6 +772,16 @@ Route::prefix('web')->group(function () {
             Route::get('/my', [\App\Http\Controllers\Web\WebTourReviewController::class, 'myReviews']);
             Route::get('/{tourSlug}/can-review', [\App\Http\Controllers\Web\WebTourReviewController::class, 'canReview']);
             Route::post('/{tourSlug}', [\App\Http\Controllers\Web\WebTourReviewController::class, 'store']);
+        });
+
+        // Member Points
+        Route::prefix('points')->group(function () {
+            Route::get('/summary', [\App\Http\Controllers\Web\WebMemberPointController::class, 'summary']);
+            Route::get('/history', [\App\Http\Controllers\Web\WebMemberPointController::class, 'history']);
+            Route::get('/levels', [\App\Http\Controllers\Web\WebMemberPointController::class, 'levels']);
+            Route::get('/rules', [\App\Http\Controllers\Web\WebMemberPointController::class, 'rules']);
+            Route::post('/preview-redeem', [\App\Http\Controllers\Web\WebMemberPointController::class, 'previewRedeem']);
+            Route::post('/redeem', [\App\Http\Controllers\Web\WebMemberPointController::class, 'redeem']);
         });
     });
 });

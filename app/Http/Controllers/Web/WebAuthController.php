@@ -475,6 +475,8 @@ class WebAuthController extends Controller
     {
         $member = $request->user();
 
+        $level = $member->level;
+
         return response()->json([
             'success' => true,
             'member' => [
@@ -493,6 +495,14 @@ class WebAuthController extends Controller
                 'gender' => $member->gender,
                 'consent_marketing' => $member->consent_marketing,
                 'created_at' => $member->created_at->format('Y-m-d H:i:s'),
+                'total_points' => (int) ($member->total_points ?? 0),
+                'lifetime_points' => (int) ($member->lifetime_points ?? 0),
+                'lifetime_spending' => (float) ($member->lifetime_spending ?? 0),
+                'level' => $level ? [
+                    'name' => $level->name,
+                    'icon' => $level->icon,
+                    'color' => $level->color,
+                ] : null,
             ],
         ]);
     }

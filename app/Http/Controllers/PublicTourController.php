@@ -11,6 +11,7 @@ use App\Models\DomesticTourSetting;
 use App\Models\Country;
 use App\Models\City;
 use App\Models\Transport;
+use App\Services\PointService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -127,6 +128,18 @@ class PublicTourController extends Controller
 
         // อัพเดทจำนวนเข้าชมในตาราง tours
         $tour->increment('view_count');
+
+        // ให้คะแนนสมาชิกที่ล็อกอินแล้ว
+        if ($member = $request->user()) {
+            try {
+                app(PointService::class)->earnPoints(
+                    $member, 'page_view', 0, Tour::class, $tour->id,
+                    "ดูทัวร์: {$tour->title}"
+                );
+            } catch (\Throwable $e) {
+                // Silent fail — don't break page view recording
+            }
+        }
 
         // อัพเดท daily stats
         DB::table('tour_view_daily_stats')->updateOrInsert(
