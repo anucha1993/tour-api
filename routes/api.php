@@ -464,6 +464,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('flash-sales/{flash_sale}/toggle-status', [FlashSaleController::class, 'toggleStatus']);
     Route::get('flash-sales-search-tours', [FlashSaleController::class, 'searchTours']);
     Route::post('flash-sales/{flash_sale}/items', [FlashSaleController::class, 'addItem']);
+    Route::post('flash-sales/{flash_sale}/items-batch', [FlashSaleController::class, 'addItems']);
     Route::put('flash-sales/{flash_sale}/items/{item}', [FlashSaleController::class, 'updateItem']);
     Route::delete('flash-sales/{flash_sale}/items/{item}', [FlashSaleController::class, 'removeItem']);
     Route::post('flash-sales/{flash_sale}/items/reorder', [FlashSaleController::class, 'reorderItems']);

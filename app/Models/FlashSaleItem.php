@@ -12,6 +12,7 @@ class FlashSaleItem extends Model
     protected $fillable = [
         'flash_sale_id',
         'tour_id',
+        'period_id',
         'flash_price',
         'original_price',
         'discount_percent',
@@ -19,6 +20,7 @@ class FlashSaleItem extends Model
         'quantity_sold',
         'sort_order',
         'is_active',
+        'flash_end_date',
     ];
 
     protected $casts = [
@@ -28,6 +30,7 @@ class FlashSaleItem extends Model
         'quantity_limit' => 'integer',
         'quantity_sold' => 'integer',
         'is_active' => 'boolean',
+        'flash_end_date' => 'datetime',
     ];
 
     // ─── Relationships ───
@@ -39,6 +42,11 @@ class FlashSaleItem extends Model
     public function tour()
     {
         return $this->belongsTo(Tour::class);
+    }
+
+    public function period()
+    {
+        return $this->belongsTo(Period::class);
     }
 
     // ─── Helpers ───
