@@ -1254,4 +1254,177 @@ class PublicTourController extends Controller
         $buddhistYear = (int)$year + 543;
         return ($thaiMonths[$month] ?? $month) . ' ' . $buddhistYear;
     }
+
+    /**
+     * Get related/similar tours for recommendation carousel
+     * GET /tours/detail/{slug}/related
+     *
+     * Matching logic (scored):
+     *  - Same country (primary_country_id)
+     *  - Shared hashtags
+     *  - Shared cities
+     *  - Same tour_type
+     * Excludes current tour, returns max 10
+     */
+    public function relatedTours(string $slug): JsonResponse
+    {
+        $tour = Tour::where('slug', $slug)
+            ->where('status', 'active')
+            ->with(['cities:id,name_th', 'primaryCountry:id,name_th,iso2'])
+            ->first();
+
+        if (!$tour) {
+            return response()->json(['success' => false, 'message' => 'Tour not found'], 404);
+        }
+
+        // Build matching criteria
+        $hashtags = $this->ensureArray($tour->hashtags);
+        $cityIds = $tour->cities->pluck('id')->toArray();
+        $countryId = $tour->primary_country_id;
+        $tourType = $tour->tour_type;
+
+        // Build a scored query to find the most similar tours
+        $query = Tour::query()
+            ->where('status', 'active')
+            ->where('id', '!=', $tour->id)
+            ->where('available_seats', '>', 0)
+            ->whereHas('periods', function ($q) {
+                $q->where('start_date', '>=', now()->toDateString())
+                  ->where('status', 'open');
+            });
+
+        // Build scoring with selectRaw
+        $scoreExpressions = [];
+        $bindings = [];
+
+        // Score: same country = 10 points
+        if ($countryId) {
+            $scoreExpressions[] = "(CASE WHEN primary_country_id = ? THEN 10 ELSE 0 END)";
+            $bindings[] = $countryId;
+        }
+
+        // Score: same tour_type = 5 points
+        if ($tourType) {
+            $scoreExpressions[] = "(CASE WHEN tour_type = ? THEN 5 ELSE 0 END)";
+            $bindings[] = $tourType;
+        }
+
+        // Score: matching hashtags = 3 points each
+        foreach ($hashtags as $tag) {
+            $scoreExpressions[] = "(CASE WHEN JSON_SEARCH(hashtags, 'one', ?) IS NOT NULL THEN 3 ELSE 0 END)";
+            $bindings[] = $tag;
+        }
+
+        // Score: shared cities = 2 points each
+        if (!empty($cityIds)) {
+            foreach ($cityIds as $cityId) {
+                $scoreExpressions[] = "(CASE WHEN EXISTS (SELECT 1 FROM tour_city WHERE tour_city.tour_id = tours.id AND tour_city.city_id = ?) THEN 2 ELSE 0 END)";
+                $bindings[] = $cityId;
+            }
+        }
+
+        $scoreExpression = !empty($scoreExpressions)
+            ? implode(' + ', $scoreExpressions)
+            : '0';
+
+        $query->selectRaw("tours.*, ({$scoreExpression}) as relevance_score", $bindings)
+              ->having('relevance_score', '>', 0)
+              ->orderByDesc('relevance_score')
+              ->orderByDesc('view_count')
+              ->limit(10);
+
+        $tours = $query->get();
+
+        // If not enough results, fill with popular tours from same country
+        if ($tours->count() < 10 && $countryId) {
+            $existingIds = $tours->pluck('id')->toArray();
+            $existingIds[] = $tour->id;
+
+            $fillTours = Tour::where('status', 'active')
+                ->where('primary_country_id', $countryId)
+                ->whereNotIn('id', $existingIds)
+                ->where('available_seats', '>', 0)
+                ->whereHas('periods', function ($q) {
+                    $q->where('start_date', '>=', now()->toDateString())
+                      ->where('status', 'open');
+                })
+                ->orderByDesc('view_count')
+                ->limit(10 - $tours->count())
+                ->get();
+
+            $tours = $tours->concat($fillTours);
+        }
+
+        // If still not enough, fill with popular tours globally
+        if ($tours->count() < 10) {
+            $existingIds = $tours->pluck('id')->toArray();
+            $existingIds[] = $tour->id;
+
+            $fillTours = Tour::where('status', 'active')
+                ->whereNotIn('id', $existingIds)
+                ->where('available_seats', '>', 0)
+                ->whereHas('periods', function ($q) {
+                    $q->where('start_date', '>=', now()->toDateString())
+                      ->where('status', 'open');
+                })
+                ->orderByDesc('view_count')
+                ->limit(10 - $tours->count())
+                ->get();
+
+            $tours = $tours->concat($fillTours);
+        }
+
+        // Eager load relations for formatting
+        $tours->load(['transports.transport', 'periods', 'country']);
+
+        // Format in TourTabTour format
+        $formatted = $tours->map(function (Tour $t) {
+            $airlineTransport = $t->transports
+                ->where('transport_type', 'outbound')
+                ->first();
+            $airline = $airlineTransport
+                ? ($airlineTransport->transport?->name ?? $airlineTransport->transport_name)
+                : null;
+
+            $openPeriods = $t->periods
+                ->where('status', 'open')
+                ->filter(fn($p) => $p->start_date >= now()->toDateString());
+            $minDeparture = $openPeriods->min('start_date');
+            $maxDeparture = $openPeriods->max('start_date');
+            $availableSeats = $openPeriods->sum('available');
+
+            return [
+                'id' => $t->id,
+                'slug' => $t->slug,
+                'title' => $t->title,
+                'tour_code' => $t->tour_code,
+                'country' => [
+                    'id' => $t->primary_country_id ?? $t->country_id,
+                    'name' => $t->country?->name_th ?? $t->country?->name_en,
+                    'iso2' => $t->country?->iso2,
+                ],
+                'days' => $t->duration_days ?? $t->days,
+                'nights' => $t->duration_nights ?? $t->nights,
+                'price' => $t->min_price,
+                'original_price' => $t->price_adult,
+                'discount_adult' => $t->discount_adult,
+                'discount_percent' => $t->max_discount_percent,
+                'departure_date' => $minDeparture,
+                'max_departure_date' => $maxDeparture,
+                'airline' => $airline,
+                'image_url' => $t->cover_image_url,
+                'badge' => $t->badge,
+                'rating' => $t->rating,
+                'review_count' => $t->review_count,
+                'available_seats' => $availableSeats,
+                'view_count' => $t->view_count ?? 0,
+                'hotel_star' => $t->hotel_star,
+            ];
+        })->values();
+
+        return response()->json([
+            'success' => true,
+            'data' => $formatted,
+        ]);
+    }
 }

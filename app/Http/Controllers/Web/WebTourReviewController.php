@@ -17,17 +17,45 @@ class WebTourReviewController extends Controller
 {
     /**
      * Get approved reviews for a tour (public)
+     * Includes reviews from other tours that share matching hashtags/tags
      */
     public function index(Request $request, $tourSlug)
     {
         $tour = Tour::where('slug', $tourSlug)->firstOrFail();
 
-        $query = TourReview::where('tour_id', $tour->id)
-            ->approved()
-            ->with(['user:id,first_name,last_name,avatar', 'images']);
+        // Get tour's hashtags for cross-tour matching
+        $hashtags = $tour->hashtags;
+        if (is_string($hashtags)) $hashtags = json_decode($hashtags, true);
+        if (!is_array($hashtags)) $hashtags = [];
 
-        // Sort
+        // Also include city names and country name
+        $tour->loadMissing(['cities:id,name_th', 'primaryCountry:id,name_th']);
+        $cityNames = $tour->cities->pluck('name_th')->filter()->values()->toArray();
+        $countryName = $tour->primaryCountry?->name_th;
+        $allTags = array_values(array_unique(array_filter(
+            array_merge($hashtags, $cityNames, $countryName ? [$countryName] : [])
+        )));
+
+        // Query: reviews from this tour OR reviews with matching tags
+        $query = TourReview::approved()
+            ->with(['user:id,first_name,last_name,avatar', 'images', 'tour:id,title,slug,tour_code'])
+            ->where(function ($q) use ($tour, $allTags) {
+                // Reviews belonging to this tour
+                $q->where('tour_id', $tour->id);
+
+                // OR reviews from other tours that have matching tags
+                if (!empty($allTags)) {
+                    $q->orWhere(function ($sub) use ($allTags) {
+                        foreach ($allTags as $tag) {
+                            $sub->orWhereRaw("JSON_SEARCH(tags, 'one', ?) IS NOT NULL", [$tag]);
+                        }
+                    });
+                }
+            });
+
+        // Sort - prioritize same-tour reviews first
         $sort = $request->get('sort', 'latest');
+        $query->orderByRaw("CASE WHEN tour_id = ? THEN 0 ELSE 1 END", [$tour->id]);
         switch ($sort) {
             case 'highest':
                 $query->orderByDesc('rating');
@@ -52,8 +80,8 @@ class WebTourReviewController extends Controller
 
         $reviews = $query->paginate($request->get('per_page', 10));
 
-        // Get summary stats
-        $summary = TourReview::getTourSummary($tour->id);
+        // Get summary stats (combined: this tour + matched reviews)
+        $summary = $this->getCombinedSummary($tour->id, $allTags);
 
         return response()->json([
             'success' => true,
@@ -62,6 +90,68 @@ class WebTourReviewController extends Controller
                 'reviews' => $reviews,
             ],
         ]);
+    }
+
+    /**
+     * Get combined review summary for a tour + hashtag-matched reviews
+     */
+    private function getCombinedSummary(int $tourId, array $allTags): array
+    {
+        $query = TourReview::approved()
+            ->where(function ($q) use ($tourId, $allTags) {
+                $q->where('tour_id', $tourId);
+                if (!empty($allTags)) {
+                    $q->orWhere(function ($sub) use ($allTags) {
+                        foreach ($allTags as $tag) {
+                            $sub->orWhereRaw("JSON_SEARCH(tags, 'one', ?) IS NOT NULL", [$tag]);
+                        }
+                    });
+                }
+            });
+
+        $reviews = $query->get();
+
+        if ($reviews->isEmpty()) {
+            return [
+                'average_rating' => 0,
+                'total_reviews' => 0,
+                'rating_distribution' => [1 => 0, 2 => 0, 3 => 0, 4 => 0, 5 => 0],
+                'category_averages' => [],
+            ];
+        }
+
+        $distribution = [1 => 0, 2 => 0, 3 => 0, 4 => 0, 5 => 0];
+        foreach ($reviews as $r) {
+            if (isset($distribution[$r->rating])) {
+                $distribution[$r->rating]++;
+            }
+        }
+
+        $categoryTotals = [];
+        $categoryCounts = [];
+        foreach ($reviews as $r) {
+            if ($r->category_ratings) {
+                foreach ($r->category_ratings as $cat => $val) {
+                    if (!isset($categoryTotals[$cat])) {
+                        $categoryTotals[$cat] = 0;
+                        $categoryCounts[$cat] = 0;
+                    }
+                    $categoryTotals[$cat] += $val;
+                    $categoryCounts[$cat]++;
+                }
+            }
+        }
+        $categoryAverages = [];
+        foreach ($categoryTotals as $cat => $total) {
+            $categoryAverages[$cat] = round($total / $categoryCounts[$cat], 1);
+        }
+
+        return [
+            'average_rating' => round($reviews->avg('rating'), 1),
+            'total_reviews' => $reviews->count(),
+            'rating_distribution' => $distribution,
+            'category_averages' => $categoryAverages,
+        ];
     }
 
     /**
@@ -291,12 +381,34 @@ class WebTourReviewController extends Controller
     public function summary($tourSlug)
     {
         $tour = Tour::where('slug', $tourSlug)->firstOrFail();
-        $summary = TourReview::getTourSummary($tour->id);
 
-        // Featured reviews for Schema.org
-        $featuredReviews = TourReview::where('tour_id', $tour->id)
-            ->approved()
+        // Get combined tags for cross-tour matching
+        $hashtags = $tour->hashtags;
+        if (is_string($hashtags)) $hashtags = json_decode($hashtags, true);
+        if (!is_array($hashtags)) $hashtags = [];
+
+        $tour->loadMissing(['cities:id,name_th', 'primaryCountry:id,name_th']);
+        $cityNames = $tour->cities->pluck('name_th')->filter()->values()->toArray();
+        $countryName = $tour->primaryCountry?->name_th;
+        $allTags = array_values(array_unique(array_filter(
+            array_merge($hashtags, $cityNames, $countryName ? [$countryName] : [])
+        )));
+
+        $summary = $this->getCombinedSummary($tour->id, $allTags);
+
+        // Featured reviews for Schema.org (same tour + tag-matched)
+        $featuredReviews = TourReview::approved()
             ->featured()
+            ->where(function ($q) use ($tour, $allTags) {
+                $q->where('tour_id', $tour->id);
+                if (!empty($allTags)) {
+                    $q->orWhere(function ($sub) use ($allTags) {
+                        foreach ($allTags as $tag) {
+                            $sub->orWhereRaw("JSON_SEARCH(tags, 'one', ?) IS NOT NULL", [$tag]);
+                        }
+                    });
+                }
+            })
             ->orderByDesc('created_at')
             ->limit(5)
             ->get(['id', 'reviewer_name', 'rating', 'comment', 'created_at']);

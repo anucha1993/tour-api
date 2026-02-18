@@ -144,6 +144,7 @@ Route::get('recommended-tours/public', [RecommendedTourController::class, 'publi
 // Public Tour Detail (for tour-web tour page)
 Route::get('tours/detail/{slug}', [PublicTourController::class, 'show']);
 Route::post('tours/detail/{slug}/view', [PublicTourController::class, 'recordView']);
+Route::get('tours/detail/{slug}/related', [PublicTourController::class, 'relatedTours']);
 
 // Public Tour Reviews (for tour-web)
 Route::get('reviews/featured', [\App\Http\Controllers\Web\WebTourReviewController::class, 'featured']);
