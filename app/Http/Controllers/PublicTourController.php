@@ -1318,7 +1318,7 @@ class PublicTourController extends Controller
         // Score: shared cities = 2 points each
         if (!empty($cityIds)) {
             foreach ($cityIds as $cityId) {
-                $scoreExpressions[] = "(CASE WHEN EXISTS (SELECT 1 FROM tour_city WHERE tour_city.tour_id = tours.id AND tour_city.city_id = ?) THEN 2 ELSE 0 END)";
+                $scoreExpressions[] = "(CASE WHEN EXISTS (SELECT 1 FROM tour_cities WHERE tour_cities.tour_id = tours.id AND tour_cities.city_id = ?) THEN 2 ELSE 0 END)";
                 $bindings[] = $cityId;
             }
         }
