@@ -32,6 +32,7 @@ use App\Http\Controllers\TourReviewAdminController;
 use App\Http\Controllers\SubscriberController;
 use App\Http\Controllers\AboutController;
 use App\Http\Controllers\FlashSaleController;
+use App\Http\Controllers\ContactController;
 
 /*
 |--------------------------------------------------------------------------
@@ -188,6 +189,10 @@ Route::get('about/public', [AboutController::class, 'publicPage']);
 
 // Public Flash Sale
 Route::get('flash-sales/public', [FlashSaleController::class, 'publicActive']);
+
+// Public Contact Page
+Route::get('contact/public', [ContactController::class, 'publicPage']);
+Route::post('contact/submit', [ContactController::class, 'submitForm']);
 
 // Public Search & Autocomplete
 Route::get('search/autocomplete', [SearchController::class, 'autocomplete']);
@@ -512,6 +517,19 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('site-contacts/{siteContact}', [\App\Http\Controllers\SeoController::class, 'contactUpdate']);
     Route::delete('site-contacts/{siteContact}', [\App\Http\Controllers\SeoController::class, 'contactDestroy']);
     Route::patch('site-contacts/{siteContact}/toggle', [\App\Http\Controllers\SeoController::class, 'contactToggle']);
+
+    // Contact Page Settings
+    Route::get('contact-settings', [ContactController::class, 'getSettings']);
+    Route::put('contact-settings', [ContactController::class, 'updateSettings']);
+    Route::post('contact-settings/hero-image', [ContactController::class, 'uploadHeroImage']);
+    Route::delete('contact-settings/hero-image', [ContactController::class, 'deleteHeroImage']);
+
+    // Contact Messages
+    Route::get('contact-messages', [ContactController::class, 'messageIndex']);
+    Route::get('contact-messages/unread-count', [ContactController::class, 'unreadCount']);
+    Route::get('contact-messages/{contactMessage}', [ContactController::class, 'messageShow']);
+    Route::put('contact-messages/{contactMessage}', [ContactController::class, 'messageUpdate']);
+    Route::delete('contact-messages/{contactMessage}', [ContactController::class, 'messageDestroy']);
 
     // Popular Countries CRUD
     Route::get('popular-countries/filter-options', [\App\Http\Controllers\PopularCountryController::class, 'filterOptions']);
