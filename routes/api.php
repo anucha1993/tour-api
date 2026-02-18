@@ -31,6 +31,7 @@ use App\Http\Controllers\BlogController;
 use App\Http\Controllers\TourReviewAdminController;
 use App\Http\Controllers\SubscriberController;
 use App\Http\Controllers\AboutController;
+use App\Http\Controllers\FlashSaleController;
 
 /*
 |--------------------------------------------------------------------------
@@ -184,6 +185,9 @@ Route::get('blog/posts/{slug}', [BlogController::class, 'publicShow']);
 
 // Public About Page
 Route::get('about/public', [AboutController::class, 'publicPage']);
+
+// Public Flash Sale
+Route::get('flash-sales/public', [FlashSaleController::class, 'publicActive']);
 
 // Public Search & Autocomplete
 Route::get('search/autocomplete', [SearchController::class, 'autocomplete']);
@@ -449,6 +453,16 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('about-awards/{id}', [AboutController::class, 'destroyAward']);
     Route::post('about-awards/{id}/image', [AboutController::class, 'uploadAwardImage']);
     Route::post('about-awards/reorder', [AboutController::class, 'reorderAwards']);
+
+    // Flash Sales CRUD
+    Route::apiResource('flash-sales', FlashSaleController::class);
+    Route::patch('flash-sales/{flash_sale}/toggle-status', [FlashSaleController::class, 'toggleStatus']);
+    Route::get('flash-sales-search-tours', [FlashSaleController::class, 'searchTours']);
+    Route::post('flash-sales/{flash_sale}/items', [FlashSaleController::class, 'addItem']);
+    Route::put('flash-sales/{flash_sale}/items/{item}', [FlashSaleController::class, 'updateItem']);
+    Route::delete('flash-sales/{flash_sale}/items/{item}', [FlashSaleController::class, 'removeItem']);
+    Route::post('flash-sales/{flash_sale}/items/reorder', [FlashSaleController::class, 'reorderItems']);
+    Route::post('flash-sales/{flash_sale}/items/mass-update-discount', [FlashSaleController::class, 'massUpdateDiscount']);
 
     // Gallery Images CRUD
     Route::get('gallery/tags', [GalleryImageController::class, 'tags']);
