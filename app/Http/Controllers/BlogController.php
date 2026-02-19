@@ -8,6 +8,7 @@ use App\Models\BlogPost;
 use App\Services\CloudflareImagesService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class BlogController extends Controller
@@ -39,6 +40,75 @@ class BlogController extends Controller
         return response()->json(['success' => true, 'data' => $categories]);
     }
 
+    public function publicFilters(): JsonResponse
+    {
+        // Collect country_ids and city_ids from all published posts
+        $posts = BlogPost::published()
+            ->whereNotNull('country_ids')
+            ->select('country_ids', 'city_ids')
+            ->get();
+
+        $countryCounts = [];
+        $cityCounts = [];
+
+        foreach ($posts as $post) {
+            foreach ((array) $post->country_ids as $cid) {
+                $cid = (int) $cid;
+                $countryCounts[$cid] = ($countryCounts[$cid] ?? 0) + 1;
+            }
+            foreach ((array) $post->city_ids as $cid) {
+                $cid = (int) $cid;
+                $cityCounts[$cid] = ($cityCounts[$cid] ?? 0) + 1;
+            }
+        }
+
+        $countries = [];
+        if (!empty($countryCounts)) {
+            $countryIds = array_keys($countryCounts);
+            $countryRows = DB::table('countries')
+                ->whereIn('id', $countryIds)
+                ->select('id', 'name_th', 'name_en', 'iso2', 'region', 'flag_emoji')
+                ->get();
+            foreach ($countryRows as $row) {
+                $countries[] = [
+                    'id' => $row->id,
+                    'name_th' => $row->name_th,
+                    'name_en' => $row->name_en,
+                    'iso2' => $row->iso2,
+                    'region' => $row->region,
+                    'flag_emoji' => $row->flag_emoji ?? null,
+                    'posts_count' => $countryCounts[$row->id] ?? 0,
+                ];
+            }
+            usort($countries, fn($a, $b) => $b['posts_count'] - $a['posts_count']);
+        }
+
+        $cities = [];
+        if (!empty($cityCounts)) {
+            $cityIds = array_keys($cityCounts);
+            $cityRows = DB::table('cities')
+                ->whereIn('id', $cityIds)
+                ->select('id', 'name_th', 'name_en', 'country_id')
+                ->get();
+            foreach ($cityRows as $row) {
+                $cities[] = [
+                    'id' => $row->id,
+                    'name_th' => $row->name_th,
+                    'name_en' => $row->name_en,
+                    'country_id' => $row->country_id,
+                    'posts_count' => $cityCounts[$row->id] ?? 0,
+                ];
+            }
+            usort($cities, fn($a, $b) => $b['posts_count'] - $a['posts_count']);
+        }
+
+        return response()->json([
+            'success' => true,
+            'countries' => $countries,
+            'cities' => $cities,
+        ]);
+    }
+
     public function publicPosts(Request $request): JsonResponse
     {
         $query = BlogPost::with('category:id,name,slug')
@@ -64,6 +134,14 @@ class BlogController extends Controller
                 $q->where('title', 'like', "%{$search}%")
                   ->orWhere('excerpt', 'like', "%{$search}%");
             });
+        }
+
+        if ($request->filled('country_id')) {
+            $query->whereJsonContains('country_ids', (int) $request->country_id);
+        }
+
+        if ($request->filled('city_id')) {
+            $query->whereJsonContains('city_ids', (int) $request->city_id);
         }
 
         $posts = $query->paginate($request->integer('per_page', 12));
@@ -181,7 +259,7 @@ class BlogController extends Controller
 
     public function listPosts(Request $request): JsonResponse
     {
-        $query = BlogPost::with('category:id,name,slug')
+        $query = BlogPost::with(['category:id,name,slug'])
             ->orderByDesc('created_at');
 
         if ($request->filled('status') && $request->status !== 'all') {
@@ -207,7 +285,7 @@ class BlogController extends Controller
 
     public function showPost(BlogPost $post): JsonResponse
     {
-        $post->load('category:id,name,slug');
+        $post->load(['category:id,name,slug']);
         return response()->json(['success' => true, 'data' => $post]);
     }
 
@@ -215,6 +293,10 @@ class BlogController extends Controller
     {
         $validated = $request->validate([
             'category_id' => 'nullable|exists:blog_categories,id',
+            'country_ids' => 'nullable|array',
+            'country_ids.*' => 'integer|exists:countries,id',
+            'city_ids' => 'nullable|array',
+            'city_ids.*' => 'integer|exists:cities,id',
             'title' => 'required|string|max:255',
             'slug' => 'nullable|string|max:255|unique:blog_posts,slug',
             'excerpt' => 'nullable|string',
@@ -252,7 +334,7 @@ class BlogController extends Controller
         }
 
         $post = BlogPost::create($validated);
-        $post->load('category:id,name,slug');
+        $post->load(['category:id,name,slug']);
 
         return response()->json(['success' => true, 'data' => $post, 'message' => 'สร้างบทความสำเร็จ'], 201);
     }
@@ -261,6 +343,10 @@ class BlogController extends Controller
     {
         $validated = $request->validate([
             'category_id' => 'nullable|exists:blog_categories,id',
+            'country_ids' => 'nullable|array',
+            'country_ids.*' => 'integer|exists:countries,id',
+            'city_ids' => 'nullable|array',
+            'city_ids.*' => 'integer|exists:cities,id',
             'title' => 'sometimes|required|string|max:255',
             'slug' => 'nullable|string|max:255|unique:blog_posts,slug,' . $post->id,
             'excerpt' => 'nullable|string',
@@ -289,9 +375,8 @@ class BlogController extends Controller
         }
 
         $post->update($validated);
-        $post->load('category:id,name,slug');
 
-        return response()->json(['success' => true, 'data' => $post->fresh()->load('category:id,name,slug'), 'message' => 'อัปเดตบทความสำเร็จ']);
+        return response()->json(['success' => true, 'data' => $post->fresh()->load(['category:id,name,slug']), 'message' => 'อัปเดตบทความสำเร็จ']);
     }
 
     public function destroyPost(BlogPost $post): JsonResponse
@@ -302,6 +387,20 @@ class BlogController extends Controller
 
         $post->delete();
         return response()->json(['success' => true, 'message' => 'ลบบทความสำเร็จ']);
+    }
+
+    public function uploadContentImage(Request $request, BlogPost $post): JsonResponse
+    {
+        $request->validate(['image' => 'required|image|max:10240']);
+
+        $result = $this->cloudflare->uploadFromFile(
+            $request->file('image'),
+            'blog-content-' . $post->id . '-' . time()
+        );
+
+        $url = $this->cloudflare->getDisplayUrl($result['id'], 'public');
+
+        return response()->json(['success' => true, 'url' => $url, 'cf_id' => $result['id'], 'message' => 'อัปโหลดรูปสำเร็จ']);
     }
 
     public function uploadCoverImage(Request $request, BlogPost $post): JsonResponse
@@ -322,7 +421,7 @@ class BlogController extends Controller
             'cover_image_cf_id' => $result['id'],
         ]);
 
-        return response()->json(['success' => true, 'data' => $post->fresh()->load('category:id,name,slug'), 'message' => 'อัปโหลดรูปปกสำเร็จ']);
+        return response()->json(['success' => true, 'data' => $post->fresh()->load(['category:id,name,slug', 'country:id,name_th,name_en,iso2,slug', 'city:id,name_th,name_en,slug,country_id']), 'message' => 'อัปโหลดรูปปกสำเร็จ']);
     }
 
     public function deleteCoverImage(BlogPost $post): JsonResponse

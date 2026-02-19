@@ -226,10 +226,11 @@ class DomesticTourSetting extends Model
      */
     protected function applyUserFilters($query, array $filters)
     {
-        // City filter
+        // City filter (supports single ID or comma-separated multiple IDs)
         if (!empty($filters['city_id'])) {
-            $query->whereHas('cities', function ($q) use ($filters) {
-                $q->where('cities.id', $filters['city_id']);
+            $cityIds = array_filter(array_map('trim', explode(',', $filters['city_id'])));
+            $query->whereHas('cities', function ($q) use ($cityIds) {
+                $q->whereIn('cities.id', $cityIds);
             });
         }
 

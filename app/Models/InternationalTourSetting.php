@@ -244,10 +244,11 @@ class InternationalTourSetting extends Model
             $query->where('primary_country_id', $filters['country_id']);
         }
 
-        // City filter
+        // City filter (supports single ID or comma-separated multiple IDs)
         if (!empty($filters['city_id'])) {
-            $query->whereHas('cities', function ($q) use ($filters) {
-                $q->where('cities.id', $filters['city_id']);
+            $cityIds = array_filter(array_map('trim', explode(',', $filters['city_id'])));
+            $query->whereHas('cities', function ($q) use ($cityIds) {
+                $q->whereIn('cities.id', $cityIds);
             });
         }
 
@@ -316,6 +317,15 @@ class InternationalTourSetting extends Model
         }
         if (!empty($filters['price_max'])) {
             $query->where('min_price', '<=', $filters['price_max']);
+        }
+
+        // Festival / Holiday filter
+        if (!empty($filters['festival_id'])) {
+            $festival = \App\Models\FestivalHoliday::find($filters['festival_id']);
+            if ($festival) {
+                $tourIds = $festival->getMatchingTourIds();
+                $query->whereIn('id', $tourIds);
+            }
         }
 
         return $query;

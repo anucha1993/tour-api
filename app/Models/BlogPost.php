@@ -9,6 +9,8 @@ class BlogPost extends Model
 {
     protected $fillable = [
         'category_id',
+        'country_ids',
+        'city_ids',
         'title',
         'slug',
         'excerpt',
@@ -33,6 +35,8 @@ class BlogPost extends Model
         'view_count' => 'integer',
         'reading_time_min' => 'integer',
         'tags' => 'array',
+        'country_ids' => 'array',
+        'city_ids' => 'array',
         'published_at' => 'datetime',
     ];
 

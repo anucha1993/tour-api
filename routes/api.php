@@ -11,6 +11,7 @@ use App\Http\Controllers\CityController;
 use App\Http\Controllers\TourController;
 use App\Http\Controllers\PeriodController;
 use App\Http\Controllers\PromotionController;
+use App\Http\Controllers\PromotionNotificationController;
 use App\Http\Controllers\TourTabController;
 use App\Http\Controllers\GalleryImageController;
 use App\Http\Controllers\GalleryVideoController;
@@ -183,6 +184,7 @@ Route::post('tours/group/inquiry', [GroupTourController::class, 'publicSubmitInq
 // Public Blog
 Route::get('blog/settings', [BlogController::class, 'publicSettings']);
 Route::get('blog/categories', [BlogController::class, 'publicCategories']);
+Route::get('blog/filters', [BlogController::class, 'publicFilters']);
 Route::get('blog/posts', [BlogController::class, 'publicPosts']);
 Route::get('blog/posts/{slug}', [BlogController::class, 'publicShow']);
 
@@ -321,6 +323,18 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('promotions/reorder', [PromotionController::class, 'reorder']);
     Route::apiResource('promotions', PromotionController::class);
 
+    // Promotion Notifications (admin)
+    Route::prefix('promotion-notifications')->group(function () {
+        Route::get('/meta', [PromotionNotificationController::class, 'meta']);
+        Route::get('/claims/lookup', [PromotionNotificationController::class, 'lookupByCode']);
+        Route::patch('/{id}/toggle-status', [PromotionNotificationController::class, 'toggleStatus']);
+        Route::post('/{id}/upload-banner', [PromotionNotificationController::class, 'uploadBanner']);
+        Route::delete('/{id}/delete-banner', [PromotionNotificationController::class, 'deleteBanner']);
+        Route::get('/{id}/claims', [PromotionNotificationController::class, 'claims']);
+        Route::patch('/claims/{claimId}/mark-used', [PromotionNotificationController::class, 'markClaimUsed']);
+    });
+    Route::apiResource('promotion-notifications', PromotionNotificationController::class);
+
     // Tour Tabs
     Route::get('tour-tabs/condition-options', [TourTabController::class, 'getConditionOptions']);
     Route::post('tour-tabs/preview-conditions', [TourTabController::class, 'previewConditions']);
@@ -440,6 +454,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('blog-posts/{post}', [BlogController::class, 'destroyPost']);
     Route::post('blog-posts/{post}/cover-image', [BlogController::class, 'uploadCoverImage']);
     Route::delete('blog-posts/{post}/cover-image', [BlogController::class, 'deleteCoverImage']);
+    Route::post('blog-posts/{post}/content-image', [BlogController::class, 'uploadContentImage']);
     Route::get('blog-settings', [BlogController::class, 'getPageSettings']);
     Route::put('blog-settings', [BlogController::class, 'updatePageSettings']);
     Route::post('blog-settings/hero-image', [BlogController::class, 'uploadHeroImage']);
@@ -782,6 +797,16 @@ Route::prefix('web')->group(function () {
             Route::get('/rules', [\App\Http\Controllers\Web\WebMemberPointController::class, 'rules']);
             Route::post('/preview-redeem', [\App\Http\Controllers\Web\WebMemberPointController::class, 'previewRedeem']);
             Route::post('/redeem', [\App\Http\Controllers\Web\WebMemberPointController::class, 'redeem']);
+        });
+
+        // Notifications (promotion notifications for member)
+        Route::prefix('notifications')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Web\WebNotificationController::class, 'index']);
+            Route::get('/unread-count', [\App\Http\Controllers\Web\WebNotificationController::class, 'unreadCount']);
+            Route::post('/read-all', [\App\Http\Controllers\Web\WebNotificationController::class, 'markAllRead']);
+            Route::get('/{id}', [\App\Http\Controllers\Web\WebNotificationController::class, 'show']);
+            Route::post('/{id}/read', [\App\Http\Controllers\Web\WebNotificationController::class, 'markRead']);
+            Route::post('/{id}/claim', [\App\Http\Controllers\Web\WebNotificationController::class, 'claim']);
         });
     });
 });

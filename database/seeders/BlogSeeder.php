@@ -28,6 +28,7 @@ class BlogSeeder extends Seeder
         // Create 10 blog posts
         $posts = [
             [
+                'slug' => 'prepare-for-japan-trip',
                 'category_slug' => 'travel-tips',
                 'title' => '10 สิ่งที่ต้องเตรียมก่อนเดินทางไปญี่ปุ่น',
                 'excerpt' => 'เตรียมตัวให้พร้อมก่อนเดินทางไปญี่ปุ่น ตั้งแต่เอกสาร เสื้อผ้า ของใช้จำเป็น ไปจนถึงแอปที่ควรโหลด เพื่อให้ทริปสมบูรณ์แบบ',
@@ -72,6 +73,7 @@ class BlogSeeder extends Seeder
                 'reading_time_min' => 5,
             ],
             [
+                'slug' => 'jeju-island-korea',
                 'category_slug' => 'place-reviews',
                 'title' => 'เกาะเชจู เกาหลีใต้ สวรรค์ของคนรักธรรมชาติ',
                 'excerpt' => 'เกาะเชจูมีดีมากกว่าที่คิด ตั้งแต่ภูเขาไฟฮัลลาซาน ชายหาดทรายดำ น้ำตก ถ้ำลาวา ไปจนถึงสวนส้มและคาเฟ่สุดชิค',
@@ -99,6 +101,7 @@ class BlogSeeder extends Seeder
                 'reading_time_min' => 4,
             ],
             [
+                'slug' => 'street-food-bangkok',
                 'category_slug' => 'food',
                 'title' => 'Street Food ต้องลอง! 7 อาหารริมทางในกรุงเทพฯ ที่ชาวต่างชาติหลงรัก',
                 'excerpt' => 'กรุงเทพฯ ได้ชื่อว่าเป็นเมืองแห่ง Street Food อันดับต้น ๆ ของโลก มาดูกันว่าเมนูไหนที่ทำให้ชาวต่างชาติต้องกลับมาอีก',
@@ -134,6 +137,7 @@ class BlogSeeder extends Seeder
                 'reading_time_min' => 4,
             ],
             [
+                'slug' => 'save-money-on-flights',
                 'category_slug' => 'travel-tips',
                 'title' => 'วิธีประหยัดค่าตั๋วเครื่องบิน จองยังไงให้ได้ราคาถูกสุด',
                 'excerpt' => 'รวมเทคนิคจองตั๋วเครื่องบินราคาประหยัด ตั้งแต่การจองล่วงหน้า เลือกวันที่บิน ใช้เว็บเปรียบเทียบราคา ไปจนถึงสะสมไมล์',
@@ -166,6 +170,7 @@ class BlogSeeder extends Seeder
                 'reading_time_min' => 3,
             ],
             [
+                'slug' => 'etiquette-in-japan',
                 'category_slug' => 'culture',
                 'title' => 'มารยาทที่ควรรู้ก่อนไปเที่ยวญี่ปุ่น',
                 'excerpt' => 'ญี่ปุ่นเป็นประเทศที่ให้ความสำคัญกับมารยาทมาก รู้ก่อนไปจะได้ไม่โดนมองแปลก ๆ',
@@ -207,6 +212,7 @@ class BlogSeeder extends Seeder
                 'reading_time_min' => 4,
             ],
             [
+                'slug' => 'top-5-islands-thailand',
                 'category_slug' => 'place-reviews',
                 'title' => '5 เกาะสวยในไทยที่ต้องไปให้ได้สักครั้ง',
                 'excerpt' => 'ประเทศไทยมีเกาะสวย ๆ มากมาย น้ำทะเลใส หาดทรายขาว แต่ 5 เกาะนี้เป็นสุดยอดที่ไม่ควรพลาด',
@@ -236,6 +242,7 @@ class BlogSeeder extends Seeder
                 'reading_time_min' => 4,
             ],
             [
+                'slug' => 'packing-list-checklist',
                 'category_slug' => 'travel-tips',
                 'title' => 'Packing List: จัดกระเป๋ายังไงให้ครบ ไม่ลืมของ',
                 'excerpt' => 'เช็คลิสต์จัดกระเป๋าสำหรับทุกทริป ไม่ว่าจะไปทะเล ภูเขา หรือเมืองหนาว ครบจบในบทความเดียว',
@@ -277,6 +284,7 @@ class BlogSeeder extends Seeder
                 'reading_time_min' => 3,
             ],
             [
+                'slug' => 'north-vietnam-travel-guide',
                 'category_slug' => 'place-reviews',
                 'title' => 'เวียดนามเหนือ ดินแดนมหัศจรรย์ที่ต้องไปเยือน',
                 'excerpt' => 'ซาปา ฮาลองเบย์ นิญบิ่ญ ฮานอย เวียดนามเหนือเต็มไปด้วยความสวยงามทางธรรมชาติและวัฒนธรรมที่น่าหลงใหล',
@@ -304,6 +312,7 @@ class BlogSeeder extends Seeder
                 'reading_time_min' => 5,
             ],
             [
+                'slug' => 'korean-food-must-try',
                 'category_slug' => 'food',
                 'title' => 'ตะลุยกินอาหารเกาหลี 10 เมนูที่ต้องลองให้ได้',
                 'excerpt' => 'ไปเกาหลีทั้งทีต้องลองเมนูเด็ดให้ครบ ตั้งแต่บิบิมบับ ไก่ทอด จิมดัก ไปจนถึงโซจูกับซัมกยอบซัล',
@@ -346,6 +355,7 @@ class BlogSeeder extends Seeder
                 'reading_time_min' => 5,
             ],
             [
+                'slug' => 'europe-culture-guide',
                 'category_slug' => 'culture',
                 'title' => 'เข้าใจวัฒนธรรมยุโรป ก่อนเดินทางครั้งแรก',
                 'excerpt' => 'ยุโรปมีวัฒนธรรมที่หลากหลาย ตั้งแต่เรื่องทิป มารยาทโต๊ะ การแต่งกาย ไปจนถึงวันหยุด เตรียมตัวไว้จะได้เที่ยวอย่างมั่นใจ',
@@ -383,18 +393,12 @@ class BlogSeeder extends Seeder
         ];
 
         foreach ($posts as $i => $postData) {
-            $slug = Str::slug($postData['title']);
-            // Ensure unique slug
-            if (BlogPost::where('slug', $slug)->exists()) {
-                $slug .= '-' . ($i + 1);
-            }
-
             BlogPost::updateOrCreate(
-                ['slug' => $slug],
+                ['slug' => $postData['slug']],
                 [
                     'category_id' => $categoryMap[$postData['category_slug']] ?? null,
                     'title' => $postData['title'],
-                    'slug' => $slug,
+                    'slug' => $postData['slug'],
                     'excerpt' => $postData['excerpt'],
                     'content' => $postData['content'],
                     'author_name' => $postData['author_name'],

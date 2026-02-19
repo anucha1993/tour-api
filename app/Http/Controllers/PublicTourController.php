@@ -11,6 +11,7 @@ use App\Models\DomesticTourSetting;
 use App\Models\Country;
 use App\Models\City;
 use App\Models\Transport;
+use App\Models\FestivalHoliday;
 use App\Services\PointService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -652,6 +653,7 @@ class PublicTourController extends Controller
             'price_max' => $request->input('price_max'),
             'min_seats' => $request->input('min_seats'),
             'sort_by' => $request->input('sort_by'),
+            'festival_id' => $request->input('festival_id'),
         ];
 
         $perPage = $request->input('per_page', $setting->per_page);
@@ -915,6 +917,23 @@ class PublicTourController extends Controller
                     'label' => $this->formatThaiMonth($m),
                 ]);
         }
+
+        // Festivals (upcoming, active)
+        $filters['festivals'] = FestivalHoliday::where('is_active', true)
+            ->where('end_date', '>=', $today)
+            ->orderBy('start_date')
+            ->take(8)
+            ->get()
+            ->map(fn ($f) => [
+                'id'          => $f->id,
+                'name'        => $f->name,
+                'slug'        => $f->slug,
+                'badge_text'  => $f->badge_text,
+                'badge_color' => $f->badge_color,
+                'badge_icon'  => $f->badge_icon,
+                'start_date'  => optional($f->start_date)->toDateString(),
+                'end_date'    => optional($f->end_date)->toDateString(),
+            ]);
 
         return $filters;
     }
