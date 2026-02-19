@@ -415,7 +415,7 @@ class FestivalHolidayController extends Controller
         $lunches = $tour->itineraries->where('has_lunch', true)->count();
         $dinners = $tour->itineraries->where('has_dinner', true)->count();
 
-        return [
+        $item = [
             'id' => $tour->id,
             'slug' => $tour->slug,
             'tour_code' => $tour->tour_code,
@@ -498,6 +498,33 @@ class FestivalHolidayController extends Controller
                 return $data;
             })->values(),
         ];
+
+        // Collect active promotions from offers for badge display on tour card
+        $today = now()->toDateString();
+        $activePromos = $tour->periods
+            ->filter(fn($p) => $p->offer && ($p->offer->promo_name || $p->offer->promotion))
+            ->map(function ($p) use ($today) {
+                $offer = $p->offer;
+                $name = $offer->promo_name ?? $offer->promotion?->name;
+                if (!$name) return null;
+                $start = $offer->promo_start_date?->format('Y-m-d');
+                $end = $offer->promo_end_date?->format('Y-m-d');
+                if ($start && $today < $start) return null;
+                if ($end && $today > $end) return null;
+                return [
+                    'name' => $name,
+                    'start_date' => $start,
+                    'end_date' => $end,
+                ];
+            })
+            ->filter()
+            ->unique('name')
+            ->values();
+        if ($activePromos->isNotEmpty()) {
+            $item['active_promotions'] = $activePromos;
+        }
+
+        return $item;
     }
 
     private function getFestivalFilterOptions($tourIds): array

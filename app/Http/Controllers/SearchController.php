@@ -190,6 +190,7 @@ class SearchController extends Controller
                           ->limit(3);
                     },
                     'periods.offer',
+                    'periods.offer.promotion',
                 ])
                 ->orderByRaw("
                     CASE
@@ -226,6 +227,22 @@ class SearchController extends Controller
                         'available' => $p->available,
                         'price' => $p->offer ? (float) ($p->offer->price_adult - $p->offer->discount_adult) : null,
                     ]),
+                    'active_promotions' => $tour->periods
+                        ->filter(fn($p) => $p->offer && ($p->offer->promo_name || $p->offer->promotion))
+                        ->map(function ($p) {
+                            $offer = $p->offer;
+                            $name = $offer->promo_name ?? $offer->promotion?->name;
+                            if (!$name) return null;
+                            $today = now()->toDateString();
+                            $start = $offer->promo_start_date?->format('Y-m-d');
+                            $end = $offer->promo_end_date?->format('Y-m-d');
+                            if ($start && $today < $start) return null;
+                            if ($end && $today > $end) return null;
+                            return ['name' => $name, 'start_date' => $start, 'end_date' => $end];
+                        })
+                        ->filter()
+                        ->unique('name')
+                        ->values(),
                 ];
             });
 
