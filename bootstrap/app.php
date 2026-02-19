@@ -108,19 +108,32 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         // Note: Don't use statefulApi() when frontend uses Bearer token auth
         // statefulApi() enables CSRF which requires cookie-based authentication
+
+        // Override 'auth' middleware alias so redirectTo() returns null
+        // instead of trying to generate route('login') which doesn't exist in this API-only app
+        $middleware->alias([
+            'auth' => \App\Http\Middleware\Authenticate::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        // Return JSON for API authentication errors
+        // Return JSON 401 for unauthenticated requests
         $exceptions->render(function (AuthenticationException $e, Request $request) {
-            if ($request->is('api/*') || $request->expectsJson()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthenticated. Please login again.',
-                ], 401);
-            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated. Please login again.',
+            ], 401);
         });
 
-        // Catch all exceptions for API and return JSON
+        // Fallback: catch RouteNotFoundException from missing 'login' named route
+        // in case custom Authenticate middleware does not intercept in time
+        $exceptions->render(function (\Symfony\Component\Routing\Exception\RouteNotFoundException $e, Request $request) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated. Please login again.',
+            ], 401);
+        });
+
+        // Always render JSON for API routes
         $exceptions->shouldRenderJsonWhen(function (Request $request) {
             return $request->is('api/*');
         });
