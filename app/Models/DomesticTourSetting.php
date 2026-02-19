@@ -146,7 +146,7 @@ class DomesticTourSetting extends Model
                   ->orderBy('start_date')
                   ->limit($this->max_periods_display);
             },
-            'periods.offer',
+            'periods.offer.promotion',
         ];
 
         if ($this->show_meal_count) {

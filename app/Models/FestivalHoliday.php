@@ -222,7 +222,7 @@ class FestivalHoliday extends Model
                   ->where('is_visible', true)
                   ->orderBy('start_date');
             },
-            'periods.offer',
+            'periods.offer.promotion',
             'itineraries' => function ($q) {
                 $q->select('id', 'tour_id', 'has_breakfast', 'has_lunch', 'has_dinner');
             },

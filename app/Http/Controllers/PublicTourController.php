@@ -53,7 +53,7 @@ class PublicTourController extends Controller
                           ->where('status', 'open')
                           ->where('is_visible', true)
                           ->orderBy('start_date')
-                          ->with('offer');
+                          ->with('offer.promotion');
                 },
             ])
             ->first();
@@ -300,7 +300,7 @@ class PublicTourController extends Controller
                     'price_single' => $offer->price_single ? (float) $offer->price_single : null,
                     'discount_single' => (float) ($offer->discount_single ?? 0),
                     'deposit' => $offer->deposit ? (float) $offer->deposit : null,
-                    'promo_name' => $offer->promo_name,
+                    'promo_name' => $offer->promo_name ?? $offer->promotion?->name,
                     'promo_start_date' => $offer->promo_start_date?->format('Y-m-d'),
                     'promo_end_date' => $offer->promo_end_date?->format('Y-m-d'),
                 ] : null,
@@ -814,7 +814,7 @@ class PublicTourController extends Controller
                         'discount_single' => (float) ($offer->discount_single ?? 0),
                         'net_price_single' => $offer->price_single ? (float) ($offer->price_single - ($offer->discount_single ?? 0)) : null,
                         'deposit' => $offer->deposit ? (float) $offer->deposit : null,
-                        'promo_name' => $offer->promo_name,
+                        'promo_name' => $offer->promo_name ?? $offer->promotion?->name,
                         'promo_start_date' => $offer->promo_start_date?->format('Y-m-d'),
                         'promo_end_date' => $offer->promo_end_date?->format('Y-m-d'),
                     ];
@@ -1186,7 +1186,7 @@ class PublicTourController extends Controller
                         'discount_single' => (float) ($offer->discount_single ?? 0),
                         'net_price_single' => $offer->price_single ? (float) ($offer->price_single - ($offer->discount_single ?? 0)) : null,
                         'deposit' => $offer->deposit ? (float) $offer->deposit : null,
-                        'promo_name' => $offer->promo_name,
+                        'promo_name' => $offer->promo_name ?? $offer->promotion?->name,
                         'promo_start_date' => $offer->promo_start_date?->format('Y-m-d'),
                         'promo_end_date' => $offer->promo_end_date?->format('Y-m-d'),
                     ];
