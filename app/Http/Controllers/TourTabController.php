@@ -363,7 +363,39 @@ class TourTabController extends Controller
             'hotel_star' => $tour->hotel_star,
             'periods_preview' => $periodsPreview,
             'total_periods' => $totalPeriods,
+            'active_promotions' => $this->getActivePromotions($tour),
         ];
+    }
+
+    /**
+     * Collect active promotions from period offers for badge display on tour card
+     */
+    private function getActivePromotions(Tour $tour): array
+    {
+        $today = now()->toDateString();
+
+        $activePromos = $tour->periods
+            ->filter(fn($p) => $p->offer && ($p->offer->promo_name || $p->offer->promotion))
+            ->map(function ($p) use ($today) {
+                $offer = $p->offer;
+                $name = $offer->promo_name ?? $offer->promotion?->name;
+                if (!$name) return null;
+                $start = $offer->promo_start_date?->format('Y-m-d');
+                $end = $offer->promo_end_date?->format('Y-m-d');
+                if ($start && $today < $start) return null;
+                if ($end && $today > $end) return null;
+                return [
+                    'name' => $name,
+                    'start_date' => $start,
+                    'end_date' => $end,
+                ];
+            })
+            ->filter()
+            ->unique('name')
+            ->values()
+            ->toArray();
+
+        return $activePromos;
     }
 
     public function publicList(Request $request): JsonResponse
@@ -379,7 +411,7 @@ class TourTabController extends Controller
             $tours = $tab->getTours();
 
             // Eager-load relations for airline & departure dates
-            $tours->load(['transports.transport', 'periods', 'country']);
+            $tours->load(['transports.transport', 'periods.offer.promotion', 'country']);
 
             $formattedTours = $tours->map(fn ($tour) => $this->formatTourForTab($tour));
 
@@ -463,7 +495,7 @@ class TourTabController extends Controller
         $tours = $tab->getTours($limit);
 
         // Eager-load relations for airline & departure dates
-        $tours->load(['transports.transport', 'periods', 'country']);
+        $tours->load(['transports.transport', 'periods.offer.promotion', 'country']);
 
         $formattedTours = $tours->map(fn ($tour) => $this->formatTourForTab($tour));
 
@@ -500,7 +532,7 @@ class TourTabController extends Controller
             $tours = $tab->getTours();
 
             // Eager-load relations for airline & departure dates
-            $tours->load(['transports.transport', 'periods', 'country']);
+            $tours->load(['transports.transport', 'periods.offer.promotion', 'country']);
 
             $formattedTours = $tours->map(fn ($tour) => $this->formatTourForTab($tour));
 

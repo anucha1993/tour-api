@@ -1465,10 +1465,11 @@ class PublicTourController extends Controller
         }
 
         // Eager load relations for formatting
-        $tours->load(['transports.transport', 'periods', 'country']);
+        $tours->load(['transports.transport', 'periods.offer.promotion', 'country']);
 
         // Format in TourTabTour format
-        $formatted = $tours->map(function (Tour $t) {
+        $today = now()->toDateString();
+        $formatted = $tours->map(function (Tour $t) use ($today) {
             $airlineTransport = $t->transports
                 ->where('transport_type', 'outbound')
                 ->first();
@@ -1482,6 +1483,28 @@ class PublicTourController extends Controller
             $minDeparture = $openPeriods->min('start_date');
             $maxDeparture = $openPeriods->max('start_date');
             $availableSeats = $openPeriods->sum('available');
+
+            // Collect active promotions from offers
+            $activePromos = $t->periods
+                ->filter(fn($p) => $p->offer && ($p->offer->promo_name || $p->offer->promotion))
+                ->map(function ($p) use ($today) {
+                    $offer = $p->offer;
+                    $name = $offer->promo_name ?? $offer->promotion?->name;
+                    if (!$name) return null;
+                    $start = $offer->promo_start_date?->format('Y-m-d');
+                    $end = $offer->promo_end_date?->format('Y-m-d');
+                    if ($start && $today < $start) return null;
+                    if ($end && $today > $end) return null;
+                    return [
+                        'name' => $name,
+                        'start_date' => $start,
+                        'end_date' => $end,
+                    ];
+                })
+                ->filter()
+                ->unique('name')
+                ->values()
+                ->toArray();
 
             return [
                 'id' => $t->id,
@@ -1509,6 +1532,7 @@ class PublicTourController extends Controller
                 'available_seats' => $availableSeats,
                 'view_count' => $t->view_count ?? 0,
                 'hotel_star' => $t->hotel_star,
+                'active_promotions' => $activePromos,
             ];
         })->values();
 

@@ -168,7 +168,7 @@ class RecommendedTourController extends Controller
     public function preview(RecommendedTourSection $recommendedTourSection): JsonResponse
     {
         $tours = $recommendedTourSection->getTours();
-        $tours->load(['transports.transport', 'periods', 'country']);
+        $tours->load(['transports.transport', 'periods.offer.promotion', 'country']);
 
         return response()->json([
             'success' => true,
@@ -198,7 +198,7 @@ class RecommendedTourController extends Controller
         ]);
 
         $tours = $section->getTours();
-        $tours->load(['transports.transport', 'periods', 'country']);
+        $tours->load(['transports.transport', 'periods.offer.promotion', 'country']);
 
         return response()->json([
             'success' => true,
@@ -295,7 +295,7 @@ class RecommendedTourController extends Controller
         }
 
         $tours = $section->getTours();
-        $tours->load(['transports.transport', 'periods', 'country']);
+        $tours->load(['transports.transport', 'periods.offer.promotion', 'country']);
 
         return response()->json([
             'success' => true,
@@ -409,6 +409,33 @@ class RecommendedTourController extends Controller
             'available_seats' => $availableSeats,
             'view_count' => $tour->view_count ?? 0,
             'hotel_star' => $tour->hotel_star,
+            'active_promotions' => $this->getActivePromotions($tour),
         ];
+    }
+
+    private function getActivePromotions(Tour $tour): array
+    {
+        $today = now()->toDateString();
+
+        return $tour->periods
+            ->filter(fn($p) => $p->offer && ($p->offer->promo_name || $p->offer->promotion))
+            ->map(function ($p) use ($today) {
+                $offer = $p->offer;
+                $name = $offer->promo_name ?? $offer->promotion?->name;
+                if (!$name) return null;
+                $start = $offer->promo_start_date?->format('Y-m-d');
+                $end = $offer->promo_end_date?->format('Y-m-d');
+                if ($start && $today < $start) return null;
+                if ($end && $today > $end) return null;
+                return [
+                    'name' => $name,
+                    'start_date' => $start,
+                    'end_date' => $end,
+                ];
+            })
+            ->filter()
+            ->unique('name')
+            ->values()
+            ->toArray();
     }
 }
