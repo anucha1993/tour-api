@@ -1345,9 +1345,6 @@ class SyncToursJob implements ShouldQueue
             'transport_id' => $tourFields['transport_id'] ?? 'NOT_IN_FIELDS',
             'skipped_fields' => $skippedFields, // Track why fields were skipped
         ]);
-            'has_transport_id' => array_key_exists('transport_id', $tourFields),
-            'transport_id' => $tourFields['transport_id'] ?? 'NOT_IN_FIELDS',
-        ]);
         
         $tour->fill($tourFields);
         $tour->save();
