@@ -110,8 +110,13 @@ class Tour extends Model
         'hashtags',
         'cover_image_url',
         'cover_image_alt',
+        'custom_cover_image_url',
+        'custom_cover_image_alt',
+        'cover_image_source',
         'og_image_url',
         'pdf_url',
+        'custom_pdf_url',
+        'pdf_source',
         'docx_url',
         'themes',
         'suitable_for',
@@ -159,6 +164,52 @@ class Tour extends Model
         'has_promotion' => 'boolean',
         'updated_at_source' => 'datetime',
     ];
+
+    /**
+     * Appended attributes for JSON serialization
+     */
+    protected $appends = [
+        'effective_cover_image_url',
+        'effective_cover_image_alt',
+        'effective_pdf_url',
+    ];
+
+    /**
+     * Get the effective cover image URL (custom override or API source)
+     */
+    public function getEffectiveCoverImageUrlAttribute(): ?string
+    {
+        if ($this->cover_image_source === 'custom' && $this->custom_cover_image_url) {
+            return $this->custom_cover_image_url;
+        }
+        return $this->cover_image_url;
+    }
+
+    /**
+     * Get the effective cover image alt text
+     */
+    public function getEffectiveCoverImageAltAttribute(): ?string
+    {
+        if ($this->cover_image_source === 'custom' && $this->custom_cover_image_alt) {
+            return $this->custom_cover_image_alt;
+        }
+        return $this->cover_image_alt;
+    }
+
+    /**
+     * Get the effective PDF URL (custom override, generated, or API source)
+     */
+    public function getEffectivePdfUrlAttribute(): ?string
+    {
+        if ($this->pdf_source === 'custom' && $this->custom_pdf_url) {
+            return $this->custom_pdf_url;
+        }
+        if ($this->pdf_source === 'generate') {
+            $baseUrl = rtrim(config('app.url'), '/');
+            return "{$baseUrl}/api/tours/{$this->id}/generate-pdf";
+        }
+        return $this->pdf_url;
+    }
 
     // Relationships
     public function wholesaler(): BelongsTo

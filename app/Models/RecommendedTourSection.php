@@ -13,6 +13,7 @@ class RecommendedTourSection extends Model
         'name',
         'description',
         'conditions',
+        'pinned_tour_ids',
         'display_limit',
         'sort_by',
         'sort_order',
@@ -24,6 +25,7 @@ class RecommendedTourSection extends Model
 
     protected $casts = [
         'conditions' => 'array',
+        'pinned_tour_ids' => 'array',
         'display_limit' => 'integer',
         'sort_order' => 'integer',
         'weight' => 'integer',
@@ -84,19 +86,46 @@ class RecommendedTourSection extends Model
     public function getTours(int $limit = null)
     {
         $limit = $limit ?? $this->display_limit;
+        $pinnedIds = $this->pinned_tour_ids ?? [];
 
-        $query = Tour::query()
-            ->where('status', 'active')
-            ->where('available_seats', '>', 0) // Exclude Sold Out tours
-            ->whereHas('periods', function ($q) {
-                $q->where('start_date', '>=', now()->toDateString())
-                  ->where('status', 'open');
-            });
+        // Fetch pinned tours first (active only, preserve order)
+        $pinnedTours = collect();
+        if (!empty($pinnedIds)) {
+            $pinnedTours = Tour::query()
+                ->where('status', 'active')
+                ->whereIn('id', $pinnedIds)
+                ->get()
+                ->sortBy(function ($tour) use ($pinnedIds) {
+                    return array_search($tour->id, $pinnedIds);
+                })
+                ->values();
+        }
 
-        $this->applyConditions($query);
-        $this->applySorting($query);
+        // Fetch condition-based tours, excluding pinned ones
+        $conditionLimit = max(0, $limit - $pinnedTours->count());
+        $conditionTours = collect();
 
-        return $query->limit($limit)->get();
+        if ($conditionLimit > 0) {
+            $query = Tour::query()
+                ->where('status', 'active')
+                ->where('available_seats', '>', 0)
+                ->whereHas('periods', function ($q) {
+                    $q->where('start_date', '>=', now()->toDateString())
+                      ->where('status', 'open');
+                });
+
+            if (!empty($pinnedIds)) {
+                $query->whereNotIn('id', $pinnedIds);
+            }
+
+            $this->applyConditions($query);
+            $this->applySorting($query);
+
+            $conditionTours = $query->limit($conditionLimit)->get();
+        }
+
+        // Pinned first, then condition-based
+        return $pinnedTours->concat($conditionTours);
     }
 
     /**

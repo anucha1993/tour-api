@@ -33,7 +33,7 @@ class PublicTourController extends Controller
     }
 
     /**
-     * แสดงข้อมูลทัวร์สำหรับ public (ไม่ต้อง auth)
+     * เนเธชเธ”เธเธเนเธญเธกเธนเธฅเธ—เธฑเธงเธฃเนเธชเธณเธซเธฃเธฑเธ public (เนเธกเนเธ•เนเธญเธ auth)
      * GET /tours/{slug}
      */
     public function show(string $slug): JsonResponse
@@ -61,7 +61,7 @@ class PublicTourController extends Controller
         if (!$tour) {
             return response()->json([
                 'success' => false,
-                'message' => 'ไม่พบทัวร์ที่ต้องการ',
+                'message' => 'เนเธกเนเธเธเธ—เธฑเธงเธฃเนเธ—เธตเนเธ•เนเธญเธเธเธฒเธฃ',
             ], 404);
         }
 
@@ -72,7 +72,7 @@ class PublicTourController extends Controller
     }
 
     /**
-     * บันทึกสถิติการเข้าชม
+     * เธเธฑเธเธ—เธถเธเธชเธ–เธดเธ•เธดเธเธฒเธฃเน€เธเนเธฒเธเธก
      * POST /tours/{slug}/view
      */
     public function recordView(Request $request, string $slug): JsonResponse
@@ -89,7 +89,7 @@ class PublicTourController extends Controller
         $userAgent = $request->userAgent();
         $sessionId = $request->input('session_id') ?: $request->ip() . '_' . substr(md5($userAgent ?? ''), 0, 8);
 
-        // ป้องกันนับซ้ำ — ถ้า session เดียวกันดูทัวร์เดียวกันภายใน 30 นาที ไม่นับ
+        // เธเนเธญเธเธเธฑเธเธเธฑเธเธเนเธณ โ€” เธ–เนเธฒ session เน€เธ”เธตเธขเธงเธเธฑเธเธ”เธนเธ—เธฑเธงเธฃเนเน€เธ”เธตเธขเธงเธเธฑเธเธ เธฒเธขเนเธ 30 เธเธฒเธ—เธต เนเธกเนเธเธฑเธ
         $recentView = TourView::where('tour_id', $tour->id)
             ->where('session_id', $sessionId)
             ->where('viewed_at', '>=', now()->subMinutes(30))
@@ -127,22 +127,22 @@ class PublicTourController extends Controller
             'viewed_at' => now(),
         ]);
 
-        // อัพเดทจำนวนเข้าชมในตาราง tours
+        // เธญเธฑเธเน€เธ”เธ—เธเธณเธเธงเธเน€เธเนเธฒเธเธกเนเธเธ•เธฒเธฃเธฒเธ tours
         $tour->increment('view_count');
 
-        // ให้คะแนนสมาชิกที่ล็อกอินแล้ว
+        // เนเธซเนเธเธฐเนเธเธเธชเธกเธฒเธเธดเธเธ—เธตเนเธฅเนเธญเธเธญเธดเธเนเธฅเนเธง
         if ($member = $request->user()) {
             try {
                 app(PointService::class)->earnPoints(
                     $member, 'page_view', 0, Tour::class, $tour->id,
-                    "ดูทัวร์: {$tour->title}"
+                    "เธ”เธนเธ—เธฑเธงเธฃเน: {$tour->title}"
                 );
             } catch (\Throwable $e) {
-                // Silent fail — don't break page view recording
+                // Silent fail โ€” don't break page view recording
             }
         }
 
-        // อัพเดท daily stats
+        // เธญเธฑเธเน€เธ”เธ— daily stats
         DB::table('tour_view_daily_stats')->updateOrInsert(
             ['tour_id' => $tour->id, 'date' => now()->toDateString()],
             [
@@ -157,7 +157,7 @@ class PublicTourController extends Controller
     }
 
     /**
-     * สรุปสถิติการเข้าชม (สำหรับ admin)
+     * เธชเธฃเธธเธเธชเธ–เธดเธ•เธดเธเธฒเธฃเน€เธเนเธฒเธเธก (เธชเธณเธซเธฃเธฑเธ admin)
      * GET /tours/view-stats/summary
      */
     public function viewStatsSummary(Request $request): JsonResponse
@@ -425,13 +425,13 @@ class PublicTourController extends Controller
             'exclusions' => $tour->exclusions,
             'conditions' => $tour->conditions,
 
-            // Media
-            'cover_image_url' => $tour->cover_image_url,
-            'cover_image_alt' => $tour->cover_image_alt,
+            // Media (effective = custom override or API source)
+            'cover_image_url' => $tour->effective_cover_image_url,
+            'cover_image_alt' => $tour->effective_cover_image_alt,
             'gallery' => $gallery,
             'gallery_images' => $this->getGalleryImagesForTour($tour),
             'gallery_videos' => $this->getGalleryVideosForTour($tour),
-            'pdf_url' => $tour->pdf_url,
+            'pdf_url' => $tour->effective_pdf_url,
 
             // Tags & classification
             'hashtags' => $this->ensureArray($tour->hashtags),
@@ -539,8 +539,8 @@ class PublicTourController extends Controller
     }
 
     /**
-     * เมนูทัวร์ต่างประเทศ - แสดงประเทศ+เมืองที่มีทัวร์ จัดกลุ่มตามทวีป
-     * เงื่อนไข: ทัวร์ status=active + มี period ที่ start_date >= วันนี้ & status=open
+     * เน€เธกเธเธนเธ—เธฑเธงเธฃเนเธ•เนเธฒเธเธเธฃเธฐเน€เธ—เธจ - เนเธชเธ”เธเธเธฃเธฐเน€เธ—เธจ+เน€เธกเธทเธญเธเธ—เธตเนเธกเธตเธ—เธฑเธงเธฃเน เธเธฑเธ”เธเธฅเธธเนเธกเธ•เธฒเธกเธ—เธงเธตเธ
+     * เน€เธเธทเนเธญเธเนเธ: เธ—เธฑเธงเธฃเน status=active + เธกเธต period เธ—เธตเน start_date >= เธงเธฑเธเธเธตเน & status=open
      * GET /tours/international-menu
      */
     public function internationalMenu(): JsonResponse
@@ -548,7 +548,7 @@ class PublicTourController extends Controller
         $today = now()->toDateString();
         $thailandId = \App\Models\Country::where('slug', 'thailand')->value('id');
 
-        // Sub-query: tour IDs ที่ active + มีรอบเดินทางในอนาคต
+        // Sub-query: tour IDs เธ—เธตเน active + เธกเธตเธฃเธญเธเน€เธ”เธดเธเธ—เธฒเธเนเธเธญเธเธฒเธเธ•
         $activeTourIds = Tour::where('status', 'active')
             ->whereHas('periods', function ($q) use ($today) {
                 $q->where('status', 'open')
@@ -563,7 +563,7 @@ class PublicTourController extends Controller
             ]);
         }
 
-        // ดึงประเทศ (ไม่รวมไทย) ที่มีทัวร์ active ผ่าน tour_countries pivot
+        // เธ”เธถเธเธเธฃเธฐเน€เธ—เธจ (เนเธกเนเธฃเธงเธกเนเธ—เธข) เธ—เธตเนเธกเธตเธ—เธฑเธงเธฃเน active เธเนเธฒเธ tour_countries pivot
         $countries = \App\Models\Country::active()
             ->when($thailandId, fn($q) => $q->where('id', '!=', $thailandId))
             ->whereHas('tours', function ($q) use ($activeTourIds) {
@@ -585,7 +585,7 @@ class PublicTourController extends Controller
             ->orderBy('name_th')
             ->get();
 
-        // แปลงเป็น flat array เรียงตามจำนวนทัวร์มากสุด + เมืองมากสุด
+        // เนเธเธฅเธเน€เธเนเธ flat array เน€เธฃเธตเธขเธเธ•เธฒเธกเธเธณเธเธงเธเธ—เธฑเธงเธฃเนเธกเธฒเธเธชเธธเธ” + เน€เธกเธทเธญเธเธกเธฒเธเธชเธธเธ”
         $result = $countries->map(function ($country) {
             return [
                 'id' => $country->id,
@@ -612,7 +612,7 @@ class PublicTourController extends Controller
     }
 
     /**
-     * รายการทัวร์ต่างประเทศ - พร้อม filter, pagination, periods
+     * เธฃเธฒเธขเธเธฒเธฃเธ—เธฑเธงเธฃเนเธ•เนเธฒเธเธเธฃเธฐเน€เธ—เธจ - เธเธฃเนเธญเธก filter, pagination, periods
      * GET /tours/international
      */
     public function internationalTours(Request $request): JsonResponse
@@ -715,8 +715,8 @@ class PublicTourController extends Controller
             'title' => $tour->title,
             'tour_type' => $tour->tour_type,
             'description' => $tour->description,
-            'cover_image_url' => $tour->cover_image_url,
-            'cover_image_alt' => $tour->cover_image_alt,
+            'cover_image_url' => $tour->effective_cover_image_url,
+            'cover_image_alt' => $tour->effective_cover_image_alt,
             'duration_days' => $tour->duration_days,
             'duration_nights' => $tour->duration_nights,
             'min_price' => $tour->min_price,
@@ -730,7 +730,7 @@ class PublicTourController extends Controller
             'available_seats' => $tour->available_seats,
             'next_departure_date' => $tour->next_departure_date,
             'total_departures' => $tour->total_departures,
-            'pdf_url' => $tour->pdf_url,
+            'pdf_url' => $tour->effective_pdf_url,
             'highlights' => $this->ensureArray($tour->highlights),
             'shopping_highlights' => $this->ensureArray($tour->shopping_highlights),
             'food_highlights' => $this->ensureArray($tour->food_highlights),
@@ -971,7 +971,7 @@ class PublicTourController extends Controller
     // ===================== Domestic Tours =====================
 
     /**
-     * เมนูทัวร์ในประเทศ - จังหวัด/เมืองที่มีทัวร์
+     * เน€เธกเธเธนเธ—เธฑเธงเธฃเนเนเธเธเธฃเธฐเน€เธ—เธจ - เธเธฑเธเธซเธงเธฑเธ”/เน€เธกเธทเธญเธเธ—เธตเนเธกเธตเธ—เธฑเธงเธฃเน
      * GET /tours/domestic-menu
      */
     public function domesticMenu(): JsonResponse
@@ -995,7 +995,7 @@ class PublicTourController extends Controller
             ]);
         }
 
-        // ดึงเมืองในไทยที่มีทัวร์ active
+        // เธ”เธถเธเน€เธกเธทเธญเธเนเธเนเธ—เธขเธ—เธตเนเธกเธตเธ—เธฑเธงเธฃเน active
         $cities = City::active()
             ->where('country_id', $thailandId)
             ->whereHas('tours', function ($q) use ($activeTourIds) {
@@ -1024,7 +1024,7 @@ class PublicTourController extends Controller
     }
 
     /**
-     * รายการทัวร์ในประเทศ (ไทย) — พร้อม filter, pagination, periods
+     * เธฃเธฒเธขเธเธฒเธฃเธ—เธฑเธงเธฃเนเนเธเธเธฃเธฐเน€เธ—เธจ (เนเธ—เธข) โ€” เธเธฃเนเธญเธก filter, pagination, periods
      * GET /tours/domestic
      */
     public function domesticTours(Request $request): JsonResponse
@@ -1116,8 +1116,8 @@ class PublicTourController extends Controller
             'title' => $tour->title,
             'tour_type' => $tour->tour_type,
             'description' => $tour->description,
-            'cover_image_url' => $tour->cover_image_url,
-            'cover_image_alt' => $tour->cover_image_alt,
+            'cover_image_url' => $tour->effective_cover_image_url,
+            'cover_image_alt' => $tour->effective_cover_image_alt,
             'duration_days' => $tour->duration_days,
             'duration_nights' => $tour->duration_nights,
             'min_price' => $tour->min_price,
@@ -1131,7 +1131,7 @@ class PublicTourController extends Controller
             'available_seats' => $tour->available_seats,
             'next_departure_date' => $tour->next_departure_date,
             'total_departures' => $tour->total_departures,
-            'pdf_url' => $tour->pdf_url,
+            'pdf_url' => $tour->effective_pdf_url,
             'highlights' => $this->ensureArray($tour->highlights),
             'shopping_highlights' => $this->ensureArray($tour->shopping_highlights),
             'food_highlights' => $this->ensureArray($tour->food_highlights),
@@ -1284,7 +1284,7 @@ class PublicTourController extends Controller
                     'id' => $c->id,
                     'name_th' => $c->name_th,
                     'country_id' => $c->country_id,
-                    'country_name' => 'ประเทศไทย',
+                    'country_name' => 'เธเธฃเธฐเน€เธ—เธจเนเธ—เธข',
                     'tour_count' => $c->tours_count,
                 ]);
         }
@@ -1334,10 +1334,10 @@ class PublicTourController extends Controller
     private function formatThaiMonth(string $yearMonth): string
     {
         $thaiMonths = [
-            '01' => 'มกราคม', '02' => 'กุมภาพันธ์', '03' => 'มีนาคม',
-            '04' => 'เมษายน', '05' => 'พฤษภาคม', '06' => 'มิถุนายน',
-            '07' => 'กรกฎาคม', '08' => 'สิงหาคม', '09' => 'กันยายน',
-            '10' => 'ตุลาคม', '11' => 'พฤศจิกายน', '12' => 'ธันวาคม',
+            '01' => 'เธกเธเธฃเธฒเธเธก', '02' => 'เธเธธเธกเธ เธฒเธเธฑเธเธเน', '03' => 'เธกเธตเธเธฒเธเธก',
+            '04' => 'เน€เธกเธฉเธฒเธขเธ', '05' => 'เธเธคเธฉเธ เธฒเธเธก', '06' => 'เธกเธดเธ–เธธเธเธฒเธขเธ',
+            '07' => 'เธเธฃเธเธเธฒเธเธก', '08' => 'เธชเธดเธเธซเธฒเธเธก', '09' => 'เธเธฑเธเธขเธฒเธขเธ',
+            '10' => 'เธ•เธธเธฅเธฒเธเธก', '11' => 'เธเธคเธจเธเธดเธเธฒเธขเธ', '12' => 'เธเธฑเธเธงเธฒเธเธก',
         ];
         
         [$year, $month] = explode('-', $yearMonth);
@@ -1525,7 +1525,7 @@ class PublicTourController extends Controller
                 'departure_date' => $minDeparture,
                 'max_departure_date' => $maxDeparture,
                 'airline' => $airline,
-                'image_url' => $t->cover_image_url,
+                'image_url' => $t->effective_cover_image_url,
                 'badge' => $t->badge,
                 'rating' => $t->rating,
                 'review_count' => $t->review_count,

@@ -34,6 +34,7 @@ use App\Http\Controllers\TourReviewAdminController;
 use App\Http\Controllers\SubscriberController;
 use App\Http\Controllers\AboutController;
 use App\Http\Controllers\FlashSaleController;
+use App\Http\Controllers\BookingController;
 use App\Http\Controllers\ContactController;
 
 /*
@@ -191,6 +192,9 @@ Route::get('blog/posts/{slug}', [BlogController::class, 'publicShow']);
 // Public About Page
 Route::get('about/public', [AboutController::class, 'publicPage']);
 
+// PDF Preview (uses token query param for auth)
+Route::get('tours/{tour}/generate-pdf', [TourController::class, 'generatePdf']);
+
 // Public Flash Sale
 Route::get('flash-sales/public', [FlashSaleController::class, 'publicActive']);
 
@@ -290,6 +294,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('tours/{tour}/recalculate', [TourController::class, 'recalculate']);
     Route::post('tours/{tour}/upload-cover-image', [TourController::class, 'uploadCoverImage']);
     Route::post('tours/{tour}/upload-pdf', [TourController::class, 'uploadPdf']);
+    Route::post('tours/{tour}/upload-custom-cover-image', [TourController::class, 'uploadCustomCoverImage']);
+    Route::post('tours/{tour}/upload-custom-pdf', [TourController::class, 'uploadCustomPdf']);
+    Route::post('tours/{tour}/set-media-source', [TourController::class, 'setMediaSource']);
+    Route::get('tours/{tour}/media-info', [TourController::class, 'getMediaInfo']);
+    Route::delete('tours/{tour}/custom-cover-image', [TourController::class, 'removeCustomCoverImage']);
+    Route::delete('tours/{tour}/custom-pdf', [TourController::class, 'removeCustomPdf']);
     Route::post('tours/mass-delete', [TourController::class, 'massDelete']);
     
     // Tour Manual Override Management (Smart Sync)
@@ -348,6 +358,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('recommended-tours/settings', [RecommendedTourController::class, 'getSettings']);
     Route::put('recommended-tours/settings', [RecommendedTourController::class, 'updateSettings']);
     Route::post('recommended-tours/preview-conditions', [RecommendedTourController::class, 'previewConditions']);
+    Route::get('recommended-tours/search-tours', [RecommendedTourController::class, 'searchTours']);
     Route::get('recommended-tours/{recommendedTourSection}/preview', [RecommendedTourController::class, 'preview']);
     Route::patch('recommended-tours/{recommendedTourSection}/toggle-status', [RecommendedTourController::class, 'toggleStatus']);
     Route::post('recommended-tours/reorder', [RecommendedTourController::class, 'reorder']);
@@ -505,6 +516,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('flash-sales/{flash_sale}/items/{item}', [FlashSaleController::class, 'removeItem']);
     Route::post('flash-sales/{flash_sale}/items/reorder', [FlashSaleController::class, 'reorderItems']);
     Route::post('flash-sales/{flash_sale}/items/mass-update-discount', [FlashSaleController::class, 'massUpdateDiscount']);
+
+    // Bookings (admin)
+    Route::get('bookings', [BookingController::class, 'index']);
+    Route::get('bookings/statistics', [BookingController::class, 'statistics']);
+    Route::get('bookings/{id}', [BookingController::class, 'show']);
+    Route::patch('bookings/{id}/status', [BookingController::class, 'updateStatus']);
 
     // Gallery Images CRUD
     Route::get('gallery/tags', [GalleryImageController::class, 'tags']);
@@ -757,6 +774,12 @@ Route::prefix('web')->group(function () {
     Route::middleware('auth:sanctum')->group(function () {
         // Auth
         Route::post('/auth/logout', [WebAuthController::class, 'logout']);
+
+        // Flash Sale Booking (requires login)
+        Route::post('/booking/flash-sale', [WebBookingController::class, 'submitFlashSale']);
+
+        // My Bookings
+        Route::get('/bookings', [WebBookingController::class, 'myBookings']);
         
         // Profile
         Route::get('/me', [WebAuthController::class, 'me']);

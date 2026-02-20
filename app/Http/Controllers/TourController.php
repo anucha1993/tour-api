@@ -6,6 +6,7 @@ use App\Models\Tour;
 use App\Models\Country;
 use App\Services\CloudflareImagesService;
 use App\Services\SlugService;
+use App\Services\TourPdfGenerator;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Str;
@@ -1106,6 +1107,296 @@ class TourController extends Controller
             'data' => [
                 'sync_locked' => $tour->sync_locked,
             ],
+        ]);
+    }
+
+    // =====================================================
+    // Custom Media Override (Cover Image + PDF Bypass)
+    // =====================================================
+
+    /**
+     * Upload custom cover image that overrides API-synced cover image.
+     * Resize to 600x600 and convert to WebP format.
+     */
+    public function uploadCustomCoverImage(Request $request, Tour $tour): JsonResponse
+    {
+        $request->validate([
+            'image' => ['required', 'image', 'max:10240'],
+            'alt' => ['nullable', 'string', 'max:255'],
+        ], [
+            'image.required' => 'กรุณาเลือกรูปภาพ',
+            'image.image' => 'ไฟล์ต้องเป็นรูปภาพ',
+            'image.max' => 'ขนาดไฟล์ต้องไม่เกิน 10MB',
+        ]);
+
+        // Delete old custom image from Cloudflare if exists
+        $oldImageUrl = $tour->custom_cover_image_url;
+        $oldImageId = null;
+        if ($oldImageUrl && str_contains($oldImageUrl, 'imagedelivery.net')) {
+            $parts = explode('/', $oldImageUrl);
+            if (count($parts) >= 5) {
+                $oldImageId = $parts[count($parts) - 2];
+            }
+        }
+
+        $file = $request->file('image');
+
+        // Process image: resize to 600x600 and convert to WebP
+        $image = Image::read($file->getRealPath());
+        $image->cover(600, 600);
+        $webpData = $image->toWebp(85)->toString();
+
+        $tempPath = sys_get_temp_dir() . '/' . uniqid('tour_custom_cover_') . '.webp';
+        file_put_contents($tempPath, $webpData);
+
+        $customId = "tours/custom/{$tour->tour_code}-custom-cover-" . time();
+
+        $result = $this->cloudflare->uploadFromFile(
+            $tempPath,
+            $customId,
+            [
+                'folder' => 'tours/custom',
+                'type' => 'custom-cover',
+                'tour_id' => $tour->id,
+                'format' => 'webp',
+                'size' => '600x600',
+            ]
+        );
+
+        @unlink($tempPath);
+
+        if (!$result) {
+            return response()->json([
+                'success' => false,
+                'message' => 'อัปโหลดรูปภาพล้มเหลว',
+            ], 500);
+        }
+
+        // Delete old custom image after successful upload
+        if ($oldImageId) {
+            $this->cloudflare->delete($oldImageId);
+        }
+
+        $altText = $request->input('alt') ?: $tour->tour_code;
+
+        $tour->custom_cover_image_url = $this->cloudflare->getDisplayUrl($result['id']);
+        $tour->custom_cover_image_alt = $altText;
+        $tour->cover_image_source = 'custom';
+        $tour->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'อัปโหลดรูปปก Custom สำเร็จ (600x600 WebP)',
+            'data' => [
+                'custom_cover_image_url' => $tour->custom_cover_image_url,
+                'custom_cover_image_alt' => $tour->custom_cover_image_alt,
+                'cover_image_source' => $tour->cover_image_source,
+                'effective_cover_image_url' => $tour->effective_cover_image_url,
+                'effective_cover_image_alt' => $tour->effective_cover_image_alt,
+            ],
+        ]);
+    }
+
+    /**
+     * Upload custom PDF that overrides API-synced PDF.
+     */
+    public function uploadCustomPdf(Request $request, Tour $tour): JsonResponse
+    {
+        $request->validate([
+            'pdf' => ['required', 'file', 'mimes:pdf', 'max:20480'], // 20MB max
+        ], [
+            'pdf.required' => 'กรุณาเลือกไฟล์ PDF',
+            'pdf.mimes' => 'ไฟล์ต้องเป็น PDF เท่านั้น',
+            'pdf.max' => 'ขนาดไฟล์ต้องไม่เกิน 20MB',
+        ]);
+
+        $file = $request->file('pdf');
+        $filename = Str::slug($tour->tour_code) . '-custom-' . time() . '.pdf';
+        $path = "tours/pdf/custom/{$filename}";
+
+        try {
+            Storage::disk('r2')->put($path, file_get_contents($file->getRealPath()), [
+                'visibility' => 'public',
+                'ContentType' => 'application/pdf',
+            ]);
+
+            $pdfUrl = config('filesystems.disks.r2.url') . '/' . $path;
+
+            $tour->custom_pdf_url = $pdfUrl;
+            $tour->pdf_source = 'custom';
+            $tour->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'อัปโหลด PDF Custom สำเร็จ',
+                'data' => [
+                    'custom_pdf_url' => $tour->custom_pdf_url,
+                    'pdf_source' => $tour->pdf_source,
+                    'effective_pdf_url' => $tour->effective_pdf_url,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'อัปโหลด PDF ล้มเหลว: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Set media source for cover image or PDF.
+     * Allows switching between 'api' and 'custom' source.
+     */
+    public function setMediaSource(Request $request, Tour $tour): JsonResponse
+    {
+        $request->validate([
+            'field' => ['required', 'in:cover_image,pdf'],
+            'source' => ['required', 'in:api,custom,generate'],
+        ]);
+
+        $field = $request->input('field');
+        $source = $request->input('source');
+
+        if ($field === 'cover_image') {
+            // Validate custom image exists when switching to custom
+            if ($source === 'custom' && !$tour->custom_cover_image_url) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'ยังไม่มีรูปปก Custom กรุณาอัปโหลดก่อน',
+                ], 422);
+            }
+            $tour->cover_image_source = $source;
+        } else {
+            // Validate custom PDF exists when switching to custom
+            if ($source === 'custom' && !$tour->custom_pdf_url) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'ยังไม่มีไฟล์ PDF Custom กรุณาอัปโหลดก่อน',
+                ], 422);
+            }
+            $tour->pdf_source = $source;
+        }
+
+        $tour->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'เปลี่ยนแหล่งข้อมูลสำเร็จ',
+            'data' => [
+                'cover_image_source' => $tour->cover_image_source,
+                'pdf_source' => $tour->pdf_source,
+                'effective_cover_image_url' => $tour->effective_cover_image_url,
+                'effective_cover_image_alt' => $tour->effective_cover_image_alt,
+                'effective_pdf_url' => $tour->effective_pdf_url,
+            ],
+        ]);
+    }
+
+    /**
+     * Get media info for a tour (both API and custom versions).
+     */
+    public function getMediaInfo(Tour $tour): JsonResponse
+    {
+        $baseUrl = rtrim(config('app.url'), '/');
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                // API source
+                'api_cover_image_url' => $tour->cover_image_url,
+                'api_cover_image_alt' => $tour->cover_image_alt,
+                'api_pdf_url' => $tour->pdf_url,
+                // Custom source
+                'custom_cover_image_url' => $tour->custom_cover_image_url,
+                'custom_cover_image_alt' => $tour->custom_cover_image_alt,
+                'custom_pdf_url' => $tour->custom_pdf_url,
+                // Generate source
+                'generate_pdf_url' => "{$baseUrl}/api/tours/{$tour->id}/generate-pdf",
+                // Current source settings
+                'cover_image_source' => $tour->cover_image_source ?? 'api',
+                'pdf_source' => $tour->pdf_source ?? 'api',
+                // Effective (what website shows)
+                'effective_cover_image_url' => $tour->effective_cover_image_url,
+                'effective_cover_image_alt' => $tour->effective_cover_image_alt,
+                'effective_pdf_url' => $tour->effective_pdf_url,
+            ],
+        ]);
+    }
+
+    /**
+     * Remove custom cover image and reset source to API.
+     */
+    public function removeCustomCoverImage(Tour $tour): JsonResponse
+    {
+        // Delete from Cloudflare if exists
+        $oldImageUrl = $tour->custom_cover_image_url;
+        if ($oldImageUrl && str_contains($oldImageUrl, 'imagedelivery.net')) {
+            $parts = explode('/', $oldImageUrl);
+            if (count($parts) >= 5) {
+                $oldImageId = $parts[count($parts) - 2];
+                $this->cloudflare->delete($oldImageId);
+            }
+        }
+
+        $tour->custom_cover_image_url = null;
+        $tour->custom_cover_image_alt = null;
+        $tour->cover_image_source = 'api';
+        $tour->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'ลบรูปปก Custom เรียบร้อย กลับไปใช้รูปจาก API',
+            'data' => [
+                'cover_image_source' => 'api',
+                'effective_cover_image_url' => $tour->effective_cover_image_url,
+                'effective_cover_image_alt' => $tour->effective_cover_image_alt,
+            ],
+        ]);
+    }
+
+    /**
+     * Remove custom PDF and reset source to API.
+     */
+    public function removeCustomPdf(Tour $tour): JsonResponse
+    {
+        $tour->custom_pdf_url = null;
+        $tour->pdf_source = 'api';
+        $tour->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'ลบ PDF Custom เรียบร้อย กลับไปใช้ PDF จาก API',
+            'data' => [
+                'pdf_source' => 'api',
+                'effective_pdf_url' => $tour->effective_pdf_url,
+            ],
+        ]);
+    }
+
+    /**
+     * Generate PDF from tour data using mPDF.
+     * Returns PDF binary for real-time preview (inline in browser).
+     * Public endpoint — no auth required (used by tour-web when pdf_source='generate').
+     * Admin can also open via ?token= from backend dashboard.
+     */
+    public function generatePdf(Request $request, Tour $tour)
+    {
+        $generator = new TourPdfGenerator();
+        $result = $generator->generate($tour);
+
+        if (!$result['success']) {
+            return response()->json([
+                'success' => false,
+                'message' => $result['message'],
+            ], 500);
+        }
+
+        $filename = $result['filename'] ?? 'tour.pdf';
+
+        return response($result['content'], 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="' . $filename . '"',
+            'Cache-Control' => 'no-cache, no-store, must-revalidate',
         ]);
     }
 }

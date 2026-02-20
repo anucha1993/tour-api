@@ -190,7 +190,7 @@ class TourTabController extends Controller
                     'nights' => $tour->duration_nights ?? $tour->nights,
                     'price' => $tour->min_price,
                     'departure_date' => $tour->next_departure_date,
-                    'image_url' => $tour->cover_image_url,
+                    'image_url' => $tour->effective_cover_image_url,
                 ];
             });
 
@@ -247,7 +247,7 @@ class TourTabController extends Controller
                     'nights' => $tour->duration_nights ?? $tour->nights,
                     'price' => $tour->min_price,
                     'departure_date' => $tour->next_departure_date,
-                    'image_url' => $tour->cover_image_url,
+                    'image_url' => $tour->effective_cover_image_url,
                     'view_count' => $tour->view_count ?? 0,
                 ];
             });
@@ -354,7 +354,7 @@ class TourTabController extends Controller
             'departure_date' => $minDeparture,
             'max_departure_date' => $maxDeparture,
             'airline' => $airline,
-            'image_url' => $tour->cover_image_url,
+            'image_url' => $tour->effective_cover_image_url,
             'badge' => $tour->badge,
             'rating' => $tour->rating,
             'review_count' => $tour->review_count,

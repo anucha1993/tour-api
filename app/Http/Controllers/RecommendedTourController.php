@@ -49,6 +49,8 @@ class RecommendedTourController extends Controller
             'conditions' => 'nullable|array',
             'conditions.*.type' => 'required|string',
             'conditions.*.value' => 'required',
+            'pinned_tour_ids' => 'nullable|array',
+            'pinned_tour_ids.*' => 'integer|exists:tours,id',
             'display_limit' => 'nullable|integer|min:1|max:50',
             'sort_by' => 'nullable|string|in:popular,price_asc,price_desc,newest,departure_date',
             'sort_order' => 'nullable|integer|min:0',
@@ -94,6 +96,8 @@ class RecommendedTourController extends Controller
             'conditions' => 'nullable|array',
             'conditions.*.type' => 'required|string',
             'conditions.*.value' => 'required',
+            'pinned_tour_ids' => 'nullable|array',
+            'pinned_tour_ids.*' => 'integer|exists:tours,id',
             'display_limit' => 'nullable|integer|min:1|max:50',
             'sort_by' => 'nullable|string|in:popular,price_asc,price_desc,newest,departure_date',
             'sort_order' => 'nullable|integer|min:0',
@@ -187,12 +191,14 @@ class RecommendedTourController extends Controller
     {
         $request->validate([
             'conditions' => 'nullable|array',
+            'pinned_tour_ids' => 'nullable|array',
             'display_limit' => 'nullable|integer|min:1|max:50',
             'sort_by' => 'nullable|string',
         ]);
 
         $section = new RecommendedTourSection([
             'conditions' => $request->conditions ?? [],
+            'pinned_tour_ids' => $request->pinned_tour_ids ?? [],
             'display_limit' => $request->display_limit ?? 8,
             'sort_by' => $request->sort_by ?? 'popular',
         ]);
@@ -402,7 +408,7 @@ class RecommendedTourController extends Controller
             'departure_date' => $minDeparture,
             'max_departure_date' => $maxDeparture,
             'airline' => $airline,
-            'image_url' => $tour->cover_image_url,
+            'image_url' => $tour->effective_cover_image_url,
             'badge' => $tour->badge,
             'rating' => $tour->rating,
             'review_count' => $tour->review_count,
@@ -437,5 +443,40 @@ class RecommendedTourController extends Controller
             ->unique('name')
             ->values()
             ->toArray();
+    }
+
+    /**
+     * Search tours for pinning (admin endpoint)
+     */
+    public function searchTours(Request $request): JsonResponse
+    {
+        $query = Tour::query()
+            ->where('status', 'active')
+            ->with('country');
+
+        if ($request->filled('q')) {
+            $q = $request->input('q');
+            $query->where(function ($qb) use ($q) {
+                $qb->where('title', 'like', "%{$q}%")
+                   ->orWhere('tour_code', 'like', "%{$q}%");
+            });
+        }
+
+        $tours = $query->orderBy('title')->limit(30)->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $tours->map(fn ($t) => [
+                'id' => $t->id,
+                'title' => $t->title,
+                'tour_code' => $t->tour_code,
+                'country_name' => $t->country?->name_th ?? $t->country?->name_en ?? '-',
+                'days' => $t->duration_days ?? $t->days,
+                'nights' => $t->duration_nights ?? $t->nights,
+                'price' => $t->min_price,
+                'image_url' => $t->effective_cover_image_url,
+                'status' => $t->status,
+            ]),
+        ]);
     }
 }

@@ -472,6 +472,8 @@ class FlashSaleController extends Controller
                         $tour = $item->tour;
                         $period = $item->period;
                         $formatted = $this->formatTourForFlash($tour, $period);
+                        $formatted['flash_sale_item_id'] = $item->id;
+                        $formatted['period_id'] = $period->id;
                         $formatted['flash_price'] = (float)$item->flash_price;
                         $formatted['original_price_snapshot'] = (float)$item->original_price;
                         $formatted['discount_percent'] = (float)$item->discount_percent;
