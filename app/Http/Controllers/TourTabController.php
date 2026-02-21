@@ -318,19 +318,30 @@ class TourTabController extends Controller
         // Calculate available seats from open future periods
         $availableSeats = $openPeriods->sum('available');
 
-        // Periods preview: up to 7 upcoming periods (sorted ascending)
+        // Periods preview: up to 4 upcoming periods (sorted ascending) with price info
         $tourDays = max(1, $tour->duration_days ?? $tour->days ?? 1);
         $sortedPeriods = $openPeriods->sortBy('start_date');
-        $periodsPreview = $sortedPeriods->take(5)->map(function ($p) use ($tourDays) {
+        $periodsPreview = $sortedPeriods->take(4)->map(function ($p) use ($tourDays, $tour) {
             $startDate = $p->start_date; // Carbon instance
             $endDate   = $p->end_date;   // Carbon instance or null
             // If end_date missing or same as start_date, calculate from tour duration
             if (!$endDate || $endDate->toDateString() === $startDate->toDateString()) {
                 $endDate = $startDate->copy()->addDays($tourDays - 1);
             }
+            
+            // Get price info from offer or tour defaults
+            $offer = $p->offer;
+            $priceAdult = $offer?->price_adult ?? $tour->price_adult;
+            $netPriceAdult = $offer?->net_price_adult ?? $tour->min_price ?? $priceAdult;
+            $discountAdult = $offer?->discount_adult ?? $tour->discount_adult ?? 0;
+            
             return [
                 'start' => $startDate->toDateString(),
                 'end'   => $endDate->toDateString(),
+                'price_adult' => $priceAdult,
+                'net_price_adult' => $netPriceAdult,
+                'discount_adult' => $discountAdult,
+                'available' => $p->available ?? 0,
             ];
         })->values()->toArray();
         $totalPeriods = $sortedPeriods->count();

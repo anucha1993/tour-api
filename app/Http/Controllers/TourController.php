@@ -99,6 +99,23 @@ class TourController extends Controller
             });
         }
 
+        // Filter by departure date range (tours that have periods within date range)
+        if ($request->filled('departure_from') || $request->filled('departure_to')) {
+            $query->whereHas('periods', function ($q) use ($request) {
+                if ($request->filled('departure_from')) {
+                    $q->where('start_date', '>=', $request->departure_from);
+                }
+                if ($request->filled('departure_to')) {
+                    $q->where('start_date', '<=', $request->departure_to);
+                }
+            });
+        }
+
+        // Filter by Wholesaler (integration)
+        if ($request->filled('wholesaler_id')) {
+            $query->where('wholesaler_id', $request->wholesaler_id);
+        }
+
         // Sort
         $sortBy = $request->get('sort_by', 'created_at');
         $sortDir = $request->get('sort_dir', 'desc');

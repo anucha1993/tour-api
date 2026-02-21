@@ -355,45 +355,75 @@ class TourSearchController extends Controller
     }
 
     /**
-     * Lookup tour codes by external_id
-     * 
-     * POST /api/tours/lookup-codes
-     * Body: { "external_ids": [{ "integration_id": 6, "external_id": "12345" }, ...] }
-     * 
-     * Supports both integration_id (config id) and wholesaler_id for backwards compatibility
-     * 
-     * Returns mapping of external_id to tour_code (null if not synced)
-     */
-    /**
      * Lookup tour sync status by wholesaler_tour_code (preferred) or external_id
      * 
-     * Frontend sends: { integration_id, wholesaler_tour_code } or { integration_id, external_id }
-     * Returns: { synced, tour_id, tour_code, sync_status }
+     * New format: { "wholesaler_tour_codes": [{ "wholesaler_tour_code": "ABC123" }, ...] }
+     * Old format: { "external_ids": [{ "integration_id": 6, "external_id": "12345" }, ...] }
+     * 
+     * Returns: { synced, tour_id, tour_code, sync_status, pdf_url }
      */
     public function lookupTourCodes(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'external_ids' => 'required|array|max:200',
-            // Support both integration_id and wholesaler_id
-            'external_ids.*.integration_id' => 'nullable|numeric',
-            'external_ids.*.wholesaler_id' => 'nullable|numeric',
-            // Support both wholesaler_tour_code and external_id for lookup
-            'external_ids.*.wholesaler_tour_code' => 'nullable|string',
-            'external_ids.*.external_id' => 'nullable|string',
-        ]);
-
         try {
             $lookupMap = [];
             
-            // Process each lookup request
+            // New format: lookup by wholesaler_tour_code (preferred - works across integrations)
+            if ($request->has('wholesaler_tour_codes')) {
+                $validated = $request->validate([
+                    'wholesaler_tour_codes' => 'required|array|max:200',
+                    'wholesaler_tour_codes.*.wholesaler_tour_code' => 'required|string',
+                ]);
+                
+                foreach ($validated['wholesaler_tour_codes'] as $item) {
+                    $wholesalerTourCode = $item['wholesaler_tour_code'];
+                    
+                    // Query tour by wholesaler_tour_code (any wholesaler)
+                    $tour = \App\Models\Tour::where('wholesaler_tour_code', $wholesalerTourCode)
+                        ->select('external_id', 'wholesaler_tour_code', 'tour_code', 'id', 'title', 'sync_status', 'pdf_url', 'custom_pdf_url', 'pdf_source')
+                        ->first();
+                    
+                    if ($tour) {
+                        $lookupMap[$wholesalerTourCode] = [
+                            'synced' => true,
+                            'tour_id' => $tour->id,
+                            'tour_code' => $tour->tour_code,
+                            'wholesaler_tour_code' => $tour->wholesaler_tour_code,
+                            'sync_status' => $tour->sync_status,
+                            'pdf_url' => $tour->effective_pdf_url,
+                        ];
+                    } else {
+                        $lookupMap[$wholesalerTourCode] = [
+                            'synced' => false,
+                            'tour_id' => null,
+                            'tour_code' => null,
+                            'wholesaler_tour_code' => null,
+                            'sync_status' => null,
+                            'pdf_url' => null,
+                        ];
+                    }
+                }
+                
+                return response()->json([
+                    'success' => true,
+                    'data' => $lookupMap,
+                ]);
+            }
+            
+            // Old format: lookup by external_id + integration_id
+            $validated = $request->validate([
+                'external_ids' => 'required|array|max:200',
+                'external_ids.*.integration_id' => 'nullable|numeric',
+                'external_ids.*.wholesaler_id' => 'nullable|numeric',
+                'external_ids.*.wholesaler_tour_code' => 'nullable|string',
+                'external_ids.*.external_id' => 'nullable|string',
+            ]);
+            
             foreach ($validated['external_ids'] as $item) {
                 $integrationId = $item['integration_id'] ?? null;
                 $wholesalerId = $item['wholesaler_id'] ?? null;
-                $wholesalerTourCode = $item['wholesaler_tour_code'] ?? null;
                 $externalId = $item['external_id'] ?? null;
                 
-                // Must have at least one lookup key
-                if (!$wholesalerTourCode && !$externalId) continue;
+                if (!$externalId) continue;
                 
                 // If integration_id is provided, convert to wholesaler_id
                 if ($integrationId && !$wholesalerId) {
@@ -405,16 +435,12 @@ class TourSearchController extends Controller
                 
                 if (!$wholesalerId) continue;
                 
-                // Create lookup key - use external_id as primary key
-                $lookupValue = $externalId;
-                if (!$lookupValue) continue;
-                
-                $key = $integrationId ? "{$integrationId}_{$lookupValue}" : "{$wholesalerId}_{$lookupValue}";
+                $key = $integrationId ? "{$integrationId}_{$externalId}" : "{$wholesalerId}_{$externalId}";
                 
                 // Query tour by external_id
                 $tour = \App\Models\Tour::where('wholesaler_id', $wholesalerId)
                     ->where('external_id', $externalId)
-                    ->select('external_id', 'wholesaler_tour_code', 'tour_code', 'id', 'title', 'sync_status')
+                    ->select('external_id', 'wholesaler_tour_code', 'tour_code', 'id', 'title', 'sync_status', 'pdf_url', 'custom_pdf_url', 'pdf_source')
                     ->first();
                 
                 if ($tour) {
@@ -424,6 +450,7 @@ class TourSearchController extends Controller
                         'tour_code' => $tour->tour_code,
                         'wholesaler_tour_code' => $tour->wholesaler_tour_code,
                         'sync_status' => $tour->sync_status,
+                        'pdf_url' => $tour->effective_pdf_url,
                     ];
                 } else {
                     $lookupMap[$key] = [
@@ -432,6 +459,7 @@ class TourSearchController extends Controller
                         'tour_code' => null,
                         'wholesaler_tour_code' => null,
                         'sync_status' => null,
+                        'pdf_url' => null,
                     ];
                 }
             }

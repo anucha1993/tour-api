@@ -125,7 +125,9 @@ class RecommendedTourSection extends Model
         }
 
         // Pinned first, then condition-based
-        return $pinnedTours->concat($conditionTours);
+        // Wrap in Eloquent Collection so load() method is available
+        $merged = $pinnedTours->concat($conditionTours);
+        return new \Illuminate\Database\Eloquent\Collection($merged->all());
     }
 
     /**
