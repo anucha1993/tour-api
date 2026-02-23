@@ -58,5 +58,25 @@ If you discover a security vulnerability within Laravel, please send an e-mail t
 
 The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
 
+## Queue Workers
 
-php artisan queue:work --queue=media
+ต้องรัน **2 workers แยกกัน** (คนละ terminal):
+
+### Worker 1: Sync Tours + Periods
+```bash
+php artisan queue:work --queue=default,periods --tries=1 --timeout=600
+```
+- `default` = SyncToursJob, `periods` = SyncPeriodsJob
+- `--tries=1` ไม่ retry (ป้องกัน MaxAttemptsExceededException)
+- `--timeout=600` (10 นาที)
+
+### Worker 2: Media Upload
+```bash
+php artisan queue:work --queue=media --tries=2 --timeout=120
+```
+- `media` = ProcessTourMediaJob (PDF → R2, Cover → Cloudflare Images)
+- `--tries=2` retry ได้ 1 ครั้ง
+- `--timeout=120` (2 นาที)
+
+> ⚠️ **ห้ามรวม media กับ default/periods ใน worker เดียวกัน!**
+> Media jobs จะ block heartbeat → sync แสดง "ค้าง" ใน UI
