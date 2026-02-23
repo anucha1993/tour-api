@@ -13,6 +13,7 @@ use App\Services\WholesalerAdapters\AdapterFactory;
 use App\Services\WholesalerAdapters\Mapper\SectionMapper;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
@@ -2695,14 +2696,32 @@ class IntegrationController extends Controller
         $pendingJobs = DB::table('jobs')->count();
         $failedJobs = DB::table('failed_jobs')->count();
         
-        // Check for stuck sync logs (running for more than 30 minutes) 
+        // Check for stuck sync logs — heartbeat หยุดเกิน 5 นาที หรือ started เกิน 10 นาทีโดยไม่มี heartbeat
         $stuckSyncs = SyncLog::where('status', 'running')
-            ->where('started_at', '<', now()->subMinutes(30))
+            ->where(function ($q) {
+                $q->where(function ($q2) {
+                    $q2->whereNotNull('last_heartbeat_at')
+                        ->where('last_heartbeat_at', '<', now()->subMinutes(5));
+                })
+                ->orWhere(function ($q2) {
+                    $q2->whereNull('last_heartbeat_at')
+                        ->where('started_at', '<', now()->subMinutes(5));
+                });
+            })
             ->get(['id', 'wholesaler_id', 'started_at', 'sync_type']);
         
-        // Currently running syncs
+        // Currently running syncs (not stuck)
         $runningSyncs = SyncLog::where('status', 'running')
-            ->where('started_at', '>=', now()->subMinutes(30))
+            ->where(function ($q) {
+                $q->where(function ($q2) {
+                    $q2->whereNotNull('last_heartbeat_at')
+                        ->where('last_heartbeat_at', '>=', now()->subMinutes(5));
+                })
+                ->orWhere(function ($q2) {
+                    $q2->whereNull('last_heartbeat_at')
+                        ->where('started_at', '>=', now()->subMinutes(5));
+                });
+            })
             ->with('wholesaler:id,name')
             ->get(['id', 'wholesaler_id', 'started_at', 'sync_type', 'total_items', 'processed_items', 'progress_percent', 'current_item_code']);
         
@@ -2750,6 +2769,37 @@ class IntegrationController extends Controller
             ], 404);
         }
 
+        // Detect if sync is stuck
+        $isStuck = false;
+        if ($syncLog->status === 'running') {
+            $isStuck = $syncLog->last_heartbeat_at 
+                ? $syncLog->last_heartbeat_at->lt(now()->subMinutes($syncLog->heartbeat_timeout_minutes ?? 5))
+                : ($syncLog->started_at ? $syncLog->started_at->lt(now()->subMinutes(5)) : false);
+            
+            // AUTO-FIX: ถ้า heartbeat หยุดเกิน 10 นาที → auto-mark as failed + release lock
+            // ไม่ต้องรอ scheduler หรือกด fixStuckSyncs เอง
+            $isHardStuck = $syncLog->last_heartbeat_at
+                ? $syncLog->last_heartbeat_at->lt(now()->subMinutes(10))
+                : ($syncLog->started_at ? $syncLog->started_at->lt(now()->subMinutes(10)) : false);
+            
+            if ($isHardStuck) {
+                $syncLog->update([
+                    'status' => 'failed',
+                    'completed_at' => now(),
+                    'error_summary' => ['message' => 'Auto-fixed: worker heartbeat stopped for 10+ minutes'],
+                ]);
+                Cache::lock("sync_lock:wholesaler:{$syncLog->wholesaler_id}")->forceRelease();
+                
+                Log::warning('getSyncProgress: Auto-fixed stuck sync', [
+                    'sync_log_id' => $syncLog->id,
+                    'last_heartbeat' => $syncLog->last_heartbeat_at,
+                ]);
+                
+                $syncLog->refresh();
+                $isStuck = false; // No longer stuck, it's failed now
+            }
+        }
+
         return response()->json([
             'success' => true,
             'data' => [
@@ -2771,9 +2821,7 @@ class IntegrationController extends Controller
                 'cancel_reason' => $syncLog->cancel_reason,
                 'last_heartbeat_at' => $syncLog->last_heartbeat_at,
                 'heartbeat_timeout_minutes' => $syncLog->heartbeat_timeout_minutes ?? 5,
-                'is_stuck' => $syncLog->last_heartbeat_at 
-                    ? $syncLog->last_heartbeat_at->lt(now()->subMinutes($syncLog->heartbeat_timeout_minutes ?? 5))
-                    : ($syncLog->started_at ? $syncLog->started_at->lt(now()->subMinutes(5)) : false),
+                'is_stuck' => $isStuck,
                 'started_at' => $syncLog->started_at,
                 'completed_at' => $syncLog->completed_at,
                 'duration_seconds' => $syncLog->started_at 
@@ -2875,14 +2923,40 @@ class IntegrationController extends Controller
 
     /**
      * Get all running syncs
+     * AUTO-FIX: ถ้า heartbeat หยุดเกิน 10 นาที → auto-mark as failed + release lock
      */
     public function getRunningSyncs(): JsonResponse
     {
         $runningSyncs = SyncLog::with('wholesaler')
             ->where('status', 'running')
             ->orderBy('started_at', 'desc')
-            ->get()
-            ->map(function ($sync) {
+            ->get();
+        
+        // AUTO-FIX: cleanup syncs ที่ค้างเกิน 10 นาที (heartbeat หยุด)
+        $autoFixed = 0;
+        $runningSyncs = $runningSyncs->filter(function ($sync) use (&$autoFixed) {
+            $isHardStuck = $sync->last_heartbeat_at
+                ? $sync->last_heartbeat_at->lt(now()->subMinutes(10))
+                : ($sync->started_at ? $sync->started_at->lt(now()->subMinutes(10)) : false);
+            
+            if ($isHardStuck) {
+                $sync->update([
+                    'status' => 'failed',
+                    'completed_at' => now(),
+                    'error_summary' => ['message' => 'Auto-fixed by getRunningSyncs: heartbeat stopped 10+ min'],
+                ]);
+                Cache::lock("sync_lock:wholesaler:{$sync->wholesaler_id}")->forceRelease();
+                Log::warning('getRunningSyncs: Auto-fixed stuck sync', [
+                    'sync_log_id' => $sync->id,
+                    'wholesaler_id' => $sync->wholesaler_id,
+                ]);
+                $autoFixed++;
+                return false; // Remove from "running" list
+            }
+            return true;
+        });
+        
+        $mapped = $runningSyncs->map(function ($sync) {
                 return [
                     'id' => $sync->id,
                     'wholesaler_id' => $sync->wholesaler_id,
@@ -2904,9 +2978,10 @@ class IntegrationController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $runningSyncs,
+            'data' => $mapped->values(),
             'meta' => [
-                'count' => $runningSyncs->count(),
+                'count' => $mapped->count(),
+                'auto_fixed' => $autoFixed,
             ],
         ]);
     }
@@ -2916,24 +2991,47 @@ class IntegrationController extends Controller
      */
     public function fixStuckSyncs(): JsonResponse
     {
+        // FIX: ลด threshold จาก 30 นาทีเป็น 10 นาที + clear cache lock ด้วย
         $stuckSyncs = SyncLog::where('status', 'running')
-            ->where('started_at', '<', now()->subMinutes(30))
+            ->where(function ($q) {
+                // Heartbeat หยุดเกิน 5 นาที
+                $q->where(function ($q2) {
+                    $q2->whereNotNull('last_heartbeat_at')
+                        ->where('last_heartbeat_at', '<', now()->subMinutes(5));
+                })
+                // หรือไม่เคย heartbeat และ started เกิน 10 นาที
+                ->orWhere(function ($q2) {
+                    $q2->whereNull('last_heartbeat_at')
+                        ->where('started_at', '<', now()->subMinutes(10));
+                })
+                // หรือ started เกิน 30 นาที (hard limit)
+                ->orWhere('started_at', '<', now()->subMinutes(30));
+            })
             ->get();
         
         $fixed = 0;
+        $releasedLocks = [];
         foreach ($stuckSyncs as $sync) {
             $sync->update([
                 'status' => 'failed',
                 'completed_at' => now(),
+                'error_summary' => ['message' => 'Fixed by fixStuckSyncs: heartbeat/timeout exceeded'],
             ]);
+            
+            // FIX: Clear cache lock ด้วย (สาเหตุหลักที่ sync ค้าง!)
+            $lockKey = "sync_lock:wholesaler:{$sync->wholesaler_id}";
+            Cache::lock($lockKey)->forceRelease();
+            $releasedLocks[] = $lockKey;
+            
             $fixed++;
         }
         
         return response()->json([
             'success' => true,
-            'message' => "Fixed {$fixed} stuck sync jobs",
+            'message' => "Fixed {$fixed} stuck sync jobs" . ($fixed > 0 ? " and released {$fixed} cache locks" : ""),
             'data' => [
                 'fixed_count' => $fixed,
+                'released_locks' => $releasedLocks,
             ],
         ]);
     }

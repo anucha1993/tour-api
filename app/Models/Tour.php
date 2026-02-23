@@ -330,12 +330,24 @@ class Tour extends Model
         // Get aggregation config (global + wholesaler override)
         $config = $this->getAggregationConfig($configOverride);
         
+        // FIX: Eager load offer + promotions ในครั้งเดียว (แก้ N+1 query)
         $openPeriods = $this->periods()
             ->where('status', 'open')
             ->where('start_date', '>=', now()->toDateString())
+            ->with(['offer.promotions' => function ($q) {
+                $q->where('is_active', true)
+                  ->where(function($q2) {
+                      $q2->whereNull('start_at')
+                        ->orWhere('start_at', '<=', now());
+                  })
+                  ->where(function($q2) {
+                      $q2->whereNull('end_at')
+                        ->orWhere('end_at', '>=', now());
+                  });
+            }])
             ->get();
 
-        // Get all prices from offers
+        // Get all prices from offers (offer already eager loaded - no extra queries)
         $prices = $openPeriods->map(fn($p) => $p->offer?->price_adult)->filter()->values();
         $netPrices = $openPeriods->map(function($p) {
             if (!$p->offer || !$p->offer->price_adult) return null;
@@ -357,23 +369,13 @@ class Tour extends Model
         // Calculate display_price from net prices (after discount)
         $displayPrice = $this->aggregateValue($netPrices->isNotEmpty() ? $netPrices : $prices, $config['display_price'] ?? 'min');
         
-        // หาส่วนลดจาก promotion (max discount)
+        // FIX: หาส่วนลดจาก promotion จาก eager-loaded data (ไม่ต้อง query ทีละ period)
         $maxPromoDiscount = 0;
         $discountLabel = null;
         foreach ($openPeriods as $period) {
-            if ($period->offer) {
-                $promo = $period->offer->promotions()
-                    ->where('is_active', true)
-                    ->where(function($q) {
-                        $q->whereNull('start_at')
-                          ->orWhere('start_at', '<=', now());
-                    })
-                    ->where(function($q) {
-                        $q->whereNull('end_at')
-                          ->orWhere('end_at', '>=', now());
-                    })
-                    ->orderByDesc('value')
-                    ->first();
+            if ($period->offer && $period->offer->promotions->isNotEmpty()) {
+                // promotions already filtered by eager load, just get max value
+                $promo = $period->offer->promotions->sortByDesc('value')->first();
                     
                 if ($promo && $promo->value > $maxPromoDiscount) {
                     $maxPromoDiscount = $promo->value;
@@ -390,7 +392,7 @@ class Tour extends Model
             ->whereNotNull('hotel_star')
             ->pluck('hotel_star');
         
-        // คำนวณ max_discount_percent
+        // FIX: คำนวณ max_discount_percent จาก eager-loaded offer (ไม่ต้อง access ซ้ำ)
         $maxDiscountPercent = 0;
         foreach ($openPeriods as $period) {
             if ($period->offer && $period->offer->price_adult > 0) {

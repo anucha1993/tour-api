@@ -43,6 +43,12 @@ class SyncPeriodsJob implements ShouldQueue
     protected ?WholesalerApiConfig $config = null;
 
     /**
+     * In-memory cache for city lookups to avoid repeated LIKE queries.
+     * Structure: ['name_key' => city_id|null]
+     */
+    protected array $cityLookupCache = [];
+
+    /**
      * Create a new job instance.
      * 
      * @param int $tourId Tour ID
@@ -62,6 +68,14 @@ class SyncPeriodsJob implements ShouldQueue
      */
     public function handle(): void
     {
+        // FIX: Reconnect DB ก่อนเริ่มงาน เพื่อป้องกัน "MySQL server has gone away"
+        try {
+            DB::reconnect();
+        } catch (\Exception $e) {
+            sleep(2);
+            DB::reconnect();
+        }
+
         Log::info('SyncPeriodsJob: Starting', [
             'tour_id' => $this->tourId,
             'external_id' => $this->externalId,
@@ -139,11 +153,15 @@ class SyncPeriodsJob implements ShouldQueue
                 ]);
             }
 
-            // Get field mappings for periods (mappings are per wholesaler_id, not integration_id)
-            $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)
-                ->where('section_name', 'departure')
+            // FIX: Query field mappings ครั้งเดียวแล้ว groupBy section (แก้ซ้ำ 3 ครั้ง)
+            $allMappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)
                 ->where('is_active', true)
-                ->get();
+                ->whereIn('section_name', ['departure', 'itinerary', 'city'])
+                ->get()
+                ->groupBy('section_name');
+
+            // Get field mappings for periods from pre-fetched collection
+            $mappings = $allMappings['departure'] ?? collect();
 
             // Process each period
             $stats = ['created' => 0, 'updated' => 0, 'skipped' => 0];
@@ -165,11 +183,11 @@ class SyncPeriodsJob implements ShouldQueue
             $itinerariesPath = $dataStructure['itineraries']['path'] ?? null;
             // Use rawData (full API response) for itineraries/cities, not periods array
             $rawData = $result->rawData ?? [];
-            $itineraryStats = $this->syncItineraries($tour, $rawData, $itinerariesPath, $this->config);
+            $itineraryStats = $this->syncItineraries($tour, $rawData, $itinerariesPath, $this->config, $allMappings);
 
             // Sync Cities (from same API response)
             $citiesPath = $dataStructure['cities']['path'] ?? null;
-            $cityStats = $this->syncCities($tour, $rawData, $citiesPath, $this->config);
+            $cityStats = $this->syncCities($tour, $rawData, $citiesPath, $this->config, $allMappings);
 
             // Sync Transport (from tour_airline in API response)
             $transportStats = $this->syncTransport($tour, $rawData);
@@ -599,9 +617,10 @@ class SyncPeriodsJob implements ShouldQueue
      * @param array $rawData Raw periods data from API
      * @param string|null $itinerariesPath Path to itinerary data (e.g., "periods[].tour_daily[].day_list[]")
      * @param WholesalerApiConfig $config
+     * @param \Illuminate\Support\Collection|null $allMappings Pre-fetched mappings grouped by section_name
      * @return array Stats
      */
-    protected function syncItineraries(Tour $tour, array $rawData, ?string $itinerariesPath, WholesalerApiConfig $config): array
+    protected function syncItineraries(Tour $tour, array $rawData, ?string $itinerariesPath, WholesalerApiConfig $config, $allMappings = null): array
     {
         $stats = ['created' => 0, 'updated' => 0, 'skipped' => 0];
         
@@ -609,11 +628,12 @@ class SyncPeriodsJob implements ShouldQueue
             return $stats;
         }
 
-        // Get itinerary mappings (mappings are per wholesaler_id)
-        $mappings = WholesalerFieldMapping::where('wholesaler_id', $this->config->wholesaler_id)
-            ->where('section_name', 'itinerary')
-            ->where('is_active', true)
-            ->get();
+        // FIX: ใช้ pre-fetched mappings ถ้ามี ไม่ต้อง query ซ้ำ
+        $mappings = $allMappings ? ($allMappings['itinerary'] ?? collect()) : 
+            WholesalerFieldMapping::where('wholesaler_id', $this->config->wholesaler_id)
+                ->where('section_name', 'itinerary')
+                ->where('is_active', true)
+                ->get();
 
         if ($mappings->isEmpty()) {
             Log::debug('SyncPeriodsJob: No itinerary mappings configured', [
@@ -960,9 +980,10 @@ class SyncPeriodsJob implements ShouldQueue
      * @param array $rawData Full API response data
      * @param string|null $citiesPath Path to city data (e.g., "tour_city[]")
      * @param WholesalerApiConfig $config
+     * @param \Illuminate\Support\Collection|null $allMappings Pre-fetched mappings grouped by section_name
      * @return array Stats
      */
-    protected function syncCities(Tour $tour, array $rawData, ?string $citiesPath, WholesalerApiConfig $config): array
+    protected function syncCities(Tour $tour, array $rawData, ?string $citiesPath, WholesalerApiConfig $config, $allMappings = null): array
     {
         $stats = ['created' => 0, 'updated' => 0, 'skipped' => 0];
         
@@ -970,11 +991,12 @@ class SyncPeriodsJob implements ShouldQueue
             return $stats;
         }
 
-        // Get city mappings (mappings are per wholesaler_id)
-        $mappings = WholesalerFieldMapping::where('wholesaler_id', $this->config->wholesaler_id)
-            ->where('section_name', 'city')
-            ->where('is_active', true)
-            ->get();
+        // FIX: ใช้ pre-fetched mappings ถ้ามี ไม่ต้อง query ซ้ำ
+        $mappings = $allMappings ? ($allMappings['city'] ?? collect()) : 
+            WholesalerFieldMapping::where('wholesaler_id', $this->config->wholesaler_id)
+                ->where('section_name', 'city')
+                ->where('is_active', true)
+                ->get();
 
         if ($mappings->isEmpty()) {
             Log::debug('SyncPeriodsJob: No city mappings configured', [
@@ -1085,7 +1107,7 @@ class SyncPeriodsJob implements ShouldQueue
     }
 
     /**
-     * Find city ID in cities table by name
+     * Find city ID in cities table by name (with in-memory cache)
      */
     protected function findCityId(array $cityData): ?int
     {
@@ -1094,6 +1116,12 @@ class SyncPeriodsJob implements ShouldQueue
         
         if (!$nameTh && !$nameEn) {
             return null;
+        }
+
+        // FIX: ใช้ in-memory cache เพื่อไม่ query LIKE ซ้ำสำหรับชื่อเมืองเดียวกัน
+        $cacheKey = 'city:' . ($nameTh ?? '') . ':' . ($nameEn ?? '');
+        if (array_key_exists($cacheKey, $this->cityLookupCache)) {
+            return $this->cityLookupCache[$cacheKey];
         }
 
         $query = DB::table('cities');
@@ -1107,7 +1135,11 @@ class SyncPeriodsJob implements ShouldQueue
         }
         
         $city = $query->first();
+        $cityId = $city?->id;
         
-        return $city?->id;
+        // Cache result (including null to avoid repeated queries)
+        $this->cityLookupCache[$cacheKey] = $cityId;
+        
+        return $cityId;
     }
 }

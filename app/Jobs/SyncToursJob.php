@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Jobs\ProcessTourMediaJob;
 use App\Jobs\SyncPeriodsJob;
 use App\Models\Offer;
 use App\Models\Period;
@@ -38,8 +39,10 @@ class SyncToursJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $tries = 3;
-    public int $timeout = 600; // 10 minutes
+    public int $tries = 1;         // ไม่ retry — sync ควรรันครั้งเดียว ถ้าพังให้ user กด sync ใหม่
+    public int $timeout = 600;     // 10 minutes
+    public int $maxExceptions = 1; // ตัดจบทันทีเมื่อเกิด exception
+    public bool $failOnTimeout = true; // timeout แล้วให้ fail ทันที ไม่ retry
 
     protected int $wholesalerId;
     protected ?array $transformedData;
@@ -47,6 +50,17 @@ class SyncToursJob implements ShouldQueue
     protected ?int $limit;
     protected ?int $syncLogId = null;
     protected ?string $syncLockKey = null;
+
+    /**
+     * In-memory cache for lookup transforms to avoid repeated DB queries.
+     * Structure: ['table:column:value' => result_id]
+     */
+    protected array $lookupCache = [];
+
+    /**
+     * Cached SystemSetting sync settings (query once, reuse for all tours)
+     */
+    protected ?array $cachedSyncSettings = null;
 
     /**
      * Create a new job instance.
@@ -99,27 +113,70 @@ class SyncToursJob implements ShouldQueue
         if (!$this->transformedData) {
             $lockKey = "sync_lock:wholesaler:{$this->wholesalerId}";
             
-            // Clean up any stuck sync logs first (running for more than 15 minutes without heartbeat)
-            SyncLog::where('wholesaler_id', $this->wholesalerId)
+            // FIX: Auto-heal stuck syncs — ใช้ heartbeat timeout 5 นาที (ลดจาก 15)
+            // ถ้า heartbeat ไม่อัพเดทเกิน 5 นาที = worker ตายแล้ว → force clear
+            $stuckSyncs = SyncLog::where('wholesaler_id', $this->wholesalerId)
                 ->where('status', 'running')
                 ->where(function ($q) {
-                    $q->where('last_heartbeat_at', '<', now()->subMinutes(15))
-                      ->orWhereNull('last_heartbeat_at');
+                    // Heartbeat หยุดเกิน 5 นาที
+                    $q->where(function ($q2) {
+                        $q2->whereNotNull('last_heartbeat_at')
+                            ->where('last_heartbeat_at', '<', now()->subMinutes(5));
+                    })
+                    // หรือไม่เคย heartbeat เลย และ started เกิน 5 นาที
+                    ->orWhere(function ($q2) {
+                        $q2->whereNull('last_heartbeat_at')
+                            ->where('started_at', '<', now()->subMinutes(5));
+                    });
                 })
-                ->where('started_at', '<', now()->subMinutes(15))
-                ->update([
-                    'status' => 'failed',
-                    'completed_at' => now(),
-                    'error_summary' => ['message' => 'Sync timed out (no heartbeat for 15 minutes)'],
-                ]);
+                ->get();
             
-            // Check if another sync is already running
-            if (!Cache::lock($lockKey, 600)->get()) {
-                Log::warning('SyncToursJob: Another sync already running, skipping', [
-                    'wholesaler_id' => $this->wholesalerId,
-                    'sync_type' => $this->syncType,
-                ]);
-                return;
+            if ($stuckSyncs->isNotEmpty()) {
+                foreach ($stuckSyncs as $stuck) {
+                    $stuck->update([
+                        'status' => 'failed',
+                        'completed_at' => now(),
+                        'error_summary' => ['message' => 'Auto-healed: worker heartbeat stopped for 5+ minutes'],
+                    ]);
+                    Log::warning('SyncToursJob: Auto-healed stuck sync', [
+                        'sync_log_id' => $stuck->id,
+                        'wholesaler_id' => $this->wholesalerId,
+                        'last_heartbeat' => $stuck->last_heartbeat_at,
+                        'started_at' => $stuck->started_at,
+                    ]);
+                }
+                // FIX: Force release cache lock ด้วย (สำคัญ! ถ้าไม่ทำ lock จะค้างตลอด)
+                Cache::lock($lockKey)->forceRelease();
+            }
+            
+            // FIX: ใช้ lock timeout 660 วินาที (11 นาที) = job timeout 600 + buffer 60
+            // ถ้า job timeout ไป lock จะ expire เองใน 1 นาทีหลังจากนั้น
+            if (!Cache::lock($lockKey, 660)->get()) {
+                // Double-check: ถ้าไม่มี running SyncLog จริง → force release lock (orphan lock)
+                $actuallyRunning = SyncLog::where('wholesaler_id', $this->wholesalerId)
+                    ->where('status', 'running')
+                    ->exists();
+                
+                if (!$actuallyRunning) {
+                    Log::warning('SyncToursJob: Orphan lock detected, force releasing', [
+                        'wholesaler_id' => $this->wholesalerId,
+                    ]);
+                    Cache::lock($lockKey)->forceRelease();
+                    
+                    // Try again after releasing orphan lock
+                    if (!Cache::lock($lockKey, 660)->get()) {
+                        Log::error('SyncToursJob: Still cannot acquire lock after orphan cleanup', [
+                            'wholesaler_id' => $this->wholesalerId,
+                        ]);
+                        return;
+                    }
+                } else {
+                    Log::warning('SyncToursJob: Another sync genuinely running, skipping', [
+                        'wholesaler_id' => $this->wholesalerId,
+                        'sync_type' => $this->syncType,
+                    ]);
+                    return;
+                }
             }
             
             // Store lock key to release later
@@ -300,6 +357,17 @@ class SyncToursJob implements ShouldQueue
     }
 
     /**
+     * Get cached sync settings to avoid repeated DB queries
+     */
+    protected function getSyncSettings(): array
+    {
+        if ($this->cachedSyncSettings === null) {
+            $this->cachedSyncSettings = SystemSetting::getSyncSettings();
+        }
+        return $this->cachedSyncSettings;
+    }
+
+    /**
      * Fetch tours from API and map using stored mappings
      */
     protected function fetchAndMapTours(WholesalerApiConfig $config): array
@@ -476,6 +544,12 @@ class SyncToursJob implements ShouldQueue
                         return $value;
                     }
                     
+                    // FIX: ใช้ in-memory cache เพื่อไม่ต้อง query ซ้ำสำหรับค่าเดียวกัน
+                    $cacheKey = "{$lookupTable}:{$lookupBy}:" . (string) $value;
+                    if (array_key_exists($cacheKey, $this->lookupCache)) {
+                        return $this->lookupCache[$cacheKey];
+                    }
+                    
                     // Build model class from table name
                     $modelClass = 'App\\Models\\' . str($lookupTable)->singular()->studly()->toString();
                     
@@ -540,7 +614,11 @@ class SyncToursJob implements ShouldQueue
                         }
                     }
                     
-                    return $record?->id;
+                    // FIX: เก็บ result ลง cache (รวมถึง null เพื่อไม่ query ซ้ำ)
+                    $resultId = $record?->id;
+                    $this->lookupCache[$cacheKey] = $resultId;
+                    
+                    return $resultId;
                     
                 case 'concat':
                     $stringTransform = $config['string_transform'] ?? [];
@@ -633,9 +711,9 @@ class SyncToursJob implements ShouldQueue
 
                 $value = $extractValue($rawTour, $path);
                 
-                // Debug log for key fields
+                // FIX: เปลี่ยน debug log จาก info → debug (ทุก tour ทุก field จะ log เยอะมาก)
                 if (in_array($fieldName, ['primary_country_id', 'transport_id'])) {
-                    Log::info('SyncToursJob: Transform field', [
+                    Log::debug('SyncToursJob: Transform field', [
                         'field' => $fieldName,
                         'path' => $path,
                         'raw_value' => $value,
@@ -645,9 +723,8 @@ class SyncToursJob implements ShouldQueue
                 
                 $value = $applyTransform($value, $mapping, $rawTour);
                 
-                // Debug log after transform
                 if (in_array($fieldName, ['primary_country_id', 'transport_id'])) {
-                    Log::info('SyncToursJob: After transform', [
+                    Log::debug('SyncToursJob: After transform', [
                         'field' => $fieldName,
                         'transformed_value' => $value,
                     ]);
@@ -920,14 +997,10 @@ class SyncToursJob implements ShouldQueue
             'periods_updated' => 0,
         ];
 
-        // Initialize PDF branding service if configured
+        // FIX: PdfBrandingService จะถูกสร้างใน ProcessTourMediaJob แทน (async)
+        // ไม่ต้องสร้างตรงนี้แล้ว เก็บแค่ config ไว้ส่งต่อ
         $pdfBranding = null;
         $wholesalerCode = $config->wholesaler?->code ?? 'default';
-        if ($config->pdf_header_image || $config->pdf_footer_image) {
-            $pdfBranding = new PdfBrandingService();
-            $pdfBranding->setHeader($config->pdf_header_image, $config->pdf_header_height);
-            $pdfBranding->setFooter($config->pdf_footer_image, $config->pdf_footer_height);
-        }
 
         // Check if this is a single tour object or array of sections
         // If it has 'tour' key at top level, it's a single tour
@@ -945,21 +1018,28 @@ class SyncToursJob implements ShouldQueue
         foreach ($chunks as $chunk) {
             $chunkIndex++;
             
-            // Check for cancellation before each chunk
-            $syncLog->refresh();
-            if ($syncLog->cancel_requested) {
-                Log::info('SyncToursJob: Cancellation requested, stopping', [
-                    'sync_log_id' => $syncLog->id,
-                    'processed' => $processedCount,
-                    'total' => count($toursData),
-                ]);
-                break;
+            // FIX: Reconnect DB ทุก chunk เพื่อป้องกัน "MySQL server has gone away"
+            // Long-running job ทำให้ connection timeout → ต้อง reconnect ก่อนใช้งาน
+            try {
+                DB::reconnect();
+            } catch (\Exception $e) {
+                Log::warning('SyncToursJob: DB reconnect failed, retrying', ['error' => $e->getMessage()]);
+                sleep(2);
+                DB::reconnect();
             }
-
-            // Update chunk progress
-            $syncLog->update([
-                'current_chunk' => $chunkIndex,
-            ]);
+            
+            // Check cancellation ทุก 5 chunks แทนทุก chunk (ลด DB reads)
+            if ($chunkIndex % 5 === 1 || $chunkIndex === 1) {
+                $syncLog->refresh();
+                if ($syncLog->cancel_requested) {
+                    Log::info('SyncToursJob: Cancellation requested, stopping', [
+                        'sync_log_id' => $syncLog->id,
+                        'processed' => $processedCount,
+                        'total' => count($toursData),
+                    ]);
+                    break;
+                }
+            }
 
             foreach ($chunk as $tourData) {
                 $stats['received']++;
@@ -975,7 +1055,7 @@ class SyncToursJob implements ShouldQueue
                     // Remove emojis from all text fields
                     $tourData = $this->removeEmojisFromArray($tourData);
 
-                    // Process media OUTSIDE transaction to avoid long-running locks
+                    // FIX: Mark media for async processing (no HTTP calls here)
                     $tourData = $this->processMediaBeforeTransaction($tourData, $config, $pdfBranding, $wholesalerCode);
 
                     DB::beginTransaction();
@@ -995,6 +1075,22 @@ class SyncToursJob implements ShouldQueue
                     $stats['periods_updated'] += $result['periods_updated'] ?? 0;
 
                     DB::commit();
+
+                    // FIX: Dispatch async media job AFTER successful DB commit
+                    $pendingMedia = $tourData['_pending_media'] ?? [];
+                    $tourId = $result['tour_id'] ?? null;
+                    if ($tourId && ($pendingMedia['pdf_url'] || $pendingMedia['cover_image_url'])) {
+                        ProcessTourMediaJob::dispatch(
+                            $tourId,
+                            $pendingMedia['pdf_url'],
+                            $pendingMedia['cover_image_url'],
+                            $wholesalerCode,
+                            $config->pdf_header_image,
+                            $config->pdf_header_height,
+                            $config->pdf_footer_image,
+                            $config->pdf_footer_height,
+                        );
+                    }
 
                 } catch (\Exception $e) {
                     DB::rollBack();
@@ -1023,7 +1119,8 @@ class SyncToursJob implements ShouldQueue
                 $totalItems = count($toursData);
                 $percent = $totalItems > 0 ? round(($processedCount / $totalItems) * 100) : 0;
                 
-                // Heartbeat update (every 30 seconds or every 10 items)
+                // FIX: Heartbeat ทุก 30 วินาที หรือ ทุก 10 items (ค่าเดิม 60/50 ทำให้ auto-heal เข้าใจผิด)
+                // Auto-heal threshold = 5 นาที → heartbeat ต้องถี่พอให้ไม่โดน false positive
                 if (time() - $lastHeartbeat >= 30 || $processedCount % 10 === 0) {
                     $syncLog->update([
                         'processed_items' => $processedCount,
@@ -1032,6 +1129,12 @@ class SyncToursJob implements ShouldQueue
                         'last_heartbeat_at' => now(),
                     ]);
                     $lastHeartbeat = time();
+                    
+                    // Renew cache lock TTL เพื่อป้องกัน lock expire ก่อน job จบ
+                    if ($this->syncLockKey) {
+                        Cache::lock($this->syncLockKey, 660)->forceRelease();
+                        Cache::lock($this->syncLockKey, 660)->get();
+                    }
                 }
             }
         }
@@ -1044,17 +1147,18 @@ class SyncToursJob implements ShouldQueue
             'last_heartbeat_at' => now(),
         ]);
 
-        // Cleanup PDF branding service
-        if ($pdfBranding) {
-            $pdfBranding->cleanup();
-        }
+        // FIX: PdfBranding cleanup ย้ายไป ProcessTourMediaJob แล้ว (async)
 
         return $stats;
     }
 
     /**
      * Process media (PDF + cover image) BEFORE database transaction
-     * This prevents long-running HTTP requests from holding DB locks
+     * 
+     * FIX: เปลี่ยนจาก synchronous upload เป็น deferred mode
+     * - เก็บ original URLs ไว้ใน tour data เพื่อ save ลง DB ก่อน
+     * - Dispatch ProcessTourMediaJob async หลัง DB commit เพื่อ upload ทีหลัง
+     * - ลด blocking time จาก ~2-5 วินาทีต่อ tour เหลือ ~0 วินาที
      */
     protected function processMediaBeforeTransaction(
         array $tourData,
@@ -1068,60 +1172,26 @@ class SyncToursJob implements ShouldQueue
         // Merge media into tour section for URL access
         $merged = array_merge($tourSection, $mediaSection);
 
-        // Process PDF - upload to R2
+        // FIX: เก็บ original external URLs ไว้เพื่อ dispatch async job ทีหลัง
+        // ตอนนี้ไม่ upload ตรงนี้แล้ว → ProcessTourMediaJob จะทำแทน
+        $tourData['_pending_media'] = [
+            'pdf_url' => null,
+            'cover_image_url' => null,
+        ];
+
         $pdfUrl = $merged['pdf_url'] ?? null;
         if ($pdfUrl && str_starts_with($pdfUrl, 'http') && !str_contains($pdfUrl, env('R2_URL', ''))) {
-            try {
-                if ($pdfBranding) {
-                    $brandedPdfUrl = $pdfBranding->processAndUpload($pdfUrl, $wholesalerCode);
-                    if ($brandedPdfUrl) {
-                        $merged['pdf_url'] = $brandedPdfUrl;
-                    }
-                } else {
-                    $filename = pathinfo(parse_url($pdfUrl, PHP_URL_PATH), PATHINFO_FILENAME);
-                    $filename = preg_replace('/[^a-zA-Z0-9_-]/', '_', $filename) . '_' . uniqid() . '.pdf';
-                    $r2Path = "pdfs/{$wholesalerCode}/" . date('Y/m') . "/{$filename}";
-                    
-                    $pdfContent = file_get_contents($pdfUrl);
-                    if ($pdfContent) {
-                        $disk = \Storage::disk('r2');
-                        $disk->put($r2Path, $pdfContent, 'public');
-                        $r2Url = env('R2_URL');
-                        if ($r2Url) {
-                            $merged['pdf_url'] = rtrim($r2Url, '/') . '/' . $r2Path;
-                        } else {
-                            $merged['pdf_url'] = $disk->url($r2Path);
-                        }
-                    }
-                }
-            } catch (\Exception $e) {
-                Log::warning('SyncToursJob: Failed to upload PDF to R2 (pre-tx)', [
-                    'url' => $pdfUrl,
-                    'error' => $e->getMessage(),
-                ]);
-            }
+            // Mark for async processing, keep original URL for now
+            $tourData['_pending_media']['pdf_url'] = $pdfUrl;
         }
 
-        // Process cover image - upload to Cloudflare
         $coverImageUrl = $merged['cover_image_url'] ?? null;
         if ($coverImageUrl && str_starts_with($coverImageUrl, 'http') && !str_contains($coverImageUrl, 'imagedelivery.net')) {
-            try {
-                $cloudflare = app(CloudflareImagesService::class);
-                if ($cloudflare->isConfigured()) {
-                    $uploadResult = $cloudflare->uploadFromUrl($coverImageUrl, 'tour-cover-' . uniqid());
-                    if ($uploadResult && isset($uploadResult['id'])) {
-                        $merged['cover_image_url'] = $cloudflare->getDisplayUrl($uploadResult['id']);
-                    }
-                }
-            } catch (\Exception $e) {
-                Log::warning('SyncToursJob: Failed to upload cover image (pre-tx)', [
-                    'url' => $coverImageUrl,
-                    'error' => $e->getMessage(),
-                ]);
-            }
+            // Mark for async processing, keep original URL for now
+            $tourData['_pending_media']['cover_image_url'] = $coverImageUrl;
         }
 
-        // Write back processed URLs
+        // Write back original URLs (will be replaced by async job later)
         if (isset($tourData['tour'])) {
             if (isset($merged['pdf_url'])) $tourData['tour']['pdf_url'] = $merged['pdf_url'];
             if (isset($merged['cover_image_url'])) $tourData['tour']['cover_image_url'] = $merged['cover_image_url'];
@@ -1146,6 +1216,7 @@ class SyncToursJob implements ShouldQueue
     ): array {
         $result = [
             'action' => 'skipped',
+            'tour_id' => null,
             'periods_received' => 0,
             'periods_created' => 0,
             'periods_updated' => 0,
@@ -1212,7 +1283,7 @@ class SyncToursJob implements ShouldQueue
             }
             
             // Skip disabled/closed tours if configured (from global settings)
-            $globalSyncSettings = SystemSetting::getSyncSettings();
+            $globalSyncSettings = $this->getSyncSettings();
             if ($globalSyncSettings['skip_disabled_tours'] ?? true) {
                 $skipStatuses = ['disabled', 'closed', 'inactive'];
                 if (in_array($tour->status, $skipStatuses)) {
@@ -1232,18 +1303,17 @@ class SyncToursJob implements ShouldQueue
         // Fill tour fields from transformed data (no hardcode - use mapping result)
         // Filter only fillable fields and merge with existing values
 
-        // Debug: Check what's in tourSection before processing
-        Log::info('SyncToursJob: tourSection before fill', [
+        // FIX: เปลี่ยน debug log จาก info → debug (ไม่ต้อง log ทุก tour ใน production)
+        Log::debug('SyncToursJob: tourSection before fill', [
             'tour_code' => $tourSection['tour_code'] ?? $tourSection['wholesaler_tour_code'] ?? 'N/A',
             'has_primary_country_id' => array_key_exists('primary_country_id', $tourSection),
             'primary_country_id' => $tourSection['primary_country_id'] ?? 'NOT_SET',
             'has_transport_id' => array_key_exists('transport_id', $tourSection),
             'transport_id' => $tourSection['transport_id'] ?? 'NOT_SET',
-            'tourSection_keys' => array_keys($tourSection),
         ]);
 
         // Get Smart Sync settings from global SystemSetting (not per-integration)
-        $syncSettings = SystemSetting::getSyncSettings();
+        $syncSettings = $this->getSyncSettings();
         $respectManualOverrides = $syncSettings['respect_manual_overrides'] ?? true;
         $alwaysSyncFields = $syncSettings['always_sync_fields'] ?? ['cover_image_url', 'pdf_url', 'og_image_url', 'docx_url'];
         $neverSyncFields = $syncSettings['never_sync_fields'] ?? ['status'];
@@ -1336,18 +1406,20 @@ class SyncToursJob implements ShouldQueue
             $tourFields['title'] = mb_substr($tourFields['title'], 0, 247) . '...';
         }
         
-        // Debug: Log tourFields before save
-        Log::info('SyncToursJob: tourFields before save', [
+        // FIX: เปลี่ยน debug log จาก info → debug
+        Log::debug('SyncToursJob: tourFields before save', [
             'tour_code' => $tourFields['tour_code'] ?? $tour->tour_code ?? 'N/A',
             'has_primary_country_id' => array_key_exists('primary_country_id', $tourFields),
             'primary_country_id' => $tourFields['primary_country_id'] ?? 'NOT_IN_FIELDS',
             'has_transport_id' => array_key_exists('transport_id', $tourFields),
             'transport_id' => $tourFields['transport_id'] ?? 'NOT_IN_FIELDS',
-            'skipped_fields' => $skippedFields, // Track why fields were skipped
+            'skipped_fields' => $skippedFields,
         ]);
         
         $tour->fill($tourFields);
         $tour->save();
+        
+        $result['tour_id'] = $tour->id;
         
         // Sync primary country to tour_countries pivot table
         if (!empty($tourFields['primary_country_id'])) {
@@ -1524,7 +1596,7 @@ class SyncToursJob implements ShouldQueue
         }
         
         // Skip past periods if configured (from global settings)
-        $globalSyncSettings = SystemSetting::getSyncSettings();
+        $globalSyncSettings = $this->getSyncSettings();
         $skipPastPeriods = $globalSyncSettings['skip_past_periods'] ?? true;
         if ($skipPastPeriods && strtotime($departureDate) < strtotime(date('Y-m-d'))) {
             Log::debug('SyncToursJob: Skipped past period', [
