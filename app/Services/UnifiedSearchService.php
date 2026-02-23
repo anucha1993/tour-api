@@ -109,6 +109,16 @@ class UnifiedSearchService
         $transformedTours = [];
         foreach ($result->tours as $tour) {
             $transformed = $transformService->transformToUnified($tour, 'tour');
+            
+            // Also transform media section (for cover_image_url, pdf_url, etc.)
+            $mediaTransformed = $transformService->transformToUnified($tour, 'media');
+            // Merge media fields into tour (don't override existing and skip _raw)
+            foreach ($mediaTransformed as $key => $value) {
+                if ($key !== '_raw' && !isset($transformed[$key]) && $value !== null) {
+                    $transformed[$key] = $value;
+                }
+            }
+            
             $transformed['_wholesaler_id'] = $wholesalerId;
             $transformed['_wholesaler_name'] = $config->wholesaler?->name;
             $transformed['_integration_id'] = $config->id; // Add integration_id for frontend lookup
