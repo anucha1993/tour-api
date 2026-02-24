@@ -69,6 +69,16 @@ class SyncToursJob implements ShouldQueue
     protected ?array $cachedSyncSettings = null;
 
     /**
+     * Max retries for DB operations
+     */
+    protected int $dbMaxRetries = 3;
+    
+    /**
+     * Delay between DB retries (seconds)
+     */
+    protected int $dbRetryDelay = 2;
+
+    /**
      * Create a new job instance.
      * 
      * @param int $wholesalerId Wholesaler ID
@@ -241,6 +251,11 @@ class SyncToursJob implements ShouldQueue
                 'current_chunk' => 0,
                 'last_heartbeat_at' => now(),
             ]);
+            
+            Log::info('SyncToursJob: Starting processTours', [
+                'wholesaler_id' => $this->wholesalerId,
+                'total_items' => $totalItems,
+            ]);
 
             // Process tours in chunks
             $stats = $this->processTours($toursData, $config, $syncLog);
@@ -255,24 +270,26 @@ class SyncToursJob implements ShouldQueue
                 $finalStatus = 'partial';
             }
 
-            // Update sync log
-            $syncLog->update([
-                'status' => $finalStatus,
-                'completed_at' => now(),
-                'duration_seconds' => abs(now()->diffInSeconds($syncLog->started_at)),
-                'tours_received' => $stats['received'],
-                'tours_created' => $stats['created'],
-                'tours_updated' => $stats['updated'],
-                'tours_skipped' => $stats['skipped'],
-                'tours_failed' => $stats['errors'],
-                'periods_received' => $stats['periods_received'],
-                'periods_created' => $stats['periods_created'],
-                'periods_updated' => $stats['periods_updated'],
-                'error_count' => $stats['errors'],
-                'progress_percent' => 100,
-                'cancelled_at' => $syncLog->cancel_requested ? now() : null,
-                'cancel_reason' => $syncLog->cancel_requested ? 'User requested cancellation' : null,
-            ]);
+            // Update sync log with retry for connection issues
+            $this->safeDbOperation(function() use ($syncLog, $finalStatus, $stats) {
+                $syncLog->update([
+                    'status' => $finalStatus,
+                    'completed_at' => now(),
+                    'duration_seconds' => abs(now()->diffInSeconds($syncLog->started_at)),
+                    'tours_received' => $stats['received'],
+                    'tours_created' => $stats['created'],
+                    'tours_updated' => $stats['updated'],
+                    'tours_skipped' => $stats['skipped'],
+                    'tours_failed' => $stats['errors'],
+                    'periods_received' => $stats['periods_received'],
+                    'periods_created' => $stats['periods_created'],
+                    'periods_updated' => $stats['periods_updated'],
+                    'error_count' => $stats['errors'],
+                    'progress_percent' => 100,
+                    'cancelled_at' => $syncLog->cancel_requested ? now() : null,
+                    'cancel_reason' => $syncLog->cancel_requested ? 'User requested cancellation' : null,
+                ]);
+            }, 'final sync log update');
 
             Log::info('SyncToursJob: Completed', [
                 'wholesaler_id' => $this->wholesalerId,
@@ -287,12 +304,22 @@ class SyncToursJob implements ShouldQueue
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            $syncLog->update([
-                'status' => 'failed',
-                'completed_at' => now(),
-                'duration_seconds' => abs(now()->diffInSeconds($syncLog->started_at)),
-                'error_summary' => ['message' => $e->getMessage()],
-            ]);
+            // Try to update sync log with error (may fail if DB connection is lost)
+            try {
+                $this->ensureDbConnection();
+                $syncLog->update([
+                    'status' => 'failed',
+                    'completed_at' => now(),
+                    'duration_seconds' => abs(now()->diffInSeconds($syncLog->started_at)),
+                    'error_summary' => ['message' => $e->getMessage()],
+                ]);
+            } catch (\Exception $dbError) {
+                Log::error('SyncToursJob: Could not update sync log on failure', [
+                    'sync_log_id' => $syncLog->id ?? null,
+                    'original_error' => $e->getMessage(),
+                    'db_error' => $dbError->getMessage(),
+                ]);
+            }
 
             // Send notification
             try {
@@ -320,7 +347,14 @@ class SyncToursJob implements ShouldQueue
     protected function releaseSyncLock(): void
     {
         if ($this->syncLockKey) {
-            Cache::lock($this->syncLockKey)->forceRelease();
+            try {
+                Cache::lock($this->syncLockKey)->forceRelease();
+            } catch (\Exception $e) {
+                Log::warning('SyncToursJob: Failed to release lock', [
+                    'lock_key' => $this->syncLockKey,
+                    'error' => $e->getMessage(),
+                ]);
+            }
             $this->syncLockKey = null;
         }
     }
@@ -333,14 +367,23 @@ class SyncToursJob implements ShouldQueue
         // Release lock on failure
         $this->releaseSyncLock();
         
-        // Mark any running sync logs as failed
-        SyncLog::where('wholesaler_id', $this->wholesalerId)
-            ->where('status', 'running')
-            ->update([
-                'status' => 'failed',
-                'completed_at' => now(),
-                'error_summary' => ['message' => $exception?->getMessage() ?? 'Job failed'],
+        // Mark any running sync logs as failed (try with connection recovery)
+        try {
+            $this->ensureDbConnection();
+            SyncLog::where('wholesaler_id', $this->wholesalerId)
+                ->where('status', 'running')
+                ->update([
+                    'status' => 'failed',
+                    'completed_at' => now(),
+                    'error_summary' => ['message' => $exception?->getMessage() ?? 'Job failed'],
+                ]);
+        } catch (\Exception $e) {
+            Log::error('SyncToursJob: Failed to update sync log on job failure', [
+                'wholesaler_id' => $this->wholesalerId,
+                'original_error' => $exception?->getMessage(),
+                'db_error' => $e->getMessage(),
             ]);
+        }
         
         Log::error('SyncToursJob: Job failed permanently', [
             'wholesaler_id' => $this->wholesalerId,
@@ -992,6 +1035,11 @@ class SyncToursJob implements ShouldQueue
      */
     protected function processTours(array $toursData, WholesalerApiConfig $config, SyncLog $syncLog): array
     {
+        Log::info('SyncToursJob::processTours: Starting', [
+            'wholesaler_id' => $this->wholesalerId,
+            'tours_count' => count($toursData),
+        ]);
+        
         $stats = [
             'received' => 0,
             'created' => 0,
@@ -1024,19 +1072,19 @@ class SyncToursJob implements ShouldQueue
         foreach ($chunks as $chunk) {
             $chunkIndex++;
             
-            // FIX: Reconnect DB ทุก chunk เพื่อป้องกัน "MySQL server has gone away"
-            // Long-running job ทำให้ connection timeout → ต้อง reconnect ก่อนใช้งาน
-            try {
-                DB::reconnect();
-            } catch (\Exception $e) {
-                Log::warning('SyncToursJob: DB reconnect failed, retrying', ['error' => $e->getMessage()]);
-                sleep(2);
-                DB::reconnect();
-            }
+            // FIX: Ensure DB connection is alive before each chunk
+            $this->ensureDbConnection();
+            
+            // Update heartbeat with retry
+            $this->safeDbOperation(function() use ($syncLog) {
+                $syncLog->update(['last_heartbeat_at' => now()]);
+            }, 'heartbeat update');
             
             // Check cancellation ทุก 5 chunks แทนทุก chunk (ลด DB reads)
             if ($chunkIndex % 5 === 1 || $chunkIndex === 1) {
-                $syncLog->refresh();
+                $this->safeDbOperation(function() use ($syncLog) {
+                    $syncLog->refresh();
+                }, 'refresh sync log');
                 if ($syncLog->cancel_requested) {
                     Log::info('SyncToursJob: Cancellation requested, stopping', [
                         'sync_log_id' => $syncLog->id,
@@ -1128,18 +1176,24 @@ class SyncToursJob implements ShouldQueue
                 // FIX: Heartbeat ทุก 30 วินาที หรือ ทุก 10 items (ค่าเดิม 60/50 ทำให้ auto-heal เข้าใจผิด)
                 // Auto-heal threshold = 5 นาที → heartbeat ต้องถี่พอให้ไม่โดน false positive
                 if (time() - $lastHeartbeat >= 30 || $processedCount % 10 === 0) {
-                    $syncLog->update([
-                        'processed_items' => $processedCount,
-                        'progress_percent' => $percent,
-                        'current_item_code' => $currentTourCode,
-                        'last_heartbeat_at' => now(),
-                    ]);
+                    $this->safeDbOperation(function() use ($syncLog, $processedCount, $percent, $currentTourCode) {
+                        $syncLog->update([
+                            'processed_items' => $processedCount,
+                            'progress_percent' => $percent,
+                            'current_item_code' => $currentTourCode,
+                            'last_heartbeat_at' => now(),
+                        ]);
+                    }, 'progress update');
                     $lastHeartbeat = time();
                     
                     // Renew cache lock TTL เพื่อป้องกัน lock expire ก่อน job จบ
                     if ($this->syncLockKey) {
-                        Cache::lock($this->syncLockKey, 660)->forceRelease();
-                        Cache::lock($this->syncLockKey, 660)->get();
+                        try {
+                            Cache::lock($this->syncLockKey, 660)->forceRelease();
+                            Cache::lock($this->syncLockKey, 660)->get();
+                        } catch (\Exception $e) {
+                            Log::warning('SyncToursJob: Lock renewal failed', ['error' => $e->getMessage()]);
+                        }
                     }
                 }
             }
@@ -1147,11 +1201,13 @@ class SyncToursJob implements ShouldQueue
 
         // Final heartbeat update
         $totalItems = count($toursData);
-        $syncLog->update([
-            'processed_items' => $processedCount,
-            'progress_percent' => $totalItems > 0 ? round(($processedCount / $totalItems) * 100) : 100,
-            'last_heartbeat_at' => now(),
-        ]);
+        $this->safeDbOperation(function() use ($syncLog, $processedCount, $totalItems) {
+            $syncLog->update([
+                'processed_items' => $processedCount,
+                'progress_percent' => $totalItems > 0 ? round(($processedCount / $totalItems) * 100) : 100,
+                'last_heartbeat_at' => now(),
+            ]);
+        }, 'final progress update');
 
         // FIX: PdfBranding cleanup ย้ายไป ProcessTourMediaJob แล้ว (async)
 
@@ -2200,5 +2256,98 @@ class SyncToursJob implements ShouldQueue
             }
         }
         return $data;
+    }
+
+    /**
+     * Ensure database connection is alive, reconnect if needed
+     * Handles "MySQL server has gone away" errors
+     */
+    protected function ensureDbConnection(): void
+    {
+        for ($attempt = 1; $attempt <= $this->dbMaxRetries; $attempt++) {
+            try {
+                // Test connection with simple query
+                DB::connection()->getPdo();
+                
+                // Connection is alive
+                return;
+            } catch (\Exception $e) {
+                $errorMessage = $e->getMessage();
+                $isConnectionError = str_contains($errorMessage, 'gone away') 
+                    || str_contains($errorMessage, 'Lost connection')
+                    || str_contains($errorMessage, 'actively refused')
+                    || str_contains($errorMessage, 'Connection refused')
+                    || str_contains($errorMessage, '2006')  // MySQL gone away
+                    || str_contains($errorMessage, '2002'); // Connection refused
+                
+                if (!$isConnectionError) {
+                    throw $e; // Unknown error, don't retry
+                }
+                
+                Log::warning('SyncToursJob: DB connection lost, reconnecting', [
+                    'attempt' => $attempt,
+                    'max_retries' => $this->dbMaxRetries,
+                    'error' => $errorMessage,
+                ]);
+                
+                if ($attempt < $this->dbMaxRetries) {
+                    sleep($this->dbRetryDelay * $attempt); // Progressive delay
+                    
+                    try {
+                        DB::disconnect();
+                        DB::reconnect();
+                    } catch (\Exception $reconnectError) {
+                        Log::error('SyncToursJob: Reconnect failed', [
+                            'error' => $reconnectError->getMessage(),
+                        ]);
+                    }
+                } else {
+                    throw new \Exception("Failed to reconnect to database after {$this->dbMaxRetries} attempts: {$errorMessage}");
+                }
+            }
+        }
+    }
+
+    /**
+     * Execute a database operation with retry logic
+     * 
+     * @param callable $operation The database operation to execute
+     * @param string $operationName Name for logging
+     * @return mixed Result of the operation
+     */
+    protected function safeDbOperation(callable $operation, string $operationName = 'db operation')
+    {
+        for ($attempt = 1; $attempt <= $this->dbMaxRetries; $attempt++) {
+            try {
+                return $operation();
+            } catch (\Exception $e) {
+                $errorMessage = $e->getMessage();
+                $isConnectionError = str_contains($errorMessage, 'gone away') 
+                    || str_contains($errorMessage, 'Lost connection')
+                    || str_contains($errorMessage, 'actively refused')
+                    || str_contains($errorMessage, 'Connection refused')
+                    || str_contains($errorMessage, '2006')
+                    || str_contains($errorMessage, '2002');
+                
+                if (!$isConnectionError) {
+                    throw $e; // Not a connection error, don't retry
+                }
+                
+                Log::warning("SyncToursJob: {$operationName} failed, retrying", [
+                    'attempt' => $attempt,
+                    'max_retries' => $this->dbMaxRetries,
+                    'error' => $errorMessage,
+                ]);
+                
+                if ($attempt < $this->dbMaxRetries) {
+                    sleep($this->dbRetryDelay * $attempt);
+                    $this->ensureDbConnection();
+                } else {
+                    throw new \Exception("Failed {$operationName} after {$this->dbMaxRetries} attempts: {$errorMessage}");
+                }
+            }
+        }
+        
+        return null;
     }
 }

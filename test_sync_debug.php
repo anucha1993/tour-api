@@ -6,38 +6,23 @@ $app = require_once __DIR__ . '/bootstrap/app.php';
 $kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
 $kernel->bootstrap();
 
-echo "=== Pending Jobs Analysis ===\n\n";
+echo "=== Testing Full Sync for Integration ID 5 ===\n\n";
 
-// Count by queue
-$queueCounts = DB::table('jobs')
-    ->select('queue', DB::raw('count(*) as count'))
-    ->groupBy('queue')
-    ->get();
-
-echo "Jobs by Queue:\n";
-foreach ($queueCounts as $q) {
-    echo "  {$q->queue}: {$q->count}\n";
-}
-
-// Get sample of job types
-echo "\nJob Types (sample):\n";
-$sampleJobs = DB::table('jobs')->limit(10)->get();
-foreach ($sampleJobs as $job) {
-    $payload = json_decode($job->payload, true);
-    $displayName = $payload['displayName'] ?? 'Unknown';
-    echo "  - {$displayName} (queue: {$job->queue})\n";
-}
-
-// Count by job type
-echo "\nJobs by Type:\n";
-$allJobs = DB::table('jobs')->get();
-$jobTypes = [];
-foreach ($allJobs as $job) {
-    $payload = json_decode($job->payload, true);
-    $displayName = $payload['displayName'] ?? 'Unknown';
-    $jobTypes[$displayName] = ($jobTypes[$displayName] ?? 0) + 1;
-}
-arsort($jobTypes);
-foreach ($jobTypes as $type => $count) {
-    echo "  {$type}: {$count}\n";
+try {
+    $start = microtime(true);
+    App\Jobs\SyncToursJob::dispatchSync(5, null, 'incremental', null);
+    $elapsed = microtime(true) - $start;
+    echo "SUCCESS: Sync completed in " . round($elapsed, 2) . " seconds\n";
+    
+    // Show result
+    $log = App\Models\SyncLog::where('wholesaler_id', 5)->orderBy('id', 'desc')->first();
+    echo "\nResult:\n";
+    echo "  Status: {$log->status}\n";
+    echo "  Tours received: {$log->tours_received}\n";
+    echo "  Tours created: {$log->tours_created}\n";
+    echo "  Tours updated: {$log->tours_updated}\n";
+    echo "  Errors: {$log->error_count}\n";
+} catch (\Throwable $e) {
+    echo "ERROR: " . $e->getMessage() . "\n";
+    echo "File: " . $e->getFile() . ":" . $e->getLine() . "\n";
 }
