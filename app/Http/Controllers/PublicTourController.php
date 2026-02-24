@@ -618,7 +618,10 @@ class PublicTourController extends Controller
     public function internationalTours(Request $request): JsonResponse
     {
         // Get active setting or use defaults
-        $setting = InternationalTourSetting::active()->orderBy('sort_order')->first();
+        $setting = InternationalTourSetting::active()
+            ->with('countryCovers')
+            ->orderBy('sort_order')
+            ->first();
         
         if (!$setting) {
             $setting = new InternationalTourSetting([
@@ -640,6 +643,12 @@ class PublicTourController extends Controller
         }
         if (!$cityId && $request->input('city_slug')) {
             $cityId = City::where('slug', $request->input('city_slug'))->value('id');
+        }
+
+        // Get country-specific cover if a country filter is applied
+        $countryCover = null;
+        if ($countryId && $setting->countryCovers) {
+            $countryCover = $setting->countryCovers->firstWhere('country_id', (int)$countryId);
         }
 
         $filters = [
@@ -693,8 +702,9 @@ class PublicTourController extends Controller
                 'filter_departure_month' => $setting->filter_departure_month ?? true,
                 'filter_price_range' => $setting->filter_price_range ?? true,
                 'sort_options' => InternationalTourSetting::SORT_OPTIONS,
-                'cover_image_url' => $setting->cover_image_url,
-                'cover_image_position' => $setting->cover_image_position ?? 'center',
+                // Use country-specific cover if available, otherwise use default cover
+                'cover_image_url' => $countryCover?->image_url ?? $setting->cover_image_url,
+                'cover_image_position' => $countryCover?->image_position ?? $setting->cover_image_position ?? 'center',
             ],
             'active_filters' => [
                 'country' => $countryId ? Country::find($countryId, ['id', 'name_th', 'name_en', 'slug', 'iso2']) : null,
@@ -1030,7 +1040,10 @@ class PublicTourController extends Controller
     public function domesticTours(Request $request): JsonResponse
     {
         // Get active setting or use defaults
-        $setting = DomesticTourSetting::active()->orderBy('sort_order')->first();
+        $setting = DomesticTourSetting::active()
+            ->with('cityCovers')
+            ->orderBy('sort_order')
+            ->first();
 
         if (!$setting) {
             $setting = new DomesticTourSetting([
@@ -1045,6 +1058,12 @@ class PublicTourController extends Controller
         $cityId = $request->input('city_id');
         if (!$cityId && $request->input('city_slug')) {
             $cityId = City::where('slug', $request->input('city_slug'))->value('id');
+        }
+
+        // Get city-specific cover if a city filter is applied
+        $cityCover = null;
+        if ($cityId && $setting->cityCovers) {
+            $cityCover = $setting->cityCovers->firstWhere('city_id', (int)$cityId);
         }
 
         $filters = [
@@ -1095,8 +1114,9 @@ class PublicTourController extends Controller
                 'filter_departure_month' => $setting->filter_departure_month ?? true,
                 'filter_price_range' => $setting->filter_price_range ?? true,
                 'sort_options' => DomesticTourSetting::SORT_OPTIONS,
-                'cover_image_url' => $setting->cover_image_url,
-                'cover_image_position' => $setting->cover_image_position ?? 'center',
+                // Use city-specific cover if available, otherwise use default cover
+                'cover_image_url' => $cityCover?->image_url ?? $setting->cover_image_url,
+                'cover_image_position' => $cityCover?->image_position ?? $setting->cover_image_position ?? 'center',
             ],
             'active_filters' => [
                 'city' => $cityId ? City::find($cityId, ['id', 'name_th', 'name_en', 'slug', 'country_id']) : null,

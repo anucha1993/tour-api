@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\InternationalTourSetting;
+use App\Models\InternationalTourCountryCover;
 use App\Models\Country;
 use App\Models\Tour;
 use App\Models\Transport;
@@ -25,7 +26,10 @@ class InternationalTourSettingController extends Controller
      */
     public function index()
     {
-        $settings = InternationalTourSetting::orderBy('sort_order')->orderBy('name')->get();
+        $settings = InternationalTourSetting::with(['countryCovers.country:id,name_en,name_th,iso2,flag_emoji'])
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get();
 
         return response()->json([
             'success' => true,
@@ -80,6 +84,8 @@ class InternationalTourSettingController extends Controller
      */
     public function show(InternationalTourSetting $internationalTourSetting)
     {
+        $internationalTourSetting->load(['countryCovers.country:id,name_en,name_th,iso2,flag_emoji']);
+        
         return response()->json([
             'success' => true,
             'data' => $internationalTourSetting,
@@ -206,6 +212,125 @@ class InternationalTourSettingController extends Controller
             'success' => true,
             'data' => $internationalTourSetting->fresh(),
             'message' => 'ลบภาพ Cover สำเร็จ',
+        ]);
+    }
+
+    /**
+     * Upload country cover image
+     */
+    public function uploadCountryCover(Request $request, InternationalTourSetting $internationalTourSetting, $countryId)
+    {
+        $request->validate([
+            'image' => 'required|file|mimes:jpeg,jpg,png,gif,webp|max:10240',
+            'image_position' => 'nullable|string',
+            'alt_text' => 'nullable|string|max:255',
+        ]);
+
+        $country = Country::findOrFail($countryId);
+        $file = $request->file('image');
+
+        // Find existing cover or create new one
+        $cover = InternationalTourCountryCover::firstOrNew([
+            'setting_id' => $internationalTourSetting->id,
+            'country_id' => $country->id,
+        ]);
+
+        // Delete old image if exists
+        if ($cover->cloudflare_id) {
+            $this->cloudflare->delete($cover->cloudflare_id);
+        }
+
+        // Upload new image
+        $customId = 'intl-tour-country-cover-' . $internationalTourSetting->id . '-' . $country->id . '-' . time();
+        $metadata = [
+            'type' => 'international_tour_country_cover',
+            'setting_id' => $internationalTourSetting->id,
+            'country_id' => $country->id,
+        ];
+
+        $result = $this->cloudflare->uploadFromFile($file, $customId, $metadata);
+
+        if (!$result) {
+            return response()->json([
+                'success' => false,
+                'message' => 'อัปโหลดภาพไม่สำเร็จ',
+            ], 500);
+        }
+
+        $url = $this->cloudflare->getDisplayUrl($result['id'], 'public');
+
+        $cover->fill([
+            'image_url' => $url,
+            'cloudflare_id' => $result['id'],
+            'image_position' => $request->image_position ?? 'center',
+            'alt_text' => $request->alt_text,
+        ]);
+        $cover->save();
+
+        return response()->json([
+            'success' => true,
+            'image_url' => $url,
+            'cloudflare_id' => $result['id'],
+            'message' => 'อัปโหลดภาพ Cover ประเทศสำเร็จ',
+        ]);
+    }
+
+    /**
+     * Delete country cover image
+     */
+    public function deleteCountryCover(InternationalTourSetting $internationalTourSetting, $countryId)
+    {
+        $cover = InternationalTourCountryCover::where('setting_id', $internationalTourSetting->id)
+            ->where('country_id', $countryId)
+            ->first();
+
+        if (!$cover) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ไม่พบภาพ Cover ประเทศ',
+            ], 404);
+        }
+
+        if ($cover->cloudflare_id) {
+            $this->cloudflare->delete($cover->cloudflare_id);
+        }
+
+        $cover->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'ลบภาพ Cover ประเทศสำเร็จ',
+        ]);
+    }
+
+    /**
+     * Update country cover position
+     */
+    public function updateCountryCoverPosition(Request $request, InternationalTourSetting $internationalTourSetting, $countryId)
+    {
+        $request->validate([
+            'image_position' => 'required|string|in:top,center,bottom,left top,left center,left bottom,right top,right center,right bottom',
+        ]);
+
+        $cover = InternationalTourCountryCover::where('setting_id', $internationalTourSetting->id)
+            ->where('country_id', $countryId)
+            ->first();
+
+        if (!$cover) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ไม่พบภาพ Cover ประเทศ',
+            ], 404);
+        }
+
+        $cover->update([
+            'image_position' => $request->image_position,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $cover,
+            'message' => 'อัปเดตตำแหน่งภาพสำเร็จ',
         ]);
     }
 

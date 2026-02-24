@@ -28,7 +28,16 @@ class TourController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Tour::with(['primaryCountry:id,iso2,name_en,name_th', 'countries:id,iso2,name_en,name_th', 'cities:id,name_en,name_th,country_id', 'wholesaler:id,name', 'transports.transport:id,code,name,type,image', 'periods:id,tour_id,start_date,end_date,status']);
+        $query = Tour::with([
+            'primaryCountry:id,iso2,name_en,name_th', 
+            'countries:id,iso2,name_en,name_th', 
+            'cities:id,name_en,name_th,country_id', 
+            'wholesaler:id,name', 
+            'transports.transport:id,code,name,type,image', 
+            'periods:id,tour_id,start_date,end_date,status',
+            'periods.offer:id,period_id,promotion_id',
+            'periods.offer.promotion:id,name,type'
+        ]);
 
         // Search
         if ($request->filled('search')) {
@@ -88,6 +97,14 @@ class TourController extends Controller
         // Has promotion / discount
         if ($request->has('has_promotion')) {
             $query->where('has_promotion', filter_var($request->has_promotion, FILTER_VALIDATE_BOOLEAN));
+        }
+
+        // Filter by specific promotion IDs (tours that have periods with these promotions)
+        if ($request->filled('promotion_ids')) {
+            $promotionIds = explode(',', $request->promotion_ids);
+            $query->whereHas('periods.offer', function ($q) use ($promotionIds) {
+                $q->whereIn('promotion_id', $promotionIds);
+            });
         }
 
         // Hotel star rating

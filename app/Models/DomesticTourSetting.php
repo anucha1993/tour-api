@@ -97,6 +97,14 @@ class DomesticTourSetting extends Model
     }
 
     /**
+     * Get the city covers for this setting.
+     */
+    public function cityCovers()
+    {
+        return $this->hasMany(DomesticTourCityCover::class, 'setting_id');
+    }
+
+    /**
      * Get base query for active domestic tours (Thailand only)
      */
     public function getBaseQuery()

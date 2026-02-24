@@ -396,6 +396,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('international-tour-settings/{internationalTourSetting}/toggle-status', [InternationalTourSettingController::class, 'toggleStatus']);
     Route::post('international-tour-settings/{internationalTourSetting}/cover-image', [InternationalTourSettingController::class, 'uploadCoverImage']);
     Route::delete('international-tour-settings/{internationalTourSetting}/cover-image', [InternationalTourSettingController::class, 'deleteCoverImage']);
+    Route::post('international-tour-settings/{internationalTourSetting}/country-cover/{countryId}', [InternationalTourSettingController::class, 'uploadCountryCover']);
+    Route::delete('international-tour-settings/{internationalTourSetting}/country-cover/{countryId}', [InternationalTourSettingController::class, 'deleteCountryCover']);
+    Route::patch('international-tour-settings/{internationalTourSetting}/country-cover/{countryId}/position', [InternationalTourSettingController::class, 'updateCountryCoverPosition']);
     Route::apiResource('international-tour-settings', InternationalTourSettingController::class);
 
     // Domestic Tour Settings (Admin)
@@ -404,6 +407,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('domestic-tour-settings/{domesticTourSetting}/toggle-status', [DomesticTourSettingController::class, 'toggleStatus']);
     Route::post('domestic-tour-settings/{domesticTourSetting}/cover-image', [DomesticTourSettingController::class, 'uploadCoverImage']);
     Route::delete('domestic-tour-settings/{domesticTourSetting}/cover-image', [DomesticTourSettingController::class, 'deleteCoverImage']);
+    Route::post('domestic-tour-settings/{domesticTourSetting}/city-cover/{cityId}', [DomesticTourSettingController::class, 'uploadCityCover']);
+    Route::delete('domestic-tour-settings/{domesticTourSetting}/city-cover/{cityId}', [DomesticTourSettingController::class, 'deleteCityCover']);
+    Route::patch('domestic-tour-settings/{domesticTourSetting}/city-cover/{cityId}/position', [DomesticTourSettingController::class, 'updateCityCoverPosition']);
     Route::apiResource('domestic-tour-settings', DomesticTourSettingController::class);
 
     // Festival Holidays (Admin)

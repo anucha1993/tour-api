@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\City;
+use App\Models\DomesticTourCityCover;
 use App\Models\DomesticTourSetting;
 use App\Models\Tour;
 use App\Models\Transport;
@@ -24,7 +26,10 @@ class DomesticTourSettingController extends Controller
      */
     public function index()
     {
-        $settings = DomesticTourSetting::orderBy('sort_order')->orderBy('name')->get();
+        $settings = DomesticTourSetting::with(['cityCovers.city:id,name_en,name_th,slug'])
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get();
 
         return response()->json([
             'success' => true,
@@ -78,6 +83,8 @@ class DomesticTourSettingController extends Controller
      */
     public function show(DomesticTourSetting $domesticTourSetting)
     {
+        $domesticTourSetting->load(['cityCovers.city:id,name_en,name_th,slug']);
+
         return response()->json([
             'success' => true,
             'data' => $domesticTourSetting,
@@ -91,7 +98,7 @@ class DomesticTourSettingController extends Controller
     {
         $validated = $request->validate([
             'name' => 'string|max:255',
-            'slug' => 'string|max:255|unique:domestic_tour_settings,slug,' . $domesticTourSetting->id,
+            'slug' => 'nullable|string|max:255|unique:domestic_tour_settings,slug,' . $domesticTourSetting->id,
             'description' => 'nullable|string',
             'conditions' => 'nullable|array',
             'display_limit' => 'integer|min:1|max:200',
@@ -225,6 +232,12 @@ class DomesticTourSettingController extends Controller
      */
     public function getConditionOptions()
     {
+        // Get cities in Thailand (country_id = 8 for Thailand)
+        $cities = City::where('country_id', DomesticTourSetting::THAILAND_ID)
+            ->where('is_active', true)
+            ->orderBy('name_th')
+            ->get(['id', 'name_en', 'name_th', 'slug']);
+
         return response()->json([
             'success' => true,
             'data' => [
@@ -233,6 +246,7 @@ class DomesticTourSettingController extends Controller
                 'wholesalers' => Wholesaler::where('is_active', true)->get(['id', 'name', 'code']),
                 'tour_types' => Tour::TOUR_TYPES,
                 'airlines' => Transport::active()->orderBy('name')->get(['id', 'code', 'name', 'image']),
+                'cities' => $cities,
             ],
         ]);
     }
@@ -281,6 +295,125 @@ class DomesticTourSettingController extends Controller
                 'total_count' => $count,
                 'preview_tours' => $tours,
             ],
+        ]);
+    }
+
+    /**
+     * Upload city cover image
+     */
+    public function uploadCityCover(Request $request, DomesticTourSetting $domesticTourSetting, $cityId)
+    {
+        $request->validate([
+            'image' => 'required|file|mimes:jpeg,jpg,png,gif,webp|max:10240',
+            'image_position' => 'nullable|string',
+            'alt_text' => 'nullable|string|max:255',
+        ]);
+
+        $city = City::findOrFail($cityId);
+        $file = $request->file('image');
+
+        // Find existing cover or create new one
+        $cover = DomesticTourCityCover::firstOrNew([
+            'setting_id' => $domesticTourSetting->id,
+            'city_id' => $city->id,
+        ]);
+
+        // Delete old image if exists
+        if ($cover->cloudflare_id) {
+            $this->cloudflare->delete($cover->cloudflare_id);
+        }
+
+        // Upload new image
+        $customId = 'domestic-tour-city-cover-' . $domesticTourSetting->id . '-' . $city->id . '-' . time();
+        $metadata = [
+            'type' => 'domestic_tour_city_cover',
+            'setting_id' => $domesticTourSetting->id,
+            'city_id' => $city->id,
+        ];
+
+        $result = $this->cloudflare->uploadFromFile($file, $customId, $metadata);
+
+        if (!$result) {
+            return response()->json([
+                'success' => false,
+                'message' => 'อัปโหลดภาพไม่สำเร็จ',
+            ], 500);
+        }
+
+        $url = $this->cloudflare->getDisplayUrl($result['id'], 'public');
+
+        $cover->fill([
+            'image_url' => $url,
+            'cloudflare_id' => $result['id'],
+            'image_position' => $request->image_position ?? 'center',
+            'alt_text' => $request->alt_text,
+        ]);
+        $cover->save();
+
+        return response()->json([
+            'success' => true,
+            'image_url' => $url,
+            'cloudflare_id' => $result['id'],
+            'message' => 'อัปโหลดภาพ Cover จังหวัดสำเร็จ',
+        ]);
+    }
+
+    /**
+     * Delete city cover image
+     */
+    public function deleteCityCover(DomesticTourSetting $domesticTourSetting, $cityId)
+    {
+        $cover = DomesticTourCityCover::where('setting_id', $domesticTourSetting->id)
+            ->where('city_id', $cityId)
+            ->first();
+
+        if (!$cover) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ไม่พบภาพ Cover จังหวัด',
+            ], 404);
+        }
+
+        if ($cover->cloudflare_id) {
+            $this->cloudflare->delete($cover->cloudflare_id);
+        }
+
+        $cover->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'ลบภาพ Cover จังหวัดสำเร็จ',
+        ]);
+    }
+
+    /**
+     * Update city cover position
+     */
+    public function updateCityCoverPosition(Request $request, DomesticTourSetting $domesticTourSetting, $cityId)
+    {
+        $request->validate([
+            'image_position' => 'required|string|in:top,center,bottom,left top,left center,left bottom,right top,right center,right bottom',
+        ]);
+
+        $cover = DomesticTourCityCover::where('setting_id', $domesticTourSetting->id)
+            ->where('city_id', $cityId)
+            ->first();
+
+        if (!$cover) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ไม่พบภาพ Cover จังหวัด',
+            ], 404);
+        }
+
+        $cover->update([
+            'image_position' => $request->image_position,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $cover,
+            'message' => 'อัปเดตตำแหน่งภาพสำเร็จ',
         ]);
     }
 

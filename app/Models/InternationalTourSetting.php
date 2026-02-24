@@ -99,6 +99,14 @@ class InternationalTourSetting extends Model
     }
 
     /**
+     * Get country covers for this setting
+     */
+    public function countryCovers()
+    {
+        return $this->hasMany(InternationalTourCountryCover::class, 'setting_id')->orderBy('sort_order');
+    }
+
+    /**
      * Get base query for active international tours (excluding Thailand)
      */
     public function getBaseQuery()
