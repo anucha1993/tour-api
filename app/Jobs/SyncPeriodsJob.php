@@ -68,12 +68,12 @@ class SyncPeriodsJob implements ShouldQueue
      */
     public function handle(): void
     {
-        // FIX: Reconnect DB ก่อนเริ่มงาน เพื่อป้องกัน "MySQL server has gone away"
+        // FIX: ใช้ DB::purge() เพื่อ reset connection แบบไม่สร้าง connection ใหม่ทับเก่า
+        // DB::reconnect() โดยไม่ disconnect ก่อน → connection leak → max_user_connections
         try {
-            DB::reconnect();
+            DB::purge();
         } catch (\Exception $e) {
-            sleep(2);
-            DB::reconnect();
+            // Ignore — connection will be re-established on first query
         }
 
         Log::info('SyncPeriodsJob: Starting', [
@@ -226,6 +226,13 @@ class SyncPeriodsJob implements ShouldQueue
             }
 
             throw $e;
+        } finally {
+            // FIX: คืน connection กลับเมื่อ job เสร็จ ป้องกัน max_user_connections
+            try {
+                DB::disconnect();
+            } catch (\Exception $e) {
+                // Ignore disconnect errors
+            }
         }
     }
 
