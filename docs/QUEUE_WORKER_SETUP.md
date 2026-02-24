@@ -5,6 +5,15 @@
 ระบบ Tour Manager ใช้ Laravel Queue สำหรับ background jobs:
 - **SyncToursJob** - Sync ทัวร์จาก Wholesaler API
 - **SyncPeriodsJob** - Sync รอบเดินทางแบบ Two-Phase
+- **ProcessTourMediaJob** - Upload รูปภาพไป Cloudflare Images
+
+## Queues
+
+| Queue | Jobs | ความสำคัญ |
+|-------|------|----------|
+| `default` | SyncToursJob, AutoCloseExpiredJob, SendNewsletterJob | หลัก |
+| `periods` | SyncPeriodsJob | sync รอบเดินทาง |
+| `media` | ProcessTourMediaJob | upload รูปภาพ |
 
 ## Development Environment
 
@@ -14,7 +23,7 @@
 
 ```powershell
 cd D:\Programing\tour-manager\tour-api
-php artisan queue:listen database --queue=default,periods
+php artisan queue:listen database --queue=default,periods,media
 ```
 
 **หมายเหตุ:**
@@ -44,12 +53,12 @@ QUEUE_CONNECTION=database
 | Task Type | Run a PHP script |
 | PHP Version | 8.2 (หรือเวอร์ชันที่ใช้) |
 | Script Path | `/var/www/vhosts/yourdomain.com/httpdocs/tour-api/artisan` |
-| Arguments | `queue:work database --queue=default,periods --stop-when-empty --max-time=300` |
+| Arguments | `queue:work database --queue=default,periods,media --stop-when-empty --max-time=300` |
 | Run | Every 1 minute |
 
 **หรือใช้ Command:**
 ```
-cd /var/www/vhosts/yourdomain.com/httpdocs/tour-api && /usr/bin/php artisan queue:work database --queue=default,periods --stop-when-empty --max-time=300
+cd /var/www/vhosts/yourdomain.com/httpdocs/tour-api && /usr/bin/php artisan queue:work database --queue=default,periods,media --stop-when-empty --max-time=300
 ```
 
 #### Task 2: Laravel Scheduler (สำหรับ scheduled sync)
@@ -72,7 +81,7 @@ cd /var/www/vhosts/yourdomain.com/httpdocs/tour-api && /usr/bin/php artisan queu
 ```ini
 [program:tour-queue-worker]
 process_name=%(program_name)s_%(process_num)02d
-command=php /var/www/vhosts/yourdomain.com/httpdocs/tour-api/artisan queue:work database --queue=default,periods --sleep=3 --tries=3 --max-time=3600
+command=php /var/www/vhosts/yourdomain.com/httpdocs/tour-api/artisan queue:work database --queue=default,periods,media --sleep=3 --tries=3 --max-time=3600
 autostart=true
 autorestart=true
 stopasgroup=true
@@ -97,7 +106,7 @@ sudo supervisorctl start tour-queue-worker:*
 
 | Parameter | คำอธิบาย |
 |-----------|---------|
-| `--queue=default,periods` | ประมวลผล queue ชื่อ default และ periods |
+| `--queue=default,periods,media` | ประมวลผล queue ชื่อ default, periods และ media |
 | `--stop-when-empty` | หยุดเมื่อไม่มี job (ใช้กับ cron) |
 | `--max-time=300` | หยุดหลัง 5 นาที (ป้องกัน memory leak) |
 | `--sleep=3` | รอ 3 วินาทีก่อนเช็ค job ใหม่ |
@@ -213,20 +222,20 @@ SyncPeriodsJob::handle() (ถ้าเป็น Two-Phase)
 
 ### Development
 ```powershell
-php artisan queue:listen database --queue=default,periods
+php artisan queue:listen database --queue=default,periods,media
 ```
 
 ### Production (Cron - ทุก 1 นาที)
 ```bash
-php artisan queue:work database --queue=default,periods --stop-when-empty --max-time=300
+php artisan queue:work database --queue=default,periods,media --stop-when-empty --max-time=300
 ```
 
 ### Production (Supervisor - แนะนำ)
 ```bash
-php artisan queue:work database --queue=default,periods --sleep=3 --tries=3 --max-time=3600
+php artisan queue:work database --queue=default,periods,media --sleep=3 --tries=3 --max-time=3600
 ```
 ### สรุปคำสั่งสำหรับ Production (Plesk)
-cd /var/www/vhosts/yourdomain.com/httpdocs/tour-api && /usr/bin/php artisan queue:work database --queue=default,periods --stop-when-empty --max-time=55
+cd /var/www/vhosts/yourdomain.com/httpdocs/tour-api && /usr/bin/php artisan queue:work database --queue=default,periods,media --stop-when-empty --max-time=55
 ### ตั้งค่า Scheduled Task ใน Plesk
 ### Cron style:
 

@@ -39,10 +39,16 @@ class SyncToursJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $tries = 1;         // ไม่ retry — sync ควรรันครั้งเดียว ถ้าพังให้ user กด sync ใหม่
+    public int $tries = 3;         // retry 3 ครั้ง สำหรับ transient errors (network, DB connection)
     public int $timeout = 600;     // 10 minutes
-    public int $maxExceptions = 1; // ตัดจบทันทีเมื่อเกิด exception
-    public bool $failOnTimeout = true; // timeout แล้วให้ fail ทันที ไม่ retry
+    public int $maxExceptions = 3; // ให้โอกาส retry ก่อน fail
+    public bool $failOnTimeout = true; // timeout แล้วให้ fail ทันที
+    
+    /**
+     * Backoff intervals between retries (in seconds)
+     * Retry ครั้งที่ 1: รอ 30 วินาที, ครั้งที่ 2: รอ 60 วินาที, ครั้งที่ 3: รอ 120 วินาที
+     */
+    public array $backoff = [30, 60, 120];
 
     protected int $wholesalerId;
     protected ?array $transformedData;
