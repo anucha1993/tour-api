@@ -309,6 +309,15 @@ class DomesticTourSetting extends Model
             $query->where('min_price', '<=', $filters['price_max']);
         }
 
+        // Festival / Holiday filter
+        if (!empty($filters['festival_id'])) {
+            $festival = \App\Models\FestivalHoliday::find($filters['festival_id']);
+            if ($festival) {
+                $tourIds = $festival->getMatchingTourIds();
+                $query->whereIn('id', $tourIds);
+            }
+        }
+
         // Promotion filter (match by promo name in offers)
         if (!empty($filters['promotion'])) {
             $promoName = $filters['promotion'];

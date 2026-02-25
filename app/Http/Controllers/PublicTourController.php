@@ -1143,6 +1143,7 @@ class PublicTourController extends Controller
             'price_max' => $request->input('price_max'),
             'min_seats' => $request->input('min_seats'),
             'sort_by' => $request->input('sort_by'),
+            'festival_id' => $request->input('festival_id'),
             'promotion' => $request->input('promotion'),
             'theme' => $request->input('theme'),
             'special_highlight' => $request->input('special_highlight'),
@@ -1422,6 +1423,23 @@ class PublicTourController extends Controller
                     'label' => $this->formatThaiMonth($m),
                 ]);
         }
+
+        // Festivals (upcoming, active)
+        $filters['festivals'] = FestivalHoliday::where('is_active', true)
+            ->where('end_date', '>=', $today)
+            ->orderBy('start_date')
+            ->take(8)
+            ->get()
+            ->map(fn ($f) => [
+                'id'          => $f->id,
+                'name'        => $f->name,
+                'slug'        => $f->slug,
+                'badge_text'  => $f->badge_text,
+                'badge_color' => $f->badge_color,
+                'badge_icon'  => $f->badge_icon,
+                'start_date'  => optional($f->start_date)->toDateString(),
+                'end_date'    => optional($f->end_date)->toDateString(),
+            ]);
 
         // Promotions (active promo names from offers)
         $promoNames = DB::table('periods')
