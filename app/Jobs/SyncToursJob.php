@@ -338,6 +338,13 @@ class SyncToursJob implements ShouldQueue
         } finally {
             // Always release sync lock
             $this->releaseSyncLock();
+            
+            // FIX: คืน DB connection เพื่อป้องกัน max_user_connections
+            try {
+                DB::disconnect();
+            } catch (\Exception $e) {
+                // Ignore
+            }
         }
     }
 
@@ -2294,8 +2301,8 @@ class SyncToursJob implements ShouldQueue
                     sleep($this->dbRetryDelay * $attempt); // Progressive delay
                     
                     try {
-                        DB::disconnect();
-                        DB::reconnect();
+                        // FIX: ใช้ purge() แทน disconnect()+reconnect() ป้องกัน connection leak
+                        DB::purge();
                     } catch (\Exception $reconnectError) {
                         Log::error('SyncToursJob: Reconnect failed', [
                             'error' => $reconnectError->getMessage(),

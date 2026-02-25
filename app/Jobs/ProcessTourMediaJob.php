@@ -10,6 +10,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
@@ -58,6 +59,20 @@ class ProcessTourMediaJob implements ShouldQueue
     }
 
     public function handle(): void
+    {
+        try {
+            $this->processMedia();
+        } finally {
+            // FIX: คืน connection กลับเมื่อ job เสร็จ ป้องกัน max_user_connections
+            try {
+                DB::disconnect();
+            } catch (\Exception $e) {
+                // Ignore
+            }
+        }
+    }
+
+    protected function processMedia(): void
     {
         $tour = Tour::find($this->tourId);
         if (!$tour) {
