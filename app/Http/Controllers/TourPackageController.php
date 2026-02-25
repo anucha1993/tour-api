@@ -371,12 +371,20 @@ class TourPackageController extends Controller
     // Public Endpoints
     // ============================
 
-    public function publicList(): JsonResponse
+    public function publicList(Request $request): JsonResponse
     {
-        $packages = TourPackage::active()
+        $query = TourPackage::active()
             ->notExpired()
-            ->with('countries:id,name_th,iso2,slug')
-            ->orderBy('sort_order')
+            ->with('countries:id,name_th,iso2,slug');
+
+        // Filter by country
+        if ($request->filled('country_id')) {
+            $query->whereHas('countries', function ($q) use ($request) {
+                $q->where('countries.id', $request->country_id);
+            });
+        }
+
+        $packages = $query->orderBy('sort_order')
             ->orderByDesc('created_at')
             ->get()
             ->map(function ($pkg) {
@@ -398,7 +406,30 @@ class TourPackageController extends Controller
                 ];
             });
 
-        return response()->json(['success' => true, 'data' => $packages]);
+        // Get countries that have packages (for filter)
+        $filterCountries = Country::whereHas('tourPackages', function ($q) {
+            $q->where('is_active', true)
+                ->where(function ($q2) {
+                    $q2->where('is_never_expire', true)
+                        ->orWhere('expires_at', '>=', now());
+                });
+        })
+            ->orderBy('name_th')
+            ->get(['id', 'name_th', 'iso2', 'slug'])
+            ->map(fn($c) => [
+                'id' => $c->id,
+                'name_th' => $c->name_th,
+                'iso2' => strtolower($c->iso2 ?? ''),
+                'slug' => $c->slug,
+            ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $packages,
+            'filters' => [
+                'countries' => $filterCountries,
+            ],
+        ]);
     }
 
     public function publicShow(string $slug): JsonResponse

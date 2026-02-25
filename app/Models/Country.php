@@ -100,4 +100,12 @@ class Country extends Model
     {
         return $this->belongsToMany(Tour::class, 'tour_countries');
     }
+
+    /**
+     * Relationship: Tour packages for this country (Many-to-Many)
+     */
+    public function tourPackages()
+    {
+        return $this->belongsToMany(TourPackage::class, 'tour_package_country');
+    }
 }

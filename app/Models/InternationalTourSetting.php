@@ -336,6 +336,27 @@ class InternationalTourSetting extends Model
             }
         }
 
+        // Promotion filter (match by promo name in offers)
+        if (!empty($filters['promotion'])) {
+            $promoName = $filters['promotion'];
+            $query->whereHas('periods.offer', function ($q) use ($promoName) {
+                $q->where(function ($q2) use ($promoName) {
+                    $q2->where('promo_name', $promoName)
+                       ->orWhereHas('promotion', fn($q3) => $q3->where('name', $promoName));
+                });
+            });
+        }
+
+        // Theme filter (match in JSON array)
+        if (!empty($filters['theme'])) {
+            $query->whereJsonContains('themes', $filters['theme']);
+        }
+
+        // Special highlight filter (match in JSON array)
+        if (!empty($filters['special_highlight'])) {
+            $query->whereJsonContains('special_highlights', $filters['special_highlight']);
+        }
+
         return $query;
     }
 

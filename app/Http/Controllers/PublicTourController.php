@@ -665,6 +665,9 @@ class PublicTourController extends Controller
             'min_seats' => $request->input('min_seats'),
             'sort_by' => $request->input('sort_by'),
             'festival_id' => $request->input('festival_id'),
+            'promotion' => $request->input('promotion'),
+            'theme' => $request->input('theme'),
+            'special_highlight' => $request->input('special_highlight'),
         ];
 
         $perPage = $request->input('per_page', $setting->per_page);
@@ -746,6 +749,8 @@ class PublicTourController extends Controller
             'food_highlights' => $this->ensureArray($tour->food_highlights),
             'hashtags' => $this->ensureArray($tour->hashtags),
             'departure_airports' => $this->ensureArray($tour->departure_airports),
+            'themes' => $this->ensureArray($tour->themes),
+            'special_highlights' => $this->ensureArray($tour->special_highlights),
             'country' => $tour->primaryCountry ? [
                 'id' => $tour->primaryCountry->id,
                 'name_th' => $tour->primaryCountry->name_th,
@@ -975,6 +980,54 @@ class PublicTourController extends Controller
                 'end_date'    => optional($f->end_date)->toDateString(),
             ]);
 
+        // Promotions (active promo names from offers)
+        $promoNames = DB::table('periods')
+            ->join('offers', 'offers.period_id', '=', 'periods.id')
+            ->leftJoin('promotions', 'promotions.id', '=', 'offers.promotion_id')
+            ->whereIn('periods.tour_id', $activeTourIds)
+            ->where('periods.status', 'open')
+            ->where('periods.start_date', '>=', $today)
+            ->where(function ($q) {
+                $q->whereNotNull('offers.promo_name')
+                  ->orWhereNotNull('offers.promotion_id');
+            })
+            ->selectRaw('COALESCE(offers.promo_name, promotions.name) as name')
+            ->distinct()
+            ->pluck('name')
+            ->filter()
+            ->values();
+        if ($promoNames->isNotEmpty()) {
+            $filters['promotions'] = $promoNames;
+        }
+
+        // Themes (from tours JSON column)
+        $themes = DB::table('tours')
+            ->whereIn('id', $activeTourIds)
+            ->whereNotNull('themes')
+            ->whereRaw('JSON_LENGTH(themes) > 0')
+            ->pluck('themes')
+            ->flatMap(fn($t) => json_decode($t, true) ?: [])
+            ->unique()
+            ->sort()
+            ->values();
+        if ($themes->isNotEmpty()) {
+            $filters['themes'] = $themes;
+        }
+
+        // Special highlights (from tours JSON column)
+        $specialHighlights = DB::table('tours')
+            ->whereIn('id', $activeTourIds)
+            ->whereNotNull('special_highlights')
+            ->whereRaw('JSON_LENGTH(special_highlights) > 0')
+            ->pluck('special_highlights')
+            ->flatMap(fn($t) => json_decode($t, true) ?: [])
+            ->unique()
+            ->sort()
+            ->values();
+        if ($specialHighlights->isNotEmpty()) {
+            $filters['special_highlights'] = $specialHighlights;
+        }
+
         return $filters;
     }
 
@@ -1078,6 +1131,9 @@ class PublicTourController extends Controller
             'price_max' => $request->input('price_max'),
             'min_seats' => $request->input('min_seats'),
             'sort_by' => $request->input('sort_by'),
+            'promotion' => $request->input('promotion'),
+            'theme' => $request->input('theme'),
+            'special_highlight' => $request->input('special_highlight'),
         ];
 
         $perPage = $request->input('per_page', $setting->per_page);
@@ -1157,6 +1213,8 @@ class PublicTourController extends Controller
             'food_highlights' => $this->ensureArray($tour->food_highlights),
             'hashtags' => $this->ensureArray($tour->hashtags),
             'departure_airports' => $this->ensureArray($tour->departure_airports),
+            'themes' => $this->ensureArray($tour->themes),
+            'special_highlights' => $this->ensureArray($tour->special_highlights),
             'country' => $tour->primaryCountry ? [
                 'id' => $tour->primaryCountry->id,
                 'name_th' => $tour->primaryCountry->name_th,
@@ -1343,6 +1401,54 @@ class PublicTourController extends Controller
                     'value' => $m,
                     'label' => $this->formatThaiMonth($m),
                 ]);
+        }
+
+        // Promotions (active promo names from offers)
+        $promoNames = DB::table('periods')
+            ->join('offers', 'offers.period_id', '=', 'periods.id')
+            ->leftJoin('promotions', 'promotions.id', '=', 'offers.promotion_id')
+            ->whereIn('periods.tour_id', $activeTourIds)
+            ->where('periods.status', 'open')
+            ->where('periods.start_date', '>=', $today)
+            ->where(function ($q) {
+                $q->whereNotNull('offers.promo_name')
+                  ->orWhereNotNull('offers.promotion_id');
+            })
+            ->selectRaw('COALESCE(offers.promo_name, promotions.name) as name')
+            ->distinct()
+            ->pluck('name')
+            ->filter()
+            ->values();
+        if ($promoNames->isNotEmpty()) {
+            $filters['promotions'] = $promoNames;
+        }
+
+        // Themes (from tours JSON column)
+        $themes = DB::table('tours')
+            ->whereIn('id', $activeTourIds)
+            ->whereNotNull('themes')
+            ->whereRaw('JSON_LENGTH(themes) > 0')
+            ->pluck('themes')
+            ->flatMap(fn($t) => json_decode($t, true) ?: [])
+            ->unique()
+            ->sort()
+            ->values();
+        if ($themes->isNotEmpty()) {
+            $filters['themes'] = $themes;
+        }
+
+        // Special highlights (from tours JSON column)
+        $specialHighlights = DB::table('tours')
+            ->whereIn('id', $activeTourIds)
+            ->whereNotNull('special_highlights')
+            ->whereRaw('JSON_LENGTH(special_highlights) > 0')
+            ->pluck('special_highlights')
+            ->flatMap(fn($t) => json_decode($t, true) ?: [])
+            ->unique()
+            ->sort()
+            ->values();
+        if ($specialHighlights->isNotEmpty()) {
+            $filters['special_highlights'] = $specialHighlights;
         }
 
         return $filters;
