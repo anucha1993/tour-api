@@ -177,7 +177,7 @@ class PopularCountrySetting extends Model
             if (!empty($filters['themes'])) {
                 $query->where(function ($q) use ($filters) {
                     foreach ($filters['themes'] as $theme) {
-                        $q->orWhereJsonContains('themes', $theme);
+                        $q->orWhereRaw('JSON_SEARCH(themes, \'one\', ?) IS NOT NULL', [$theme]);
                     }
                 });
             }

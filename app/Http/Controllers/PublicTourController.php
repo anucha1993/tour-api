@@ -678,8 +678,8 @@ class PublicTourController extends Controller
             return $this->formatTourListItem($tour, $setting);
         });
 
-        // Get filter options
-        $filterOptions = $this->getInternationalFilterOptions($setting);
+        // Get filter options (scoped by selected country/city)
+        $filterOptions = $this->getInternationalFilterOptions($setting, $countryId, $cityId);
 
         return response()->json([
             'success' => true,
@@ -877,28 +877,39 @@ class PublicTourController extends Controller
     /**
      * Get filter options for the international tours page
      */
-    private function getInternationalFilterOptions(InternationalTourSetting $setting): array
+    private function getInternationalFilterOptions(InternationalTourSetting $setting, ?string $countryId = null, ?string $cityId = null): array
     {
         $today = now()->toDateString();
         $thailandId = Country::where('slug', 'thailand')->value('id') ?? 8;
 
         // Active international tour IDs
-        $activeTourIds = Tour::where('status', 'active')
+        $activeTourQuery = Tour::where('status', 'active')
             ->where(function ($q) use ($thailandId) {
                 $q->where('primary_country_id', '!=', $thailandId)
                   ->orWhereNull('primary_country_id');
             })
-            ->whereHas('periods', fn($q) => $q->where('status', 'open')->where('start_date', '>=', $today))
-            ->pluck('id');
+            ->whereHas('periods', fn($q) => $q->where('status', 'open')->where('start_date', '>=', $today));
+
+        // All active tour IDs (for country/city lists - always show all)
+        $allActiveTourIds = (clone $activeTourQuery)->pluck('id');
+
+        // Scoped active tour IDs (filtered by selected country/city - for badges)
+        if ($countryId) {
+            $activeTourQuery->where('primary_country_id', $countryId);
+        }
+        if ($cityId) {
+            $activeTourQuery->whereHas('cities', fn($q) => $q->where('cities.id', $cityId));
+        }
+        $activeTourIds = $activeTourQuery->pluck('id');
 
         $filters = [];
 
-        // Countries
+        // Countries (always show all, not scoped)
         if ($setting->filter_country ?? true) {
             $filters['countries'] = Country::active()
                 ->where('id', '!=', $thailandId)
-                ->whereHas('tours', fn($q) => $q->whereIn('tours.id', $activeTourIds))
-                ->withCount(['tours' => fn($q) => $q->whereIn('tours.id', $activeTourIds)])
+                ->whereHas('tours', fn($q) => $q->whereIn('tours.id', $allActiveTourIds))
+                ->withCount(['tours' => fn($q) => $q->whereIn('tours.id', $allActiveTourIds)])
                 ->orderBy('name_th')
                 ->get()
                 ->map(fn($c) => [
@@ -910,11 +921,12 @@ class PublicTourController extends Controller
                 ]);
         }
 
-        // Cities (grouped by country)
+        // Cities (scoped by country if selected, otherwise all)
         if ($setting->filter_city ?? true) {
-            $filters['cities'] = City::active()
+            $cityQuery = City::active()
                 ->whereHas('tours', fn($q) => $q->whereIn('tours.id', $activeTourIds))
-                ->withCount(['tours' => fn($q) => $q->whereIn('tours.id', $activeTourIds)])
+                ->withCount(['tours' => fn($q) => $q->whereIn('tours.id', $activeTourIds)]);
+            $filters['cities'] = $cityQuery
                 ->with('country:id,name_th')
                 ->orderBy('name_th')
                 ->get()
@@ -1144,8 +1156,8 @@ class PublicTourController extends Controller
             return $this->formatDomesticTourListItem($tour, $setting);
         });
 
-        // Get filter options
-        $filterOptions = $this->getDomesticFilterOptions($setting);
+        // Get filter options (scoped by selected city)
+        $filterOptions = $this->getDomesticFilterOptions($setting, $cityId);
 
         return response()->json([
             'success' => true,
@@ -1337,25 +1349,33 @@ class PublicTourController extends Controller
     /**
      * Get filter options for the domestic tours page
      */
-    private function getDomesticFilterOptions(DomesticTourSetting $setting): array
+    private function getDomesticFilterOptions(DomesticTourSetting $setting, ?string $cityId = null): array
     {
         $today = now()->toDateString();
         $thailandId = DomesticTourSetting::THAILAND_ID;
 
         // Active domestic tour IDs
-        $activeTourIds = Tour::where('status', 'active')
+        $activeTourQuery = Tour::where('status', 'active')
             ->where('primary_country_id', $thailandId)
-            ->whereHas('periods', fn($q) => $q->where('status', 'open')->where('start_date', '>=', $today))
-            ->pluck('id');
+            ->whereHas('periods', fn($q) => $q->where('status', 'open')->where('start_date', '>=', $today));
+
+        // All active IDs (for city list - always show all)
+        $allActiveTourIds = (clone $activeTourQuery)->pluck('id');
+
+        // Scoped by selected city for badges
+        if ($cityId) {
+            $activeTourQuery->whereHas('cities', fn($q) => $q->where('cities.id', $cityId));
+        }
+        $activeTourIds = $activeTourQuery->pluck('id');
 
         $filters = [];
 
-        // Cities in Thailand
+        // Cities in Thailand (always show all, not scoped)
         if ($setting->filter_city ?? true) {
             $filters['cities'] = City::active()
                 ->where('country_id', $thailandId)
-                ->whereHas('tours', fn($q) => $q->whereIn('tours.id', $activeTourIds))
-                ->withCount(['tours' => fn($q) => $q->whereIn('tours.id', $activeTourIds)])
+                ->whereHas('tours', fn($q) => $q->whereIn('tours.id', $allActiveTourIds))
+                ->withCount(['tours' => fn($q) => $q->whereIn('tours.id', $allActiveTourIds)])
                 ->orderBy('name_th')
                 ->get()
                 ->map(fn($c) => [

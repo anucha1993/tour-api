@@ -68,7 +68,7 @@ class TourController extends Controller
 
         // Filter by theme
         if ($request->filled('theme')) {
-            $query->whereJsonContains('themes', $request->theme);
+            $query->whereRaw('JSON_SEARCH(themes, \'one\', ?) IS NOT NULL', [$request->theme]);
         }
 
         // Filter by status

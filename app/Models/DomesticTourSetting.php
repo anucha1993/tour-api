@@ -322,12 +322,12 @@ class DomesticTourSetting extends Model
 
         // Theme filter (match in JSON array)
         if (!empty($filters['theme'])) {
-            $query->whereJsonContains('themes', $filters['theme']);
+            $query->whereRaw('JSON_SEARCH(themes, \'one\', ?) IS NOT NULL', [$filters['theme']]);
         }
 
         // Special highlight filter (match in JSON array)
         if (!empty($filters['special_highlight'])) {
-            $query->whereJsonContains('special_highlights', $filters['special_highlight']);
+            $query->whereRaw('JSON_SEARCH(special_highlights, \'one\', ?) IS NOT NULL', [$filters['special_highlight']]);
         }
 
         return $query;

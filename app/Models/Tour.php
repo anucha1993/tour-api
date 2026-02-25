@@ -310,7 +310,7 @@ class Tour extends Model
 
     public function scopeWithTheme($query, string $theme)
     {
-        return $query->whereJsonContains('themes', $theme);
+        return $query->whereRaw('JSON_SEARCH(themes, \'one\', ?) IS NOT NULL', [$theme]);
     }
 
     public function scopePriceRange($query, ?float $min, ?float $max)
