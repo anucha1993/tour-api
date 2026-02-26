@@ -299,6 +299,7 @@ class PublicTourController extends Controller
                     'price_joinland' => $offer->price_joinland ? (float) $offer->price_joinland : null,
                     'price_single' => $offer->price_single ? (float) $offer->price_single : null,
                     'discount_single' => (float) ($offer->discount_single ?? 0),
+                    'net_price_single' => $offer->price_single ? (float) ($offer->price_single - ($offer->discount_single ?? 0)) : null,
                     'deposit' => $offer->deposit ? (float) $offer->deposit : null,
                     'promo_name' => $offer->promo_name ?? $offer->promotion?->name,
                     'promo_start_date' => $offer->promo_start_date?->format('Y-m-d'),
