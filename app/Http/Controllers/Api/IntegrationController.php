@@ -2725,12 +2725,21 @@ class IntegrationController extends Controller
             ->with('wholesaler:id,name')
             ->get(['id', 'wholesaler_id', 'started_at', 'sync_type', 'total_items', 'processed_items', 'progress_percent', 'current_item_code']);
         
-        // Queue worker status (check if jobs are being processed)
+        // Queue worker status — ตรวจจากหลายแหล่ง
+        // 1. มี jobs ที่กำลัง process อยู่ (reserved_at != null)
+        $processingJobs = DB::table('jobs')->whereNotNull('reserved_at')->count();
+        
+        // 2. มี SyncLog จบภายใน 5 นาที
         $lastProcessedJob = SyncLog::whereIn('status', ['completed', 'failed'])
             ->latest('completed_at')
             ->first();
+        $recentlyCompleted = $lastProcessedJob && $lastProcessedJob->completed_at > now()->subMinutes(5);
         
-        $queueWorkerActive = $lastProcessedJob && $lastProcessedJob->completed_at > now()->subMinutes(5);
+        // 3. มี running sync ที่ heartbeat ยังอยู่
+        $activeRunningSync = $runningSyncs->isNotEmpty();
+        
+        // Worker active ถ้า: กำลัง process jobs อยู่ / หรือ เพิ่งจบ job / หรือ มี running sync
+        $queueWorkerActive = $processingJobs > 0 || $recentlyCompleted || $activeRunningSync;
         
         return response()->json([
             'success' => true,
