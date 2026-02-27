@@ -101,6 +101,22 @@ class Offer extends Model
     }
 
     /**
+     * Net price adult (price_adult - discount_adult)
+     */
+    public function getNetPriceAdultAttribute(): float
+    {
+        return max(0, ($this->price_adult ?? 0) - ($this->discount_adult ?? 0));
+    }
+
+    /**
+     * Net price single (price_single - discount_single)
+     */
+    public function getNetPriceSingleAttribute(): float
+    {
+        return max(0, ($this->price_single ?? 0) - ($this->discount_single ?? 0));
+    }
+
+    /**
      * คำนวณ discount percentage
      */
     public function getDiscountPercentAttribute(): float
@@ -112,4 +128,9 @@ class Offer extends Model
         $discount = $this->discount_adult ?? 0;
         return round(($discount / $this->price_adult) * 100, 2);
     }
+
+    /**
+     * Appended attributes
+     */
+    protected $appends = ['net_price_adult', 'net_price_single'];
 }

@@ -123,4 +123,126 @@ class BookingController extends Controller
             'from_website' => Booking::where('source', 'website')->count(),
         ]);
     }
+
+    /**
+     * Create new booking (manual - admin)
+     */
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            'tour_id' => 'required|exists:tours,id',
+            'period_id' => 'required|exists:tour_periods,id',
+            'first_name' => 'required|string|max:100',
+            'last_name' => 'required|string|max:100',
+            'email' => 'required|email|max:100',
+            'phone' => 'required|string|max:20',
+            'qty_adult' => 'required|integer|min:1',
+            'qty_adult_single' => 'integer|min:0',
+            'qty_child_bed' => 'integer|min:0',
+            'qty_child_nobed' => 'integer|min:0',
+            'qty_infant' => 'integer|min:0',
+            'qty_triple' => 'integer|min:0',
+            'qty_twin' => 'integer|min:0',
+            'qty_double' => 'integer|min:0',
+            'price_adult' => 'required|numeric|min:0',
+            'price_single' => 'numeric|min:0',
+            'price_child_bed' => 'numeric|min:0',
+            'price_child_nobed' => 'numeric|min:0',
+            'price_infant' => 'numeric|min:0',
+            'total_amount' => 'required|numeric|min:0',
+            'sale_code' => 'nullable|string|max:50',
+            'special_request' => 'nullable|string|max:1000',
+            'admin_note' => 'nullable|string|max:1000',
+            'status' => 'in:pending,confirmed,paid,cancelled,completed',
+        ]);
+
+        $booking = Booking::create([
+            'booking_code' => Booking::generateBookingCode(),
+            'tour_id' => $validated['tour_id'],
+            'period_id' => $validated['period_id'],
+            'first_name' => $validated['first_name'],
+            'last_name' => $validated['last_name'],
+            'email' => $validated['email'],
+            'phone' => $validated['phone'],
+            'qty_adult' => $validated['qty_adult'],
+            'qty_adult_single' => $validated['qty_adult_single'] ?? 0,
+            'qty_child_bed' => $validated['qty_child_bed'] ?? 0,
+            'qty_child_nobed' => $validated['qty_child_nobed'] ?? 0,
+            'qty_infant' => $validated['qty_infant'] ?? 0,
+            'qty_triple' => $validated['qty_triple'] ?? 0,
+            'qty_twin' => $validated['qty_twin'] ?? 0,
+            'qty_double' => $validated['qty_double'] ?? 0,
+            'price_adult' => $validated['price_adult'],
+            'price_single' => $validated['price_single'] ?? 0,
+            'price_child_bed' => $validated['price_child_bed'] ?? 0,
+            'price_child_nobed' => $validated['price_child_nobed'] ?? 0,
+            'price_infant' => $validated['price_infant'] ?? 0,
+            'total_amount' => $validated['total_amount'],
+            'sale_code' => $validated['sale_code'] ?? null,
+            'special_request' => $validated['special_request'] ?? null,
+            'admin_note' => $validated['admin_note'] ?? null,
+            'status' => $validated['status'] ?? 'pending',
+            'source' => 'manual', // Admin manual creation
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'สร้างใบจองสำเร็จ',
+            'booking' => $booking->fresh(['tour', 'period']),
+        ], 201);
+    }
+
+    /**
+     * Update booking (admin)
+     */
+    public function update(Request $request, int $id)
+    {
+        $booking = Booking::find($id);
+        if (!$booking) {
+            return response()->json(['message' => 'ไม่พบข้อมูลการจอง'], 404);
+        }
+
+        $validated = $request->validate([
+            'first_name' => 'string|max:100',
+            'last_name' => 'string|max:100',
+            'email' => 'email|max:100',
+            'phone' => 'string|max:20',
+            'qty_adult' => 'integer|min:1',
+            'qty_adult_single' => 'integer|min:0',
+            'qty_child_bed' => 'integer|min:0',
+            'qty_child_nobed' => 'integer|min:0',
+            'qty_infant' => 'integer|min:0',
+            'qty_triple' => 'integer|min:0',
+            'qty_twin' => 'integer|min:0',
+            'qty_double' => 'integer|min:0',
+            'price_adult' => 'numeric|min:0',
+            'price_single' => 'numeric|min:0',
+            'price_child_bed' => 'numeric|min:0',
+            'price_child_nobed' => 'numeric|min:0',
+            'price_infant' => 'numeric|min:0',
+            'total_amount' => 'numeric|min:0',
+            'sale_code' => 'nullable|string|max:50',
+            'special_request' => 'nullable|string|max:1000',
+            'admin_note' => 'nullable|string|max:1000',
+            'status' => 'in:pending,confirmed,paid,cancelled,completed',
+            'period_id' => 'exists:tour_periods,id',
+        ]);
+
+        // Handle flash sale cancellation
+        $oldStatus = $booking->status;
+        
+        $booking->fill($validated);
+        $booking->save();
+
+        // If cancelled and was flash sale → decrement quantity_sold
+        if (isset($validated['status']) && $validated['status'] === 'cancelled' && $oldStatus !== 'cancelled' && $booking->flash_sale_item_id) {
+            $booking->flashSaleItem?->decrement('quantity_sold');
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'แก้ไขใบจองสำเร็จ',
+            'booking' => $booking->fresh(['member', 'tour', 'period', 'flashSaleItem']),
+        ]);
+    }
 }

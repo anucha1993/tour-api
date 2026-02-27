@@ -24,6 +24,7 @@ class User extends Authenticatable
         'password',
         'role',
         'is_active',
+        'is_sales',
     ];
 
     /**
@@ -47,6 +48,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_active' => 'boolean',
+            'is_sales' => 'boolean',
         ];
     }
 
@@ -80,5 +82,21 @@ class User extends Authenticatable
     public function scopeActive($query)
     {
         return $query->where('is_active', true);
+    }
+
+    /**
+     * Scope for sales users
+     */
+    public function scopeSales($query)
+    {
+        return $query->where('is_sales', true);
+    }
+
+    /**
+     * Check if user is sales
+     */
+    public function isSales(): bool
+    {
+        return $this->is_sales === true;
     }
 }

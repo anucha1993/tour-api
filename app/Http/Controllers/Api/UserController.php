@@ -70,6 +70,7 @@ class UserController extends Controller
             'password' => ['required', 'confirmed', Password::min(8)],
             'role' => ['required', Rule::in(['admin', 'manager', 'staff'])],
             'is_active' => ['boolean'],
+            'is_sales' => ['boolean'],
         ], [
             'name.required' => 'กรุณาระบุชื่อ',
             'email.required' => 'กรุณาระบุอีเมล',
@@ -88,6 +89,7 @@ class UserController extends Controller
             'password' => $validated['password'],
             'role' => $validated['role'],
             'is_active' => $validated['is_active'] ?? true,
+            'is_sales' => $validated['is_sales'] ?? false,
         ]);
 
         return response()->json([
@@ -119,6 +121,7 @@ class UserController extends Controller
             'password' => ['sometimes', 'nullable', 'confirmed', Password::min(8)],
             'role' => ['sometimes', 'required', Rule::in(['admin', 'manager', 'staff'])],
             'is_active' => ['sometimes', 'boolean'],
+            'is_sales' => ['sometimes', 'boolean'],
         ], [
             'name.required' => 'กรุณาระบุชื่อ',
             'email.required' => 'กรุณาระบุอีเมล',
@@ -145,6 +148,9 @@ class UserController extends Controller
         }
         if (isset($validated['is_active'])) {
             $user->is_active = $validated['is_active'];
+        }
+        if (isset($validated['is_sales'])) {
+            $user->is_sales = $validated['is_sales'];
         }
 
         $user->save();

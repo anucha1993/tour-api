@@ -89,6 +89,10 @@ class WebBookingController extends Controller
             'qty_adult_single' => 'integer|min:0',
             'qty_child_bed' => 'integer|min:0',
             'qty_child_nobed' => 'integer|min:0',
+            'qty_infant' => 'integer|min:0',
+            'qty_triple' => 'integer|min:0',
+            'qty_twin' => 'integer|min:0',
+            'qty_double' => 'integer|min:0',
             'sale_code' => 'nullable|string|max:50',
             'special_request' => 'nullable|string|max:1000',
             'consent_terms' => 'required|accepted',
@@ -129,17 +133,23 @@ class WebBookingController extends Controller
         $qtyAdultSingle = (int) ($request->qty_adult_single ?? 0);
         $qtyChildBed = (int) ($request->qty_child_bed ?? 0);
         $qtyChildNoBed = (int) ($request->qty_child_nobed ?? 0);
+        $qtyInfant = (int) ($request->qty_infant ?? 0);
+        $qtyTriple = (int) ($request->qty_triple ?? 0);
+        $qtyTwin = (int) ($request->qty_twin ?? 0);
+        $qtyDouble = (int) ($request->qty_double ?? 0);
 
         $priceAdult = $offer ? ($offer->price_adult - ($offer->discount_adult ?? 0)) : 0;
         $priceSingle = $offer && $offer->price_single ? ($offer->price_single - ($offer->discount_single ?? 0)) : 0;
         $priceChildBed = $offer && $offer->price_child ? ($offer->price_child - ($offer->discount_child_bed ?? 0)) : 0;
         $priceChildNoBed = $offer && $offer->price_child_nobed ? ($offer->price_child_nobed - ($offer->discount_child_nobed ?? 0)) : 0;
+        $priceInfant = $offer && $offer->price_infant ? $offer->price_infant : 0;
 
         $totalAdult = ($qtyAdult - $qtyAdultSingle) * $priceAdult;
         $totalSingle = $qtyAdultSingle * ($priceAdult + $priceSingle);
         $totalChildBed = $qtyChildBed * $priceChildBed;
         $totalChildNoBed = $qtyChildNoBed * $priceChildNoBed;
-        $grandTotal = $totalAdult + $totalSingle + $totalChildBed + $totalChildNoBed;
+        $totalInfant = $qtyInfant * $priceInfant;
+        $grandTotal = $totalAdult + $totalSingle + $totalChildBed + $totalChildNoBed + $totalInfant;
 
         // Resolve member
         $memberId = null;
@@ -192,10 +202,15 @@ class WebBookingController extends Controller
                 'qty_adult_single' => $qtyAdultSingle,
                 'qty_child_bed' => $qtyChildBed,
                 'qty_child_nobed' => $qtyChildNoBed,
+                'qty_infant' => $qtyInfant,
+                'qty_triple' => $qtyTriple,
+                'qty_twin' => $qtyTwin,
+                'qty_double' => $qtyDouble,
                 'price_adult' => $priceAdult,
                 'price_single' => $priceSingle,
                 'price_child_bed' => $priceChildBed,
                 'price_child_nobed' => $priceChildNoBed,
+                'price_infant' => $priceInfant,
                 'total_amount' => $grandTotal,
                 'first_name' => $request->first_name,
                 'last_name' => $request->last_name,
@@ -300,23 +315,30 @@ class WebBookingController extends Controller
         $qtyAdultSingle = (int) ($request->qty_adult_single ?? 0);
         $qtyChildBed = (int) ($request->qty_child_bed ?? 0);
         $qtyChildNoBed = (int) ($request->qty_child_nobed ?? 0);
+        $qtyInfant = (int) ($request->qty_infant ?? 0);
+        $qtyTriple = (int) ($request->qty_triple ?? 0);
+        $qtyTwin = (int) ($request->qty_twin ?? 0);
+        $qtyDouble = (int) ($request->qty_double ?? 0);
 
         $priceAdult = $flashPrice;
         $priceSingle = $offer && $offer->price_single ? ($offer->price_single - ($offer->discount_single ?? 0)) : 0;
         $priceChildBed = $offer && $offer->price_child ? ($offer->price_child - ($offer->discount_child_bed ?? 0)) : 0;
         $priceChildNoBed = $offer && $offer->price_child_nobed ? ($offer->price_child_nobed - ($offer->discount_child_nobed ?? 0)) : 0;
+        $priceInfant = $offer && $offer->price_infant ? $offer->price_infant : 0;
 
         $totalAdult = ($qtyAdult - $qtyAdultSingle) * $priceAdult;
         $totalSingle = $qtyAdultSingle * ($priceAdult + $priceSingle);
         $totalChildBed = $qtyChildBed * $priceChildBed;
         $totalChildNoBed = $qtyChildNoBed * $priceChildNoBed;
-        $grandTotal = $totalAdult + $totalSingle + $totalChildBed + $totalChildNoBed;
+        $totalInfant = $qtyInfant * $priceInfant;
+        $grandTotal = $totalAdult + $totalSingle + $totalChildBed + $totalChildNoBed + $totalInfant;
 
         try {
             $booking = DB::transaction(function () use (
                 $member, $tour, $period, $flashItem, $request,
-                $qtyAdult, $qtyAdultSingle, $qtyChildBed, $qtyChildNoBed,
-                $priceAdult, $priceSingle, $priceChildBed, $priceChildNoBed, $grandTotal
+                $qtyAdult, $qtyAdultSingle, $qtyChildBed, $qtyChildNoBed, $qtyInfant,
+                $qtyTriple, $qtyTwin, $qtyDouble,
+                $priceAdult, $priceSingle, $priceChildBed, $priceChildNoBed, $priceInfant, $grandTotal
             ) {
                 // Lock & check stock
                 $item = FlashSaleItem::lockForUpdate()->find($flashItem->id);
@@ -335,10 +357,15 @@ class WebBookingController extends Controller
                     'qty_adult_single' => $qtyAdultSingle,
                     'qty_child_bed' => $qtyChildBed,
                     'qty_child_nobed' => $qtyChildNoBed,
+                    'qty_infant' => $qtyInfant,
+                    'qty_triple' => $qtyTriple,
+                    'qty_twin' => $qtyTwin,
+                    'qty_double' => $qtyDouble,
                     'price_adult' => $priceAdult,
                     'price_single' => $priceSingle,
                     'price_child_bed' => $priceChildBed,
                     'price_child_nobed' => $priceChildNoBed,
+                    'price_infant' => $priceInfant,
                     'total_amount' => $grandTotal,
                     'first_name' => $request->first_name,
                     'last_name' => $request->last_name,
@@ -390,13 +417,74 @@ class WebBookingController extends Controller
         }
 
         $bookings = Booking::where('web_member_id', $member->id)
-            ->with(['tour:id,title,slug,tour_code', 'period:id,start_date,end_date', 'flashSaleItem:id,flash_price,discount_percent'])
+            ->with([
+                'tour:id,title,slug,tour_code,cover_image_url,custom_cover_image_url,cover_image_source',
+                'tour.countries:id,name_th',
+                'period:id,start_date,end_date',
+                'flashSaleItem:id,flash_price,discount_percent'
+            ])
             ->orderBy('created_at', 'desc')
             ->paginate(10);
+
+        // Transform to add effective_cover_image_url
+        $bookings->getCollection()->transform(function ($booking) {
+            if ($booking->tour) {
+                $booking->tour->effective_cover_image_url = 
+                    ($booking->tour->cover_image_source === 'custom' && $booking->tour->custom_cover_image_url)
+                        ? $booking->tour->custom_cover_image_url
+                        : $booking->tour->cover_image_url;
+                
+                // Get first country name
+                $booking->tour->destination = $booking->tour->countries->first()?->name_th ?? 'ไม่ระบุ';
+                unset($booking->tour->countries);
+            }
+            return $booking;
+        });
 
         return response()->json([
             'success' => true,
             'data' => $bookings,
+        ]);
+    }
+
+    /**
+     * Get a single booking detail for the authenticated member
+     */
+    public function showBooking(Request $request, $id)
+    {
+        $member = $request->user('sanctum');
+        if (!$member) {
+            return response()->json(['success' => false, 'message' => 'กรุณาเข้าสู่ระบบ'], 401);
+        }
+
+        $booking = Booking::where('id', $id)
+            ->where('web_member_id', $member->id)
+            ->with([
+                'tour:id,title,slug,tour_code,cover_image_url,custom_cover_image_url,cover_image_source',
+                'tour.countries:id,name_th',
+                'period:id,start_date,end_date',
+                'flashSaleItem:id,flash_price,discount_percent'
+            ])
+            ->first();
+
+        if (!$booking) {
+            return response()->json(['success' => false, 'message' => 'ไม่พบข้อมูลการจอง'], 404);
+        }
+
+        // Add effective_cover_image_url
+        if ($booking->tour) {
+            $booking->tour->effective_cover_image_url = 
+                ($booking->tour->cover_image_source === 'custom' && $booking->tour->custom_cover_image_url)
+                    ? $booking->tour->custom_cover_image_url
+                    : $booking->tour->cover_image_url;
+            
+            $booking->tour->destination = $booking->tour->countries->first()?->name_th ?? 'ไม่ระบุ';
+            unset($booking->tour->countries);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $booking,
         ]);
     }
 }

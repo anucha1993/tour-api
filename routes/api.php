@@ -526,7 +526,9 @@ Route::middleware('auth:sanctum')->group(function () {
     // Bookings (admin)
     Route::get('bookings', [BookingController::class, 'index']);
     Route::get('bookings/statistics', [BookingController::class, 'statistics']);
+    Route::post('bookings', [BookingController::class, 'store']);
     Route::get('bookings/{id}', [BookingController::class, 'show']);
+    Route::put('bookings/{id}', [BookingController::class, 'update']);
     Route::patch('bookings/{id}/status', [BookingController::class, 'updateStatus']);
 
     // Gallery Images CRUD
@@ -748,6 +750,15 @@ use App\Http\Controllers\Web\WebWishlistController;
 use App\Http\Controllers\Web\WebBookingController;
 
 Route::prefix('web')->group(function () {
+    // Public routes
+    // Sales users (for booking form dropdown)
+    Route::get('/sales', function () {
+        return response()->json([
+            'success' => true,
+            'data' => \App\Models\User::active()->sales()->select('id', 'name')->orderBy('name')->get(),
+        ]);
+    });
+
     // Public auth routes
     Route::prefix('auth')->group(function () {
         // Registration
@@ -786,6 +797,7 @@ Route::prefix('web')->group(function () {
 
         // My Bookings
         Route::get('/bookings', [WebBookingController::class, 'myBookings']);
+        Route::get('/bookings/{id}', [WebBookingController::class, 'showBooking']);
         
         // Profile
         Route::get('/me', [WebAuthController::class, 'me']);

@@ -28,14 +28,19 @@ class TourController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        // Check if full periods with pricing is requested (for booking modal)
+        $withPeriods = filter_var($request->get('with_periods'), FILTER_VALIDATE_BOOLEAN);
+
         $query = Tour::with([
             'primaryCountry:id,iso2,name_en,name_th', 
             'countries:id,iso2,name_en,name_th', 
             'cities:id,name_en,name_th,country_id', 
             'wholesaler:id,name', 
             'transports.transport:id,code,name,type,image', 
-            'periods:id,tour_id,start_date,end_date,status',
-            'periods.offer:id,period_id,promotion_id',
+            'periods:id,tour_id,start_date,end_date,status,capacity,booked,available,sale_status',
+            $withPeriods 
+                ? 'periods.offer' // Include full offer with pricing
+                : 'periods.offer:id,period_id,promotion_id',
             'periods.offer.promotion:id,name,type'
         ]);
 
