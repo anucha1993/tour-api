@@ -774,4 +774,286 @@ class SettingsController extends Controller
             'data' => Setting::get('why_choose_us_config'),
         ]);
     }
+
+    /* ────────────────────────────────────────────────────────────────
+     *  Email Templates
+     * ──────────────────────────────────────────────────────────────── */
+
+    private function defaultEmailTemplates(): array
+    {
+        return [
+            'booking_confirmation' => [
+                'enabled'  => true,
+                'subject'  => 'ยืนยันการจองทัวร์ - {{booking_code}}',
+                'body'     => $this->defaultBookingConfirmationBody(),
+                'send_to_admin' => true,
+                'admin_emails'  => '',
+            ],
+            'booking_status_update' => [
+                'enabled'  => true,
+                'subject'  => 'อัปเดตสถานะการจอง {{booking_code}} - {{status_label}}',
+                'body'     => $this->defaultStatusUpdateBody(),
+                'send_to_admin' => false,
+                'admin_emails'  => '',
+            ],
+        ];
+    }
+
+    private function defaultBookingConfirmationBody(): string
+    {
+        return <<<'HTML'
+<div style="font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;max-width:600px;margin:0 auto;padding:0;background:#f8fafc;">
+  <div style="background:linear-gradient(135deg,#2563eb 0%,#1d4ed8 100%);padding:32px 24px;text-align:center;border-radius:12px 12px 0 0;">
+    <h1 style="color:#ffffff;font-size:22px;margin:0;">🎉 ขอบคุณที่จองทัวร์กับเรา!</h1>
+    <p style="color:#bfdbfe;font-size:14px;margin:8px 0 0;">รหัสการจอง: <strong style="color:#fff;">{{booking_code}}</strong></p>
+  </div>
+  <div style="background:#ffffff;padding:24px;border:1px solid #e2e8f0;border-top:none;">
+    <p style="color:#334155;font-size:15px;margin:0 0 16px;">สวัสดีคุณ <strong>{{customer_name}}</strong>,</p>
+    <p style="color:#64748b;font-size:14px;margin:0 0 20px;">เราได้รับการจองทัวร์ของท่านเรียบร้อยแล้ว ทีมงานจะตรวจสอบและแจ้งยืนยันให้ทราบภายใน 24 ชั่วโมง</p>
+    <div style="background:#f1f5f9;border-radius:8px;padding:16px;margin:0 0 20px;">
+      <h3 style="color:#1e293b;font-size:15px;margin:0 0 12px;">📋 รายละเอียดการจอง</h3>
+      <table style="width:100%;font-size:14px;color:#475569;" cellpadding="4">
+        <tr><td style="padding:4px 0;color:#94a3b8;width:140px;">ทัวร์</td><td style="padding:4px 0;font-weight:600;">{{tour_name}}</td></tr>
+        <tr><td style="padding:4px 0;color:#94a3b8;">รหัสทัวร์</td><td style="padding:4px 0;">{{tour_code}}</td></tr>
+        <tr><td style="padding:4px 0;color:#94a3b8;">วันเดินทาง</td><td style="padding:4px 0;">{{travel_date}}</td></tr>
+        <tr><td style="padding:4px 0;color:#94a3b8;">จำนวนผู้เดินทาง</td><td style="padding:4px 0;">{{total_passengers}} ท่าน</td></tr>
+        <tr><td style="padding:4px 0;color:#94a3b8;">ยอดรวม</td><td style="padding:4px 0;font-weight:700;color:#2563eb;font-size:16px;">{{total_amount}}</td></tr>
+      </table>
+    </div>
+    <div style="background:#f1f5f9;border-radius:8px;padding:16px;margin:0 0 20px;">
+      <h3 style="color:#1e293b;font-size:15px;margin:0 0 12px;">👤 ข้อมูลผู้จอง</h3>
+      <table style="width:100%;font-size:14px;color:#475569;" cellpadding="4">
+        <tr><td style="padding:4px 0;color:#94a3b8;width:140px;">ชื่อ-นามสกุล</td><td style="padding:4px 0;">{{customer_name}}</td></tr>
+        <tr><td style="padding:4px 0;color:#94a3b8;">โทรศัพท์</td><td style="padding:4px 0;">{{customer_phone}}</td></tr>
+        <tr><td style="padding:4px 0;color:#94a3b8;">อีเมล</td><td style="padding:4px 0;">{{customer_email}}</td></tr>
+      </table>
+    </div>
+    <p style="color:#64748b;font-size:13px;margin:20px 0 0;">หากมีข้อสงสัย กรุณาติดต่อเราที่ <strong>02-136-9144</strong> หรือตอบกลับอีเมลนี้</p>
+  </div>
+  <div style="text-align:center;padding:16px;color:#94a3b8;font-size:12px;border-radius:0 0 12px 12px;">
+    <p style="margin:0;">© {{year}} NextTrip — เที่ยวทั่วไทย ไปทั่วโลก</p>
+  </div>
+</div>
+HTML;
+    }
+
+    private function defaultStatusUpdateBody(): string
+    {
+        return <<<'HTML'
+<div style="font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;max-width:600px;margin:0 auto;padding:0;background:#f8fafc;">
+  <div style="background:linear-gradient(135deg,#2563eb 0%,#1d4ed8 100%);padding:32px 24px;text-align:center;border-radius:12px 12px 0 0;">
+    <h1 style="color:#ffffff;font-size:22px;margin:0;">อัปเดตสถานะการจอง</h1>
+    <p style="color:#bfdbfe;font-size:14px;margin:8px 0 0;">รหัส: <strong style="color:#fff;">{{booking_code}}</strong></p>
+  </div>
+  <div style="background:#ffffff;padding:24px;border:1px solid #e2e8f0;border-top:none;">
+    <p style="color:#334155;font-size:15px;margin:0 0 16px;">สวัสดีคุณ <strong>{{customer_name}}</strong>,</p>
+    <p style="color:#64748b;font-size:14px;margin:0 0 20px;">สถานะการจองทัวร์ <strong>{{tour_name}}</strong> ได้เปลี่ยนเป็น:</p>
+    <div style="text-align:center;margin:20px 0;">
+      <span style="display:inline-block;padding:10px 28px;background:#dbeafe;color:#1d4ed8;font-weight:700;border-radius:24px;font-size:16px;">{{status_label}}</span>
+    </div>
+    <div style="background:#f1f5f9;border-radius:8px;padding:16px;">
+      <table style="width:100%;font-size:14px;color:#475569;" cellpadding="4">
+        <tr><td style="padding:4px 0;color:#94a3b8;width:140px;">วันเดินทาง</td><td style="padding:4px 0;">{{travel_date}}</td></tr>
+        <tr><td style="padding:4px 0;color:#94a3b8;">ยอดรวม</td><td style="padding:4px 0;font-weight:700;color:#2563eb;">{{total_amount}}</td></tr>
+      </table>
+    </div>
+    <p style="color:#64748b;font-size:13px;margin:20px 0 0;">หากมีข้อสงสัย กรุณาติดต่อเราที่ <strong>02-136-9144</strong></p>
+  </div>
+  <div style="text-align:center;padding:16px;color:#94a3b8;font-size:12px;">
+    <p style="margin:0;">© {{year}} NextTrip — เที่ยวทั่วไทย ไปทั่วโลก</p>
+  </div>
+</div>
+HTML;
+    }
+
+    /**
+     * Get email templates config
+     */
+    public function getEmailTemplates(): JsonResponse
+    {
+        $templates = Setting::get('email_templates', $this->defaultEmailTemplates());
+
+        // Ensure all template types exist (in case new ones were added)
+        $defaults = $this->defaultEmailTemplates();
+        foreach ($defaults as $key => $def) {
+            if (!isset($templates[$key])) {
+                $templates[$key] = $def;
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $templates,
+            'variables' => [
+                'booking_code'     => 'รหัสการจอง',
+                'customer_name'    => 'ชื่อ-นามสกุลผู้จอง',
+                'customer_email'   => 'อีเมลผู้จอง',
+                'customer_phone'   => 'โทรศัพท์ผู้จอง',
+                'tour_name'        => 'ชื่อทัวร์',
+                'tour_code'        => 'รหัสทัวร์',
+                'travel_date'      => 'วันเดินทาง',
+                'total_passengers' => 'จำนวนผู้เดินทาง',
+                'total_amount'     => 'ยอดรวมทั้งหมด',
+                'status_label'     => 'สถานะการจอง',
+                'year'             => 'ปีปัจจุบัน',
+            ],
+        ]);
+    }
+
+    /**
+     * Update email templates config
+     */
+    public function updateEmailTemplates(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'booking_confirmation'                => 'required|array',
+            'booking_confirmation.enabled'        => 'required|boolean',
+            'booking_confirmation.subject'        => 'required|string|max:255',
+            'booking_confirmation.body'           => 'required|string',
+            'booking_confirmation.send_to_admin'  => 'required|boolean',
+            'booking_confirmation.admin_emails'   => 'nullable|string|max:500',
+
+            'booking_status_update'               => 'required|array',
+            'booking_status_update.enabled'       => 'required|boolean',
+            'booking_status_update.subject'       => 'required|string|max:255',
+            'booking_status_update.body'          => 'required|string',
+            'booking_status_update.send_to_admin' => 'required|boolean',
+            'booking_status_update.admin_emails'  => 'nullable|string|max:500',
+        ]);
+
+        Setting::set('email_templates', $validated, 'mail', 'json');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'บันทึก Email Template สำเร็จ',
+        ]);
+    }
+
+    /**
+     * Send test email for a specific template
+     */
+    public function testEmailTemplate(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'template_key' => 'required|in:booking_confirmation,booking_status_update',
+            'to_email'     => 'required|email',
+        ]);
+
+        $smtpConfig = Setting::get('smtp_config');
+
+        if (!$smtpConfig || empty($smtpConfig['host']) || empty($smtpConfig['enabled'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'กรุณาตั้งค่าและเปิดใช้งาน SMTP ก่อน (/dashboard/settings/smtp)',
+            ], 400);
+        }
+
+        $templates = Setting::get('email_templates', $this->defaultEmailTemplates());
+        $template  = $templates[$validated['template_key']] ?? null;
+
+        if (!$template) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ไม่พบ Template ที่ระบุ',
+            ], 404);
+        }
+
+        // Sample data for test
+        $sampleData = [
+            'booking_code'     => 'BK-20260227-0001',
+            'customer_name'    => 'สมชาย ใจดี',
+            'customer_email'   => $validated['to_email'],
+            'customer_phone'   => '081-234-5678',
+            'tour_name'        => 'ทัวร์ญี่ปุ่น โตเกียว ฟูจิ 6วัน4คืน',
+            'tour_code'        => 'JP-TYO-001',
+            'travel_date'      => '15 มี.ค. 2569 — 20 มี.ค. 2569',
+            'total_passengers' => '2',
+            'total_amount'     => '฿59,900',
+            'status_label'     => 'ยืนยันแล้ว',
+            'year'             => (string) date('Y'),
+        ];
+
+        $subject = $template['subject'];
+        $body    = $template['body'];
+
+        foreach ($sampleData as $key => $value) {
+            $subject = str_replace("{{{$key}}}", $value, $subject);
+            $body    = str_replace("{{{$key}}}", $value, $body);
+        }
+
+        try {
+            $password = '';
+            if (!empty($smtpConfig['password'])) {
+                try {
+                    $password = decrypt($smtpConfig['password']);
+                } catch (\Exception $e) {
+                    $password = $smtpConfig['password'];
+                }
+            }
+
+            $useTls = $smtpConfig['encryption'] === 'ssl';
+
+            $transport = new \Symfony\Component\Mailer\Transport\Smtp\EsmtpTransport(
+                $smtpConfig['host'],
+                (int) $smtpConfig['port'],
+                $useTls
+            );
+
+            if (!empty($smtpConfig['username'])) {
+                $transport->setUsername($smtpConfig['username']);
+            }
+            if (!empty($password)) {
+                $transport->setPassword($password);
+            }
+
+            $mailer = new \Symfony\Component\Mailer\Mailer($transport);
+
+            $email = (new \Symfony\Component\Mime\Email())
+                ->from(new \Symfony\Component\Mime\Address(
+                    $smtpConfig['from_address'],
+                    $smtpConfig['from_name']
+                ))
+                ->to($validated['to_email'])
+                ->subject('[ทดสอบ] ' . $subject)
+                ->html($body);
+
+            $mailer->send($email);
+
+            return response()->json([
+                'success' => true,
+                'message' => "ส่งอีเมลทดสอบ Template ไปที่ {$validated['to_email']} สำเร็จ",
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Email template test failed', ['error' => $e->getMessage()]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'ไม่สามารถส่งอีเมลได้: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Reset email template to default
+     */
+    public function resetEmailTemplate(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'template_key' => 'required|in:booking_confirmation,booking_status_update',
+        ]);
+
+        $templates = Setting::get('email_templates', $this->defaultEmailTemplates());
+        $defaults  = $this->defaultEmailTemplates();
+
+        $templates[$validated['template_key']] = $defaults[$validated['template_key']];
+
+        Setting::set('email_templates', $templates, 'mail', 'json');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'รีเซ็ต Template เป็นค่าเริ่มต้นสำเร็จ',
+            'data'    => $templates[$validated['template_key']],
+        ]);
+    }
 }

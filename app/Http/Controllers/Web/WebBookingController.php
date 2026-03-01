@@ -9,6 +9,7 @@ use App\Models\WebMember;
 use App\Models\Period;
 use App\Models\Tour;
 use App\Services\OtpService;
+use App\Services\BookingEmailService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -224,6 +225,13 @@ class WebBookingController extends Controller
 
             Log::info('Booking created', ['booking_code' => $booking->booking_code, 'id' => $booking->id]);
 
+            // Send booking confirmation email (async-safe, never throws)
+            try {
+                BookingEmailService::sendBookingConfirmation($booking);
+            } catch (\Exception $e) {
+                Log::warning('Booking email failed but booking is OK', ['error' => $e->getMessage()]);
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => 'จองทัวร์สำเร็จ รอการยืนยันจากเจ้าหน้าที่',
@@ -382,6 +390,13 @@ class WebBookingController extends Controller
                 'flash_sale_item_id' => $flashItem->id,
                 'member_id' => $member->id,
             ]);
+
+            // Send booking confirmation email
+            try {
+                BookingEmailService::sendBookingConfirmation($booking);
+            } catch (\Exception $e) {
+                Log::warning('Booking email failed but booking is OK', ['error' => $e->getMessage()]);
+            }
 
             return response()->json([
                 'success' => true,

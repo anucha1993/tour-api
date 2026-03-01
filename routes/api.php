@@ -662,6 +662,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/smtp', [SettingsController::class, 'getSmtpConfig']);
         Route::put('/smtp', [SettingsController::class, 'updateSmtpConfig']);
         Route::post('/smtp/test', [SettingsController::class, 'testSmtpConfig']);
+
+        // Email Templates
+        Route::get('/email-templates', [SettingsController::class, 'getEmailTemplates']);
+        Route::put('/email-templates', [SettingsController::class, 'updateEmailTemplates']);
+        Route::post('/email-templates/test', [SettingsController::class, 'testEmailTemplate']);
+        Route::post('/email-templates/reset', [SettingsController::class, 'resetEmailTemplate']);
         
         // OTP Settings
         Route::get('/otp', [SettingsController::class, 'getOtpConfig']);

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Booking;
+use App\Services\BookingEmailService;
 use Illuminate\Http\Request;
 
 class BookingController extends Controller
@@ -94,6 +95,15 @@ class BookingController extends Controller
         }
 
         $booking->save();
+
+        // Send status update email to customer
+        if ($oldStatus !== $request->status) {
+            try {
+                BookingEmailService::sendStatusUpdate($booking);
+            } catch (\Exception $e) {
+                // Don't fail the status update if email fails
+            }
+        }
 
         // If cancelled and was flash sale → decrement quantity_sold
         if ($request->status === 'cancelled' && $oldStatus !== 'cancelled' && $booking->flash_sale_item_id) {
