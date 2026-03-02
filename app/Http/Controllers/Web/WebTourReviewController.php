@@ -168,6 +168,60 @@ class WebTourReviewController extends Controller
     }
 
     /**
+     * Get a single approved review (public)
+     */
+    public function show(int $reviewId)
+    {
+        $review = TourReview::approved()
+            ->with(['tour:id,title,slug,tour_code,cover_image_url', 'images', 'user:id,first_name,last_name,avatar'])
+            ->findOrFail($reviewId);
+
+        // Get related reviews from same tour
+        $relatedReviews = TourReview::approved()
+            ->where('tour_id', $review->tour_id)
+            ->where('id', '!=', $review->id)
+            ->with(['images', 'tour:id,title,slug,tour_code,cover_image_url'])
+            ->orderByDesc('is_featured')
+            ->orderByDesc('rating')
+            ->limit(6)
+            ->get();
+
+        // Get featured / recommended reviews (exclude current + related)
+        $excludeIds = $relatedReviews->pluck('id')->push($review->id)->toArray();
+        $featuredReviews = TourReview::approved()
+            ->whereNotIn('id', $excludeIds)
+            ->where('is_featured', true)
+            ->with(['images', 'tour:id,title,slug,tour_code,cover_image_url'])
+            ->orderByDesc('created_at')
+            ->limit(6)
+            ->get();
+
+        // If not enough featured, fill with high-rating reviews
+        if ($featuredReviews->count() < 6) {
+            $remaining = 6 - $featuredReviews->count();
+            $allExclude = array_merge($excludeIds, $featuredReviews->pluck('id')->toArray());
+            $extra = TourReview::approved()
+                ->whereNotIn('id', $allExclude)
+                ->where('rating', '>=', 4)
+                ->with(['images', 'tour:id,title,slug,tour_code,cover_image_url'])
+                ->orderByDesc('rating')
+                ->orderByDesc('created_at')
+                ->limit($remaining)
+                ->get();
+            $featuredReviews = $featuredReviews->concat($extra);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'review' => $review,
+                'related_reviews' => $relatedReviews,
+                'featured_reviews' => $featuredReviews,
+            ],
+        ]);
+    }
+
+    /**
      * Get featured reviews for homepage (public)
      */
     public function featured(Request $request)
@@ -383,6 +437,27 @@ class WebTourReviewController extends Controller
         return response()->json([
             'success' => true,
             'data' => ['helpful_count' => $review->fresh()->helpful_count],
+        ]);
+    }
+
+    /**
+     * Record a view for a review (public)
+     * Uses IP-based throttle to prevent inflating counts
+     */
+    public function recordView(Request $request, $reviewId)
+    {
+        $review = TourReview::where('id', $reviewId)->approved()->firstOrFail();
+
+        // Throttle: 1 view per IP per review per hour
+        $cacheKey = 'review_view_' . $reviewId . '_' . md5($request->ip());
+        if (!\Illuminate\Support\Facades\Cache::has($cacheKey)) {
+            $review->increment('views_count');
+            \Illuminate\Support\Facades\Cache::put($cacheKey, true, 3600); // 1 hour
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => ['views_count' => $review->fresh()->views_count],
         ]);
     }
 

@@ -130,10 +130,18 @@ class TourSearchController extends Controller
                 'wholesaler_id' => $config->wholesaler_id,
                 'error' => $e->getMessage(),
             ]);
+            
+            // Detect rate limit errors and return 429 instead of 500
+            $message = $e->getMessage();
+            $statusCode = 500;
+            if (str_contains(strtolower($message), '429') || str_contains(strtolower($message), 'too many request')) {
+                $statusCode = 429;
+            }
+            
             return response()->json([
                 'success' => false,
-                'message' => 'Search failed: ' . $e->getMessage(),
-            ], 500);
+                'message' => 'Search failed: ' . $message,
+            ], $statusCode);
         }
     }
 

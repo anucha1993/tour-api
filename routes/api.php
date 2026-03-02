@@ -150,9 +150,11 @@ Route::get('tours/detail/{slug}/related', [PublicTourController::class, 'related
 
 // Public Tour Reviews (for tour-web)
 Route::get('reviews/featured', [\App\Http\Controllers\Web\WebTourReviewController::class, 'featured']);
+Route::get('reviews/{reviewId}', [\App\Http\Controllers\Web\WebTourReviewController::class, 'show'])->where('reviewId', '[0-9]+');
 Route::get('tours/{tourSlug}/reviews', [\App\Http\Controllers\Web\WebTourReviewController::class, 'index']);
 Route::get('tours/{tourSlug}/reviews/summary', [\App\Http\Controllers\Web\WebTourReviewController::class, 'summary']);
 Route::post('reviews/{reviewId}/helpful', [\App\Http\Controllers\Web\WebTourReviewController::class, 'markHelpful']);
+Route::post('reviews/{reviewId}/view', [\App\Http\Controllers\Web\WebTourReviewController::class, 'recordView']);
 Route::get('review-tags', [\App\Http\Controllers\Web\WebTourReviewController::class, 'tags']);
 
 // Public International Tours Menu (for tour-web mega menu)
@@ -804,6 +806,7 @@ Route::prefix('web')->group(function () {
         // My Bookings
         Route::get('/bookings', [WebBookingController::class, 'myBookings']);
         Route::get('/bookings/{id}', [WebBookingController::class, 'showBooking']);
+        Route::post('/bookings/{id}/cancel', [WebBookingController::class, 'cancelBooking']);
         
         // Profile
         Route::get('/me', [WebAuthController::class, 'me']);

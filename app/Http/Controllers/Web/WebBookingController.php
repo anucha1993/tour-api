@@ -502,4 +502,59 @@ class WebBookingController extends Controller
             'data' => $booking,
         ]);
     }
+
+    /**
+     * Cancel a pending booking by the customer
+     */
+    public function cancelBooking(Request $request, $id)
+    {
+        $member = $request->user('sanctum');
+        if (!$member) {
+            return response()->json(['success' => false, 'message' => 'กรุณาเข้าสู่ระบบ'], 401);
+        }
+
+        $booking = Booking::where('id', $id)
+            ->where('web_member_id', $member->id)
+            ->first();
+
+        if (!$booking) {
+            return response()->json(['success' => false, 'message' => 'ไม่พบข้อมูลการจอง'], 404);
+        }
+
+        if ($booking->status !== 'pending') {
+            return response()->json([
+                'success' => false,
+                'message' => 'สามารถยกเลิกได้เฉพาะใบจองที่มีสถานะ "รอดำเนินการ" เท่านั้น',
+            ], 422);
+        }
+
+        $booking->status = 'cancelled';
+        $booking->cancelled_by = 'customer';
+        $booking->save();
+
+        // If flash sale → decrement quantity_sold
+        if ($booking->flash_sale_item_id) {
+            $booking->flashSaleItem?->decrement('quantity_sold');
+        }
+
+        // Send cancellation email to customer
+        try {
+            BookingEmailService::sendStatusUpdate($booking);
+        } catch (\Exception $e) {
+            Log::error('BookingEmail: Failed to send cancellation email', [
+                'booking_code' => $booking->booking_code,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        Log::info('Booking cancelled by customer', [
+            'booking_code' => $booking->booking_code,
+            'member_id' => $member->id,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'ยกเลิกการจองสำเร็จ',
+        ]);
+    }
 }

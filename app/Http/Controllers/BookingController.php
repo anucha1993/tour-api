@@ -90,6 +90,13 @@ class BookingController extends Controller
         $oldStatus = $booking->status;
         $booking->status = $request->status;
 
+        // Track who cancelled
+        if ($request->status === 'cancelled' && $oldStatus !== 'cancelled') {
+            $booking->cancelled_by = 'admin';
+        } elseif ($request->status !== 'cancelled') {
+            $booking->cancelled_by = null;
+        }
+
         if ($request->filled('admin_note')) {
             $booking->admin_note = $request->admin_note;
         }
@@ -241,8 +248,26 @@ class BookingController extends Controller
         // Handle flash sale cancellation
         $oldStatus = $booking->status;
         
+        // Track who cancelled
+        if (isset($validated['status'])) {
+            if ($validated['status'] === 'cancelled' && $oldStatus !== 'cancelled') {
+                $validated['cancelled_by'] = 'admin';
+            } elseif ($validated['status'] !== 'cancelled') {
+                $validated['cancelled_by'] = null;
+            }
+        }
+
         $booking->fill($validated);
         $booking->save();
+
+        // Send status update email if status changed
+        if (isset($validated['status']) && $oldStatus !== $validated['status']) {
+            try {
+                BookingEmailService::sendStatusUpdate($booking);
+            } catch (\Exception $e) {
+                // Don't fail the update if email fails
+            }
+        }
 
         // If cancelled and was flash sale → decrement quantity_sold
         if (isset($validated['status']) && $validated['status'] === 'cancelled' && $oldStatus !== 'cancelled' && $booking->flash_sale_item_id) {

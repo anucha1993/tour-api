@@ -38,6 +38,7 @@ class TourReview extends Model
         'incentive_claimed',
         'is_featured',
         'helpful_count',
+        'views_count',
         'sort_order',
     ];
 

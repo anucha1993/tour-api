@@ -38,6 +38,7 @@ class Booking extends Model
         'status',
         'source',
         'admin_note',
+        'cancelled_by',
     ];
 
     protected $casts = [
@@ -141,6 +142,10 @@ class Booking extends Model
      */
     public function getStatusLabelAttribute(): string
     {
+        if ($this->status === 'cancelled' && $this->cancelled_by === 'customer') {
+            return 'ยกเลิกโดยลูกค้า';
+        }
+
         return match ($this->status) {
             'pending' => 'รอดำเนินการ',
             'confirmed' => 'ยืนยันแล้ว',
