@@ -1007,6 +1007,7 @@ class IntegrationController extends Controller
                         'template' => 'concat',  // template uses concat
                         'replace' => 'custom',   // replace uses custom
                         'join' => 'split',       // join is part of split operation
+                        'formula' => 'formula',  // formula - คำนวณจากหลาย fields
                     ];
                     $transformType = $typeMapping[$stringTransformType] ?? 'custom';
                 } elseif (!empty($mapping['value_map'])) {
@@ -2273,6 +2274,14 @@ class IntegrationController extends Controller
                     }
                     return $value;
                     
+                case 'formula':
+                    // Formula: คำนวณจากหลาย fields เช่น '{Price} - {Price_End}'
+                    $stringTransform = $config['string_transform'] ?? [];
+                    $expression = $stringTransform['formulaExpression'] ?? null;
+                    if (!$expression) return $value;
+                    
+                    return $this->evaluateFormulaExpression($expression, $rawData);
+                    
                 default:
                     return $value;
             }
@@ -3485,6 +3494,14 @@ class IntegrationController extends Controller
                     if ($mappedValue === 'false') return 0;
                     return $mappedValue;
                     
+                case 'formula':
+                    // Formula: คำนวณจากหลาย fields
+                    $stringTransform = $config['string_transform'] ?? [];
+                    $expression = $stringTransform['formulaExpression'] ?? null;
+                    if (!$expression) return $value;
+                    
+                    return $this->evaluateFormulaExpression($expression, $rawData);
+                    
                 default:
                     return $value;
             }
@@ -4044,6 +4061,17 @@ class IntegrationController extends Controller
                     $periodData = [];
                     foreach ($mappings as $mapping) {
                         $fieldPath = $mapping->their_field_path ?? $mapping->their_field ?? null;
+                        
+                        // Handle formula transform - doesn't need fieldPath
+                        if ($mapping->transform_type === 'formula') {
+                            $stringTransform = ($mapping->transform_config ?? [])['string_transform'] ?? [];
+                            $expression = $stringTransform['formulaExpression'] ?? null;
+                            if ($expression) {
+                                $periodData[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawPeriod);
+                            }
+                            continue;
+                        }
+                        
                         if (empty($fieldPath)) {
                             continue;
                         }
@@ -4198,6 +4226,17 @@ class IntegrationController extends Controller
                     $itinData = [];
                     foreach ($mappings as $mapping) {
                         $fieldPath = $mapping->their_field_path ?? $mapping->their_field ?? null;
+                        
+                        // Handle formula transform
+                        if ($mapping->transform_type === 'formula') {
+                            $stringTransform = ($mapping->transform_config ?? [])['string_transform'] ?? [];
+                            $expression = $stringTransform['formulaExpression'] ?? null;
+                            if ($expression) {
+                                $itinData[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawItinerary);
+                            }
+                            continue;
+                        }
+                        
                         if (empty($fieldPath)) {
                             continue;
                         }
@@ -4289,6 +4328,55 @@ class IntegrationController extends Controller
                 return $mapping[$value] ?? $value;
             default:
                 return $value;
+        }
+    }
+
+    /**
+     * Evaluate a formula expression like '{Price} - {Price_End}'
+     * Replaces {FieldName} with actual values from data, then evaluates the math expression safely.
+     * 
+     * @param string $expression e.g. '{Price} - {Price_End}', '{Price} * 1.07'
+     * @param array $data Raw data containing the field values
+     * @return float|null Calculated result or null if evaluation fails
+     */
+    protected function evaluateFormulaExpression(string $expression, array $data): ?float
+    {
+        try {
+            $expr = $expression;
+            
+            // Replace {FieldName} or {nested.field} with numeric values
+            $expr = preg_replace_callback('/\{([^}]+)\}/', function ($matches) use ($data) {
+                $fieldPath = $matches[1];
+                $value = $this->extractValueFromPath($data, $fieldPath);
+                if ($value === null || !is_numeric($value)) {
+                    throw new \RuntimeException("Non-numeric value for field: {$fieldPath}");
+                }
+                return (string) (float) $value;
+            }, $expr);
+            
+            // Security: only allow numbers, operators, parentheses, spaces, decimal points
+            if (!preg_match('/^[\d\s+\-*\/().]+$/', trim($expr))) {
+                Log::warning('evaluateFormulaExpression: Invalid expression after substitution', [
+                    'original' => $expression,
+                    'resolved' => $expr,
+                ]);
+                return null;
+            }
+            
+            // Evaluate the expression
+            $result = eval("return ({$expr});");
+            
+            if (!is_numeric($result) || !is_finite((float) $result)) {
+                return null;
+            }
+            
+            return round((float) $result, 2);
+        } catch (\Exception $e) {
+            Log::debug('evaluateFormulaExpression: Failed', [
+                'expression' => $expression,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
         }
     }
 

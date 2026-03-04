@@ -278,6 +278,17 @@ class SyncPeriodsJob implements ShouldQueue
         $result = [];
 
         foreach ($mappings as $mapping) {
+            // Handle formula transform - doesn't need field path
+            if ($mapping->transform_type === 'formula') {
+                $config = $mapping->transform_config ?? [];
+                $stringTransform = $config['string_transform'] ?? [];
+                $expression = $stringTransform['formulaExpression'] ?? null;
+                if ($expression) {
+                    $result[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawPeriod);
+                }
+                continue;
+            }
+            
             $fieldPath = $mapping->their_field_path ?? $mapping->their_field ?? null;
             if (empty($fieldPath)) {
                 continue;
@@ -395,6 +406,57 @@ class SyncPeriodsJob implements ShouldQueue
                 return $mapping[$value] ?? $value;
             default:
                 return $value;
+        }
+    }
+
+    /**
+     * Evaluate a formula expression like '{Price} - {Price_End}'
+     * Replaces {FieldName} with actual values from data, then evaluates the math expression safely.
+     */
+    protected function evaluateFormulaExpression(string $expression, array $data): ?float
+    {
+        try {
+            $expr = $expression;
+            
+            $expr = preg_replace_callback('/\{([^}]+)\}/', function ($matches) use ($data) {
+                $fieldPath = $matches[1];
+                // Try dot-notation path first
+                $parts = explode('.', $fieldPath);
+                $value = $data;
+                foreach ($parts as $part) {
+                    if (!is_array($value) || !isset($value[$part])) {
+                        $value = null;
+                        break;
+                    }
+                    $value = $value[$part];
+                }
+                // Fallback: direct key access
+                if ($value === null && isset($data[$fieldPath])) {
+                    $value = $data[$fieldPath];
+                }
+                if ($value === null || !is_numeric($value)) {
+                    throw new \RuntimeException("Non-numeric value for field: {$fieldPath}");
+                }
+                return (string) (float) $value;
+            }, $expr);
+            
+            if (!preg_match('/^[\d\s+\-*\/().]+$/', trim($expr))) {
+                return null;
+            }
+            
+            $result = eval("return ({$expr});");
+            
+            if (!is_numeric($result) || !is_finite((float) $result)) {
+                return null;
+            }
+            
+            return round((float) $result, 2);
+        } catch (\Exception $e) {
+            Log::debug('SyncPeriodsJob: evaluateFormulaExpression failed', [
+                'expression' => $expression,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
         }
     }
 
@@ -780,6 +842,17 @@ class SyncPeriodsJob implements ShouldQueue
         $result = [];
 
         foreach ($mappings as $mapping) {
+            // Handle formula transform
+            if ($mapping->transform_type === 'formula') {
+                $config = $mapping->transform_config ?? [];
+                $stringTransform = $config['string_transform'] ?? [];
+                $expression = $stringTransform['formulaExpression'] ?? null;
+                if ($expression) {
+                    $result[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawItem);
+                }
+                continue;
+            }
+            
             $fieldPath = $mapping->their_field_path ?? $mapping->their_field ?? null;
             if (empty($fieldPath)) {
                 continue;
@@ -1087,6 +1160,17 @@ class SyncPeriodsJob implements ShouldQueue
         $result = [];
 
         foreach ($mappings as $mapping) {
+            // Handle formula transform
+            if ($mapping->transform_type === 'formula') {
+                $config = $mapping->transform_config ?? [];
+                $stringTransform = $config['string_transform'] ?? [];
+                $expression = $stringTransform['formulaExpression'] ?? null;
+                if ($expression) {
+                    $result[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawItem);
+                }
+                continue;
+            }
+            
             $fieldPath = $mapping->their_field_path ?? $mapping->their_field ?? null;
             if (empty($fieldPath)) {
                 continue;

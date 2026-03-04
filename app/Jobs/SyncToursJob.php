@@ -752,6 +752,14 @@ class SyncToursJob implements ShouldQueue
                     }
                     return $value;
                     
+                case 'formula':
+                    // Formula: คำนวณจากหลาย fields เช่น '{Price} - {Price_End}'
+                    $stringTransform = $config['string_transform'] ?? [];
+                    $expression = $stringTransform['formulaExpression'] ?? null;
+                    if (!$expression) return $value;
+                    
+                    return $this->evaluateFormulaExpression($expression, $rawData);
+                    
                 default:
                     return $value;
             }
@@ -2089,6 +2097,59 @@ class SyncToursJob implements ShouldQueue
 
             default:
                 return $value;
+        }
+    }
+
+    /**
+     * Evaluate a formula expression like '{Price} - {Price_End}'
+     * Replaces {FieldName} with actual values from data, then evaluates the math expression safely.
+     * 
+     * @param string $expression e.g. '{Price} - {Price_End}', '{Price} * 1.07'
+     * @param array $data Raw data containing the field values
+     * @return float|null Calculated result or null if evaluation fails
+     */
+    protected function evaluateFormulaExpression(string $expression, array $data): ?float
+    {
+        try {
+            $expr = $expression;
+            
+            // Replace {FieldName} or {nested.field} with numeric values
+            $expr = preg_replace_callback('/\{([^}]+)\}/', function ($matches) use ($data) {
+                $fieldPath = $matches[1];
+                $value = $this->extractValue($data, $fieldPath);
+                // Also try direct key access for flat data
+                if ($value === null && isset($data[$fieldPath])) {
+                    $value = $data[$fieldPath];
+                }
+                if ($value === null || !is_numeric($value)) {
+                    throw new \RuntimeException("Non-numeric value for field: {$fieldPath}");
+                }
+                return (string) (float) $value;
+            }, $expr);
+            
+            // Security: only allow numbers, operators, parentheses, spaces, decimal points
+            if (!preg_match('/^[\d\s+\-*\/().]+$/', trim($expr))) {
+                Log::warning('evaluateFormulaExpression: Invalid expression after substitution', [
+                    'original' => $expression,
+                    'resolved' => $expr,
+                ]);
+                return null;
+            }
+            
+            // Evaluate the expression
+            $result = eval("return ({$expr});");
+            
+            if (!is_numeric($result) || !is_finite((float) $result)) {
+                return null;
+            }
+            
+            return round((float) $result, 2);
+        } catch (\Exception $e) {
+            Log::debug('evaluateFormulaExpression: Failed', [
+                'expression' => $expression,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
         }
     }
 
