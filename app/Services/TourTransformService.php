@@ -305,39 +305,38 @@ class TourTransformService
      */
     protected function evaluateFormulaExpression(string $expression, array $data, bool $skipZero = true): ?float
     {
-        $expr = $expression;
-
-        // Replace {FieldName} with actual values from data
-        $expr = preg_replace_callback('/\{([^}]+)\}/', function ($matches) use ($data, $skipZero) {
-            $fieldPath = $matches[1];
-            // Try nested path (dot notation)
-            $value = $this->getNestedValue($data, $fieldPath);
-            // Fallback: direct key access
-            if ($value === null && isset($data[$fieldPath])) {
-                $value = $data[$fieldPath];
-            }
-            $numericValue = is_numeric($value) ? floatval($value) : null;
-            // Skip if value is 0 and skipZero is enabled
-            if ($skipZero && $numericValue !== null && $numericValue == 0) {
-                throw new \RuntimeException("Field {$fieldPath} is 0, skipping formula (skipZero enabled)");
-            }
-            return $numericValue !== null ? (string) $numericValue : '0';
-        }, $expr);
-
-        // Security: only allow numbers, operators, spaces, parentheses, decimal points
-        if (!preg_match('/^[\d\s+\-*\/().]+$/', $expr)) {
-            Log::warning('TourTransformService: Invalid formula expression', ['expression' => $expression, 'resolved' => $expr]);
-            return null;
-        }
-
         try {
+            $expr = $expression;
+
+            // Replace {FieldName} with actual values from data
+            $expr = preg_replace_callback('/\{([^}]+)\}/', function ($matches) use ($data, $skipZero) {
+                $fieldPath = $matches[1];
+                // Try nested path (dot notation)
+                $value = $this->getNestedValue($data, $fieldPath);
+                // Fallback: direct key access
+                if ($value === null && isset($data[$fieldPath])) {
+                    $value = $data[$fieldPath];
+                }
+                $numericValue = is_numeric($value) ? floatval($value) : null;
+                // Skip if value is 0 and skipZero is enabled
+                if ($skipZero && $numericValue !== null && $numericValue == 0) {
+                    throw new \RuntimeException("Field {$fieldPath} is 0, skipping formula (skipZero enabled)");
+                }
+                return $numericValue !== null ? (string) $numericValue : '0';
+            }, $expr);
+
+            // Security: only allow numbers, operators, spaces, parentheses, decimal points
+            if (!preg_match('/^[\d\s+\-*\/().]+$/', $expr)) {
+                Log::warning('TourTransformService: Invalid formula expression', ['expression' => $expression, 'resolved' => $expr]);
+                return null;
+            }
+
             $result = eval("return ({$expr});");
             return is_numeric($result) ? round(floatval($result), 2) : null;
         } catch (\Throwable $e) {
-            Log::warning('TourTransformService: Formula eval error', [
+            Log::debug('TourTransformService: Formula skipped', [
                 'expression' => $expression,
-                'resolved' => $expr,
-                'error' => $e->getMessage()
+                'reason' => $e->getMessage()
             ]);
             return null;
         }

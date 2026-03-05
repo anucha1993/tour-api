@@ -412,14 +412,62 @@ class TourController extends Controller
 
         // Track which fields are being manually updated (for Smart Sync)
         // Only track if this is an API tour (data_source = 'api')
+        // Compare old vs new values — only mark fields that actually changed
         if ($tour->data_source === 'api') {
-            $fieldsToTrack = array_keys($validated);
-            // Exclude fields that shouldn't be tracked
-            $excludeFromTracking = ['sync_locked'];
-            $fieldsToTrack = array_diff($fieldsToTrack, $excludeFromTracking);
+            $excludeFromTracking = ['sync_locked', 'cover_image_url', 'cover_image_alt', 'og_image_url', 'pdf_url', 'docx_url'];
+            $changedFields = [];
             
-            if (!empty($fieldsToTrack)) {
-                $tour->markFieldsAsOverridden($fieldsToTrack);
+            foreach ($validated as $field => $newValue) {
+                if (in_array($field, $excludeFromTracking)) continue;
+                
+                $oldValue = $tour->getOriginal($field) ?? $tour->getAttribute($field);
+                
+                // Normalize for comparison
+                // Arrays: sort and compare
+                if (is_array($newValue) || is_array($oldValue)) {
+                    $oldArr = is_array($oldValue) ? $oldValue : [];
+                    $newArr = is_array($newValue) ? $newValue : [];
+                    sort($oldArr);
+                    sort($newArr);
+                    if ($oldArr != $newArr) {
+                        $changedFields[] = $field;
+                    }
+                } elseif (is_numeric($newValue) && is_numeric($oldValue)) {
+                    // Numeric: compare as float to avoid "11990.00" vs "11990" mismatch
+                    if ((float) $oldValue !== (float) $newValue) {
+                        $changedFields[] = $field;
+                    }
+                } elseif (is_bool($newValue)) {
+                    // Boolean: compare truthy values
+                    if ((bool) $oldValue !== (bool) $newValue) {
+                        $changedFields[] = $field;
+                    }
+                } else {
+                    // String: compare trimmed values
+                    $oldStr = ($oldValue === null) ? '' : trim((string) $oldValue);
+                    $newStr = ($newValue === null) ? '' : trim((string) $newValue);
+                    if ($oldStr !== $newStr) {
+                        $changedFields[] = $field;
+                    }
+                }
+            }
+            
+            // Also check country_ids and city_ids (relations, not direct fields)
+            if ($countryIds !== null) {
+                $oldCountryIds = $tour->countries()->orderBy('sort_order')->pluck('countries.id')->toArray();
+                if ($oldCountryIds != $countryIds) {
+                    $changedFields[] = 'country_ids';
+                }
+            }
+            if ($cityIds !== null) {
+                $oldCityIds = $tour->cities()->orderBy('tour_cities.sort_order')->pluck('cities.id')->toArray();
+                if ($oldCityIds != $cityIds) {
+                    $changedFields[] = 'city_ids';
+                }
+            }
+            
+            if (!empty($changedFields)) {
+                $tour->markFieldsAsOverridden($changedFields);
             }
         }
 

@@ -240,7 +240,7 @@ class Tour extends Model
     {
         return $this->belongsToMany(Country::class, 'tour_countries')
             ->withPivot(['is_primary', 'sort_order', 'days_in_country'])
-            ->orderByPivot('sort_order');
+            ->orderBy('tour_countries.sort_order');
     }
 
     /**
@@ -250,7 +250,7 @@ class Tour extends Model
     {
         return $this->belongsToMany(City::class, 'tour_cities')
             ->withPivot(['country_id', 'sort_order', 'days_in_city'])
-            ->orderByPivot('sort_order');
+            ->orderBy('tour_cities.sort_order');
     }
 
     public function locations(): HasMany
