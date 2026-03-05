@@ -830,7 +830,8 @@ class SyncToursJob implements ShouldQueue
                         if ($expression) {
                             $skipZero = ($stringTransform['formulaSkipZero'] ?? true) !== false;
                             $formulaResult = $this->evaluateFormulaExpression($expression, $departureItem, $skipZero);
-                            $dep[$fieldName] = $formulaResult;
+                            // Use 0 instead of null — if formula can't evaluate (skipZero), write 0 to overwrite old wrong values
+                            $dep[$fieldName] = $formulaResult ?? 0;
                         }
                         continue;
                     }
@@ -891,7 +892,8 @@ class SyncToursJob implements ShouldQueue
                         if ($expression) {
                             $skipZero = ($stringTransform['formulaSkipZero'] ?? true) !== false;
                             $formulaResult = $this->evaluateFormulaExpression($expression, $itineraryItem, $skipZero);
-                            $it[$fieldName] = $formulaResult;
+                            // Use 0 instead of null — if formula can't evaluate (skipZero), write 0 to overwrite old wrong values
+                            $it[$fieldName] = $formulaResult ?? 0;
                         }
                         continue;
                     }

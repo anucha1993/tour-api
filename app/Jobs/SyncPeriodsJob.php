@@ -285,7 +285,7 @@ class SyncPeriodsJob implements ShouldQueue
                 $expression = $stringTransform['formulaExpression'] ?? null;
                 if ($expression) {
                     $skipZero = ($stringTransform['formulaSkipZero'] ?? true) !== false;
-                    $result[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawPeriod, $skipZero);
+                    $result[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawPeriod, $skipZero) ?? 0;
                 }
                 continue;
             }
@@ -855,7 +855,7 @@ class SyncPeriodsJob implements ShouldQueue
                 $expression = $stringTransform['formulaExpression'] ?? null;
                 if ($expression) {
                     $skipZero = ($stringTransform['formulaSkipZero'] ?? true) !== false;
-                    $result[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawItem, $skipZero);
+                    $result[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawItem, $skipZero) ?? 0;
                 }
                 continue;
             }
@@ -1174,7 +1174,7 @@ class SyncPeriodsJob implements ShouldQueue
                 $expression = $stringTransform['formulaExpression'] ?? null;
                 if ($expression) {
                     $skipZero = ($stringTransform['formulaSkipZero'] ?? true) !== false;
-                    $result[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawItem, $skipZero);
+                    $result[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawItem, $skipZero) ?? 0;
                 }
                 continue;
             }

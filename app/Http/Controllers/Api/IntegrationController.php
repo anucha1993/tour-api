@@ -4070,7 +4070,7 @@ class IntegrationController extends Controller
                             $expression = $stringTransform['formulaExpression'] ?? null;
                             if ($expression) {
                                 $skipZero = ($stringTransform['formulaSkipZero'] ?? true) !== false;
-                                $periodData[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawPeriod, $skipZero);
+                                $periodData[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawPeriod, $skipZero) ?? 0;
                             }
                             continue;
                         }
@@ -4236,7 +4236,7 @@ class IntegrationController extends Controller
                             $expression = $stringTransform['formulaExpression'] ?? null;
                             if ($expression) {
                                 $skipZero = ($stringTransform['formulaSkipZero'] ?? true) !== false;
-                                $itinData[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawItinerary, $skipZero);
+                                $itinData[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawItinerary, $skipZero) ?? 0;
                             }
                             continue;
                         }
