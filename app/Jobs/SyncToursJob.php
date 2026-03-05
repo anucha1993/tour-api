@@ -822,7 +822,20 @@ class SyncToursJob implements ShouldQueue
                     $fieldName = $mapping->our_field;
                     $path = $mapping->their_field_path ?? $mapping->their_field ?? '';
                     
-                    // Skip if no path defined
+                    // Handle formula transform first - doesn't need fieldPath
+                    if ($mapping->transform_type === 'formula') {
+                        $config = $mapping->transform_config ?? [];
+                        $stringTransform = ($config['string_transform'] ?? []);
+                        $expression = $stringTransform['formulaExpression'] ?? null;
+                        if ($expression) {
+                            $skipZero = ($stringTransform['formulaSkipZero'] ?? true) !== false;
+                            $formulaResult = $this->evaluateFormulaExpression($expression, $departureItem, $skipZero);
+                            $dep[$fieldName] = $formulaResult;
+                        }
+                        continue;
+                    }
+                    
+                    // Skip if no path defined (non-formula fields need a path)
                     if (empty($path)) {
                         continue;
                     }
@@ -870,7 +883,20 @@ class SyncToursJob implements ShouldQueue
                     $fieldName = $mapping->our_field;
                     $path = $mapping->their_field_path ?? $mapping->their_field ?? '';
                     
-                    // Skip if no path defined
+                    // Handle formula transform first - doesn't need fieldPath
+                    if ($mapping->transform_type === 'formula') {
+                        $config = $mapping->transform_config ?? [];
+                        $stringTransform = ($config['string_transform'] ?? []);
+                        $expression = $stringTransform['formulaExpression'] ?? null;
+                        if ($expression) {
+                            $skipZero = ($stringTransform['formulaSkipZero'] ?? true) !== false;
+                            $formulaResult = $this->evaluateFormulaExpression($expression, $itineraryItem, $skipZero);
+                            $it[$fieldName] = $formulaResult;
+                        }
+                        continue;
+                    }
+                    
+                    // Skip if no path defined (non-formula fields need a path)
                     if (empty($path)) {
                         continue;
                     }
