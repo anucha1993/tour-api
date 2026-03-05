@@ -757,8 +757,9 @@ class SyncToursJob implements ShouldQueue
                     $stringTransform = $config['string_transform'] ?? [];
                     $expression = $stringTransform['formulaExpression'] ?? null;
                     if (!$expression) return $value;
+                    $skipZero = ($stringTransform['formulaSkipZero'] ?? true) !== false;
                     
-                    return $this->evaluateFormulaExpression($expression, $rawData);
+                    return $this->evaluateFormulaExpression($expression, $rawData, $skipZero);
                     
                 default:
                     return $value;
@@ -2108,13 +2109,13 @@ class SyncToursJob implements ShouldQueue
      * @param array $data Raw data containing the field values
      * @return float|null Calculated result or null if evaluation fails
      */
-    protected function evaluateFormulaExpression(string $expression, array $data): ?float
+    protected function evaluateFormulaExpression(string $expression, array $data, bool $skipZero = true): ?float
     {
         try {
             $expr = $expression;
             
             // Replace {FieldName} or {nested.field} with numeric values
-            $expr = preg_replace_callback('/\{([^}]+)\}/', function ($matches) use ($data) {
+            $expr = preg_replace_callback('/\{([^}]+)\}/', function ($matches) use ($data, $skipZero) {
                 $fieldPath = $matches[1];
                 $value = $this->extractValue($data, $fieldPath);
                 // Also try direct key access for flat data
@@ -2124,7 +2125,12 @@ class SyncToursJob implements ShouldQueue
                 if ($value === null || !is_numeric($value)) {
                     throw new \RuntimeException("Non-numeric value for field: {$fieldPath}");
                 }
-                return (string) (float) $value;
+                $numericValue = (float) $value;
+                // Skip if value is 0 and skipZero is enabled
+                if ($skipZero && $numericValue == 0) {
+                    throw new \RuntimeException("Field {$fieldPath} is 0, skipping formula (skipZero enabled)");
+                }
+                return (string) $numericValue;
             }, $expr);
             
             // Security: only allow numbers, operators, parentheses, spaces, decimal points

@@ -284,7 +284,8 @@ class SyncPeriodsJob implements ShouldQueue
                 $stringTransform = $config['string_transform'] ?? [];
                 $expression = $stringTransform['formulaExpression'] ?? null;
                 if ($expression) {
-                    $result[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawPeriod);
+                    $skipZero = ($stringTransform['formulaSkipZero'] ?? true) !== false;
+                    $result[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawPeriod, $skipZero);
                 }
                 continue;
             }
@@ -413,12 +414,12 @@ class SyncPeriodsJob implements ShouldQueue
      * Evaluate a formula expression like '{Price} - {Price_End}'
      * Replaces {FieldName} with actual values from data, then evaluates the math expression safely.
      */
-    protected function evaluateFormulaExpression(string $expression, array $data): ?float
+    protected function evaluateFormulaExpression(string $expression, array $data, bool $skipZero = true): ?float
     {
         try {
             $expr = $expression;
             
-            $expr = preg_replace_callback('/\{([^}]+)\}/', function ($matches) use ($data) {
+            $expr = preg_replace_callback('/\{([^}]+)\}/', function ($matches) use ($data, $skipZero) {
                 $fieldPath = $matches[1];
                 // Try dot-notation path first
                 $parts = explode('.', $fieldPath);
@@ -437,7 +438,12 @@ class SyncPeriodsJob implements ShouldQueue
                 if ($value === null || !is_numeric($value)) {
                     throw new \RuntimeException("Non-numeric value for field: {$fieldPath}");
                 }
-                return (string) (float) $value;
+                $numericValue = (float) $value;
+                // Skip if value is 0 and skipZero is enabled
+                if ($skipZero && $numericValue == 0) {
+                    throw new \RuntimeException("Field {$fieldPath} is 0, skipping formula (skipZero enabled)");
+                }
+                return (string) $numericValue;
             }, $expr);
             
             if (!preg_match('/^[\d\s+\-*\/().]+$/', trim($expr))) {
@@ -848,7 +854,8 @@ class SyncPeriodsJob implements ShouldQueue
                 $stringTransform = $config['string_transform'] ?? [];
                 $expression = $stringTransform['formulaExpression'] ?? null;
                 if ($expression) {
-                    $result[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawItem);
+                    $skipZero = ($stringTransform['formulaSkipZero'] ?? true) !== false;
+                    $result[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawItem, $skipZero);
                 }
                 continue;
             }
@@ -1166,7 +1173,8 @@ class SyncPeriodsJob implements ShouldQueue
                 $stringTransform = $config['string_transform'] ?? [];
                 $expression = $stringTransform['formulaExpression'] ?? null;
                 if ($expression) {
-                    $result[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawItem);
+                    $skipZero = ($stringTransform['formulaSkipZero'] ?? true) !== false;
+                    $result[$mapping->our_field] = $this->evaluateFormulaExpression($expression, $rawItem, $skipZero);
                 }
                 continue;
             }
