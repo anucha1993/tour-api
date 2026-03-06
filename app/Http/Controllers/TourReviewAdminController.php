@@ -5,7 +5,9 @@ namespace App\Http\Controllers;
 use App\Models\TourReview;
 use App\Models\ReviewTag;
 use App\Models\ReviewImage;
+use App\Models\ReviewPageSetting;
 use App\Models\Tour;
+use App\Services\CloudflareImagesService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
@@ -13,6 +15,13 @@ use Illuminate\Support\Str;
 
 class TourReviewAdminController extends Controller
 {
+    protected CloudflareImagesService $cloudflare;
+
+    public function __construct(CloudflareImagesService $cloudflare)
+    {
+        $this->cloudflare = $cloudflare;
+    }
+
     /**
      * List all reviews (admin)
      */
@@ -655,5 +664,72 @@ class TourReviewAdminController extends Controller
             'success' => true,
             'message' => 'จัดเรียงแท็กสำเร็จ',
         ]);
+    }
+
+    // ============================
+    // Review Page Settings (Admin)
+    // ============================
+
+    public function getPageSettings()
+    {
+        $settings = ReviewPageSetting::getSettings();
+        return response()->json(['success' => true, 'data' => $settings]);
+    }
+
+    public function updatePageSettings(Request $request)
+    {
+        $settings = ReviewPageSetting::getSettings();
+
+        $validated = $request->validate([
+            'hero_title' => 'sometimes|string|max:255',
+            'hero_subtitle' => 'nullable|string|max:1000',
+            'hero_image_position' => 'sometimes|string|in:center,top,bottom',
+            'seo_title' => 'nullable|string|max:255',
+            'seo_description' => 'nullable|string|max:500',
+            'seo_keywords' => 'nullable|string|max:500',
+            'is_active' => 'sometimes|boolean',
+        ]);
+
+        $settings->update($validated);
+        return response()->json(['success' => true, 'data' => $settings->fresh(), 'message' => 'อัปเดตการตั้งค่าสำเร็จ']);
+    }
+
+    public function uploadHeroImage(Request $request)
+    {
+        $request->validate(['image' => 'required|image|max:10240']);
+
+        $settings = ReviewPageSetting::getSettings();
+
+        if ($settings->hero_image_cf_id) {
+            try { $this->cloudflare->delete($settings->hero_image_cf_id); } catch (\Exception $e) {}
+        }
+
+        $result = $this->cloudflare->uploadFromFile(
+            $request->file('image'),
+            'review-hero-' . time()
+        );
+
+        $settings->update([
+            'hero_image_url' => $this->cloudflare->getDisplayUrl($result['id'], 'public'),
+            'hero_image_cf_id' => $result['id'],
+        ]);
+
+        return response()->json(['success' => true, 'data' => $settings->fresh(), 'message' => 'อัปโหลดรูป Hero สำเร็จ']);
+    }
+
+    public function deleteHeroImage()
+    {
+        $settings = ReviewPageSetting::getSettings();
+
+        if ($settings->hero_image_cf_id) {
+            try { $this->cloudflare->delete($settings->hero_image_cf_id); } catch (\Exception $e) {}
+        }
+
+        $settings->update([
+            'hero_image_url' => null,
+            'hero_image_cf_id' => null,
+        ]);
+
+        return response()->json(['success' => true, 'data' => $settings->fresh(), 'message' => 'ลบรูป Hero สำเร็จ']);
     }
 }

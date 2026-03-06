@@ -374,6 +374,7 @@ class UnifiedSearchService
             }
 
             // Filter by date range - use unified field names from transform
+            // Tours with no periods are excluded when date filters are active
             if (!empty($searchParams['departure_from'])) {
                 $hasValidPeriod = false;
                 foreach ($periods as $period) {
@@ -384,7 +385,7 @@ class UnifiedSearchService
                         break;
                     }
                 }
-                if (!$hasValidPeriod && !empty($periods)) {
+                if (!$hasValidPeriod) {
                     return false;
                 }
             }
@@ -398,12 +399,13 @@ class UnifiedSearchService
                         break;
                     }
                 }
-                if (!$hasValidPeriod && !empty($periods)) {
+                if (!$hasValidPeriod) {
                     return false;
                 }
             }
 
             // Filter by price range - use unified field names
+            // Tours with no periods are excluded when price filters are active
             if (!empty($searchParams['min_price'])) {
                 $hasValidPeriod = false;
                 foreach ($periods as $period) {
@@ -413,7 +415,7 @@ class UnifiedSearchService
                         break;
                     }
                 }
-                if (!$hasValidPeriod && !empty($periods)) {
+                if (!$hasValidPeriod) {
                     return false;
                 }
             }
@@ -427,12 +429,13 @@ class UnifiedSearchService
                         break;
                     }
                 }
-                if (!$hasValidPeriod && !empty($periods)) {
+                if (!$hasValidPeriod) {
                     return false;
                 }
             }
 
             // Filter by available seats - use unified field names
+            // Tours with no periods are excluded when seats filter is active
             if (!empty($searchParams['min_seats'])) {
                 $hasValidPeriod = false;
                 foreach ($periods as $period) {
@@ -442,7 +445,7 @@ class UnifiedSearchService
                         break;
                     }
                 }
-                if (!$hasValidPeriod && !empty($periods)) {
+                if (!$hasValidPeriod) {
                     return false;
                 }
             }
@@ -557,11 +560,13 @@ class UnifiedSearchService
             return $tours;
         }
 
-        return array_map(function ($tour) use ($departureFrom, $departureTo, $minPrice, $maxPrice, $minSeats) {
+        $result = [];
+        foreach ($tours as $tour) {
             $periods = $tour['periods'] ?? [];
             
             if (empty($periods)) {
-                return $tour;
+                // No periods = excluded when any filter is active
+                continue;
             }
 
             $filteredPeriods = array_filter($periods, function ($period) use ($departureFrom, $departureTo, $minPrice, $maxPrice, $minSeats) {
@@ -602,9 +607,15 @@ class UnifiedSearchService
                 return true;
             });
 
+            // Exclude tours with no matching periods after filtering
+            if (empty($filteredPeriods)) {
+                continue;
+            }
+
             $tour['periods'] = array_values($filteredPeriods);
-            return $tour;
-        }, $tours);
+            $result[] = $tour;
+        }
+        return $result;
     }
 
     /**

@@ -150,6 +150,8 @@ Route::get('tours/detail/{slug}/related', [PublicTourController::class, 'related
 
 // Public Tour Reviews (for tour-web)
 Route::get('reviews/featured', [\App\Http\Controllers\Web\WebTourReviewController::class, 'featured']);
+Route::get('reviews/all', [\App\Http\Controllers\Web\WebTourReviewController::class, 'listAll']);
+Route::get('reviews/page-settings', [\App\Http\Controllers\Web\WebTourReviewController::class, 'publicPageSettings']);
 Route::get('reviews/{reviewId}', [\App\Http\Controllers\Web\WebTourReviewController::class, 'show'])->where('reviewId', '[0-9]+');
 Route::get('tours/{tourSlug}/reviews', [\App\Http\Controllers\Web\WebTourReviewController::class, 'index']);
 Route::get('tours/{tourSlug}/reviews/summary', [\App\Http\Controllers\Web\WebTourReviewController::class, 'summary']);
@@ -394,6 +396,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('/{id}/toggle', [TourReviewAdminController::class, 'tagToggle']);
         Route::post('/reorder', [TourReviewAdminController::class, 'tagReorder']);
     });
+
+    // Review Page Settings (Admin)
+    Route::get('review-page-settings', [TourReviewAdminController::class, 'getPageSettings']);
+    Route::put('review-page-settings', [TourReviewAdminController::class, 'updatePageSettings']);
+    Route::post('review-page-settings/hero-image', [TourReviewAdminController::class, 'uploadHeroImage']);
+    Route::delete('review-page-settings/hero-image', [TourReviewAdminController::class, 'deleteHeroImage']);
     Route::post('international-tour-settings/preview-conditions', [InternationalTourSettingController::class, 'previewConditions']);
     Route::patch('international-tour-settings/{internationalTourSetting}/toggle-status', [InternationalTourSettingController::class, 'toggleStatus']);
     Route::post('international-tour-settings/{internationalTourSetting}/cover-image', [InternationalTourSettingController::class, 'uploadCoverImage']);

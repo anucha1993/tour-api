@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\TourReview;
 use App\Models\ReviewTag;
 use App\Models\ReviewImage;
+use App\Models\ReviewPageSetting;
 use App\Models\Tour;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -217,6 +218,68 @@ class WebTourReviewController extends Controller
                 'review' => $review,
                 'related_reviews' => $relatedReviews,
                 'featured_reviews' => $featuredReviews,
+            ],
+        ]);
+    }
+
+    /**
+     * List all approved reviews with pagination, sort & filter (public)
+     */
+    public function listAll(Request $request)
+    {
+        $query = TourReview::approved()
+            ->with(['tour:id,title,slug,tour_code,cover_image_url', 'images']);
+
+        // Sort
+        $sort = $request->get('sort', 'latest');
+        switch ($sort) {
+            case 'highest':
+                $query->orderByDesc('rating');
+                break;
+            case 'lowest':
+                $query->orderBy('rating');
+                break;
+            case 'helpful':
+                $query->orderByDesc('helpful_count');
+                break;
+            case 'most_viewed':
+                $query->orderByDesc('views_count');
+                break;
+            default:
+                $query->orderByDesc('created_at');
+        }
+
+        // Filter by rating
+        if ($request->filled('rating')) {
+            $query->where('rating', (int) $request->rating);
+        }
+
+        // Filter by tag
+        if ($request->filled('tag')) {
+            $tag = $request->tag;
+            $query->whereRaw("JSON_SEARCH(tags, 'one', ?) IS NOT NULL", [$tag]);
+        }
+
+        $perPage = min((int) $request->get('per_page', 12), 48);
+        $reviews = $query->paginate($perPage);
+
+        // Overall summary
+        $totalReviews = TourReview::approved()->count();
+        $avgRating = round(TourReview::approved()->avg('rating') ?? 0, 1);
+        $ratingDist = [];
+        for ($i = 5; $i >= 1; $i--) {
+            $ratingDist[$i] = TourReview::approved()->where('rating', $i)->count();
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'summary' => [
+                    'average_rating' => $avgRating,
+                    'total_reviews' => $totalReviews,
+                    'rating_distribution' => $ratingDist,
+                ],
+                'reviews' => $reviews,
             ],
         ]);
     }
@@ -551,5 +614,14 @@ class WebTourReviewController extends Controller
         }
 
         return $schema;
+    }
+
+    /**
+     * Public: Get review page settings (hero, SEO)
+     */
+    public function publicPageSettings()
+    {
+        $settings = ReviewPageSetting::getSettings();
+        return response()->json(['success' => true, 'data' => $settings]);
     }
 }
