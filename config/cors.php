@@ -29,25 +29,23 @@ return [
     |
     */
 
-    // ===== DEV MODE: อนุญาตทุก origin =====
-    'allowed_origins' => ['*'],
+    'allowed_origins' => [
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'https://nexttrip.asia',
+        'https://www.nexttrip.asia',
+        'https://admin.nexttrip.asia',
+        'https://backend.nexttrip.asia',
+        'https://nexttrip.world',
+        'https://www.nexttrip.world',
+        'https://admin.nexttrip.world',
+        'https://backend.nexttrip.world',
+    ],
 
-    // ===== PRODUCTION MODE: จำกัดเฉพาะ domain ที่อนุญาต =====
-    // 'allowed_origins' => [
-    //     'http://localhost:3000',
-    //     'http://127.0.0.1:3000',
-    //     'https://nexttrip.asia',
-    //     'https://www.nexttrip.asia',
-    //     'https://admin.nexttrip.asia',
-    //     'https://backend.nexttrip.asia',
-    // ],
-
-    // ===== PRODUCTION MODE: Pattern matching สำหรับ subdomain =====
-    // 'allowed_origins_patterns' => [
-    //     '#^https://.*\.nexttrip\.asia$#',
-    // ],
-
-    'allowed_origins_patterns' => [],
+    'allowed_origins_patterns' => [
+        '#^https://.*\.nexttrip\.asia$#',
+        '#^https://.*\.nexttrip\.world$#',
+    ],
 
     'allowed_headers' => ['*'],
 
