@@ -36,6 +36,8 @@ class ProcessTourMediaJob implements ShouldQueue
     protected ?int $pdfHeaderHeight;
     protected ?string $pdfFooterImage;
     protected ?int $pdfFooterHeight;
+    protected ?string $oldPdfUrl;
+    protected ?string $oldCoverImageUrl;
 
     public function __construct(
         int $tourId,
@@ -46,6 +48,8 @@ class ProcessTourMediaJob implements ShouldQueue
         ?int $pdfHeaderHeight = null,
         ?string $pdfFooterImage = null,
         ?int $pdfFooterHeight = null,
+        ?string $oldPdfUrl = null,
+        ?string $oldCoverImageUrl = null,
     ) {
         $this->tourId = $tourId;
         $this->pdfUrl = $pdfUrl;
@@ -55,6 +59,8 @@ class ProcessTourMediaJob implements ShouldQueue
         $this->pdfHeaderHeight = $pdfHeaderHeight;
         $this->pdfFooterImage = $pdfFooterImage;
         $this->pdfFooterHeight = $pdfFooterHeight;
+        $this->oldPdfUrl = $oldPdfUrl;
+        $this->oldCoverImageUrl = $oldCoverImageUrl;
         $this->onQueue('media');
     }
 
@@ -86,7 +92,7 @@ class ProcessTourMediaJob implements ShouldQueue
         if ($this->pdfUrl && str_starts_with($this->pdfUrl, 'http') && !str_contains($this->pdfUrl, env('R2_URL', ''))) {
             try {
                 // Delete old PDF from R2 before uploading new one
-                $this->deleteOldPdf($tour->pdf_url);
+                $this->deleteOldPdf($this->oldPdfUrl);
 
                 $processedUrl = $this->uploadPdf();
                 if ($processedUrl) {
@@ -105,7 +111,7 @@ class ProcessTourMediaJob implements ShouldQueue
         if ($this->coverImageUrl && str_starts_with($this->coverImageUrl, 'http') && !str_contains($this->coverImageUrl, 'imagedelivery.net')) {
             try {
                 // Delete old cover image from Cloudflare before uploading new one
-                $this->deleteOldCoverImage($tour->cover_image_url);
+                $this->deleteOldCoverImage($this->oldCoverImageUrl);
 
                 $processedUrl = $this->uploadCoverImage();
                 if ($processedUrl) {

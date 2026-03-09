@@ -1187,6 +1187,8 @@ class SyncToursJob implements ShouldQueue
                             $config->pdf_header_height,
                             $config->pdf_footer_image,
                             $config->pdf_footer_height,
+                            $pendingMedia['old_pdf_url'] ?? null,
+                            $pendingMedia['old_cover_image_url'] ?? null,
                         );
                     }
 
@@ -1283,7 +1285,24 @@ class SyncToursJob implements ShouldQueue
         $tourData['_pending_media'] = [
             'pdf_url' => null,
             'cover_image_url' => null,
+            'old_pdf_url' => null,
+            'old_cover_image_url' => null,
         ];
+
+        // FIX: อ่าน old URLs จาก DB ก่อนที่จะถูกเขียนทับ เพื่อส่งให้ ProcessTourMediaJob ลบ
+        $tourCode = $tourSection['tour_code'] ?? $tourSection['wholesaler_tour_code'] ?? $tourSection['external_id'] ?? null;
+        if ($tourCode) {
+            $existingTour = \App\Models\Tour::where('wholesaler_id', $config->wholesaler_id)
+                ->where(function ($q) use ($tourCode, $tourSection) {
+                    $q->where('wholesaler_tour_code', $tourCode)
+                      ->orWhere('external_id', $tourSection['external_id'] ?? null);
+                })
+                ->first(['pdf_url', 'cover_image_url']);
+            if ($existingTour) {
+                $tourData['_pending_media']['old_pdf_url'] = $existingTour->pdf_url;
+                $tourData['_pending_media']['old_cover_image_url'] = $existingTour->cover_image_url;
+            }
+        }
 
         $pdfUrl = $merged['pdf_url'] ?? null;
         if ($pdfUrl && str_starts_with($pdfUrl, 'http') && !str_contains($pdfUrl, env('R2_URL', ''))) {
