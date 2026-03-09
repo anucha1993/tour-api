@@ -74,7 +74,7 @@ class SendNewsletterJob implements ShouldQueue
                 $smtpConfig['from_name'] ?? 'NextTrip Holiday'
             );
 
-            $frontendUrl = rtrim(env('FRONTEND_URL', 'https://nexttrip.asia'), '/');
+            $frontendUrl = rtrim(env('FRONTEND_URL', 'https://nexttrip.world'), '/');
 
             // Get pending logs in batches
             $batchSize = $newsletter->batch_size;
@@ -106,7 +106,7 @@ class SendNewsletterJob implements ShouldQueue
                         $unsubscribeUrl = $frontendUrl . '/subscribe/unsubscribe?token=' . $log->subscriber->unsubscribe_token;
 
                         // API URL for List-Unsubscribe header (Gmail sends POST here)
-                        $apiUrl = rtrim(env('APP_URL', 'https://api.nexttrip.asia'), '/') . '/api';
+                        $apiUrl = rtrim(env('APP_URL', 'https://api.nexttrip.world'), '/') . '/api';
                         $apiUnsubscribeUrl = $apiUrl . '/subscribers/unsubscribe/' . $log->subscriber->unsubscribe_token;
 
                         // Add unsubscribe link to HTML
