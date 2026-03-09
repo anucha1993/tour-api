@@ -32,73 +32,54 @@ php artisan queue:listen database --queue=default,periods,media
 
 ---
 
-## Production Environment (Plesk)
+## Production Environment (Plesk Windows)
 
-### ขั้นตอนที่ 1: ตั้งค่า .env
+Server: **Plesk Windows + PHP 8.0**
 
-```env
-QUEUE_CONNECTION=database
-```
+### วิธีที่ 1: Plesk Scheduled Tasks (แนะนำ)
 
-### ขั้นตอนที่ 2: สร้าง Scheduled Task ใน Plesk
+ใช้ Task Type: **Run a PHP script** ใน Plesk
 
 1. ไปที่ **Plesk > Scheduled Tasks**
 2. คลิก **Add Task**
-3. ตั้งค่าดังนี้:
 
-#### Task 1: Queue Worker (หลัก)
-
-| Field | Value |
-|-------|-------|
-| Task Type | Run a PHP script |
-| PHP Version | 8.2 (หรือเวอร์ชันที่ใช้) |
-| Script Path | `/var/www/vhosts/yourdomain.com/httpdocs/tour-api/artisan` |
-| Arguments | `queue:work database --queue=default,periods,media --stop-when-empty --max-time=300` |
-| Run | Every 1 minute |
-
-**หรือใช้ Command:**
-```
-cd /var/www/vhosts/yourdomain.com/httpdocs/tour-api && /usr/bin/php artisan queue:work database --queue=default,periods,media --stop-when-empty --max-time=300
-```
-
-#### Task 2: Laravel Scheduler (สำหรับ scheduled sync)
+#### Task 1: Queue Worker (default + periods)
 
 | Field | Value |
 |-------|-------|
 | Task Type | Run a PHP script |
-| Script Path | `/var/www/vhosts/yourdomain.com/httpdocs/tour-api/artisan` |
-| Arguments | `schedule:run` |
-| Run | Every 1 minute |
+| Script path | `api.nexttrip.world/artisan` |
+| with arguments | `queue:work database --queue=default,periods --tries=1 --timeout=600 --sleep=3 --max-jobs=100 --max-time=3600` |
+| Use PHP version | 8.2.30 |
+| Run | Cron style `0 * * * *` (ทุก 1 ชั่วโมง) |
 
----
+#### Task 2: Queue Worker (media)
 
-### ขั้นตอนที่ 3: ใช้ Supervisor (แนะนำสำหรับ Production)
+| Field | Value |
+|-------|-------|
+| Task Type | Run a PHP script |
+| Script path | `api.nexttrip.world/artisan` |
+| with arguments | `queue:work database --queue=media --tries=2 --timeout=120 --sleep=5 --max-jobs=50 --max-time=3600` |
+| Use PHP version | 8.2.30 |
+| Run | Cron style `0 * * * *` (ทุก 1 ชั่วโมง) |
 
-ถ้า Plesk รองรับ Supervisor หรือมี SSH access:
+#### Task 3: Laravel Scheduler
 
-1. สร้างไฟล์ config: `/etc/supervisor/conf.d/tour-queue.conf`
+| Field | Value |
+|-------|-------|
+| Task Type | Run a PHP script |
+| Script path | `api.nexttrip.world/artisan` |
+| with arguments | `schedule:run` |
+| Use PHP version | 8.2.30 |
+| Run | Cron style `* * * * *` (ทุก 1 นาที) |
 
-```ini
-[program:tour-queue-worker]
-process_name=%(program_name)s_%(process_num)02d
-command=php /var/www/vhosts/yourdomain.com/httpdocs/tour-api/artisan queue:work database --queue=default,periods,media --sleep=3 --tries=3 --max-time=3600
-autostart=true
-autorestart=true
-stopasgroup=true
-killasgroup=true
-user=www-data
-numprocs=2
-redirect_stderr=true
-stdout_logfile=/var/www/vhosts/yourdomain.com/logs/queue-worker.log
-stopwaitsecs=3600
-```
+### หมายเหตุสำคัญ
 
-2. รันคำสั่ง:
-```bash
-sudo supervisorctl reread
-sudo supervisorctl update
-sudo supervisorctl start tour-queue-worker:*
-```
+- Worker 1 รันยาวสูงสุด 1 ชม. หรือ 100 jobs (เหมือน Linux script)
+- Worker 2 รันยาวสูงสุด 1 ชม. หรือ 50 jobs (เหมือน Linux script)
+- Cron `0 * * * *` จะเริ่ม worker ใหม่ทุกชั่วโมง เมื่อตัวเก่าจบ
+- Scheduler ต้องรันทุก 1 นาที (`* * * * *`) เสมอ
+- **`.env`**: ต้องตั้ง `QUEUE_CONNECTION=database`
 
 ---
 
