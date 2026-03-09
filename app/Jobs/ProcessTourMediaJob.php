@@ -85,6 +85,9 @@ class ProcessTourMediaJob implements ShouldQueue
         // Process PDF
         if ($this->pdfUrl && str_starts_with($this->pdfUrl, 'http') && !str_contains($this->pdfUrl, env('R2_URL', ''))) {
             try {
+                // Delete old PDF from R2 before uploading new one
+                $this->deleteOldPdf($tour->pdf_url);
+
                 $processedUrl = $this->uploadPdf();
                 if ($processedUrl) {
                     $updates['pdf_url'] = $processedUrl;
@@ -101,6 +104,9 @@ class ProcessTourMediaJob implements ShouldQueue
         // Process Cover Image
         if ($this->coverImageUrl && str_starts_with($this->coverImageUrl, 'http') && !str_contains($this->coverImageUrl, 'imagedelivery.net')) {
             try {
+                // Delete old cover image from Cloudflare before uploading new one
+                $this->deleteOldCoverImage($tour->cover_image_url);
+
                 $processedUrl = $this->uploadCoverImage();
                 if ($processedUrl) {
                     $updates['cover_image_url'] = $processedUrl;
@@ -177,6 +183,66 @@ class ProcessTourMediaJob implements ShouldQueue
         }
 
         return null;
+    }
+
+    /**
+     * Delete old PDF from R2 storage if it exists
+     */
+    protected function deleteOldPdf(?string $oldPdfUrl): void
+    {
+        if (!$oldPdfUrl) return;
+
+        $r2Url = env('R2_URL', '');
+        if (!$r2Url || !str_contains($oldPdfUrl, $r2Url)) return;
+
+        try {
+            $r2Path = str_replace(rtrim($r2Url, '/') . '/', '', $oldPdfUrl);
+            if ($r2Path && Storage::disk('r2')->exists($r2Path)) {
+                Storage::disk('r2')->delete($r2Path);
+                Log::info('ProcessTourMediaJob: Deleted old PDF from R2', [
+                    'tour_id' => $this->tourId,
+                    'path' => $r2Path,
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::warning('ProcessTourMediaJob: Failed to delete old PDF from R2', [
+                'tour_id' => $this->tourId,
+                'url' => $oldPdfUrl,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Delete old cover image from Cloudflare Images if it exists
+     */
+    protected function deleteOldCoverImage(?string $oldCoverUrl): void
+    {
+        if (!$oldCoverUrl || !str_contains($oldCoverUrl, 'imagedelivery.net')) return;
+
+        try {
+            // Extract image ID from Cloudflare URL: https://imagedelivery.net/{account_hash}/{image_id}/{variant}
+            $parts = explode('/', parse_url($oldCoverUrl, PHP_URL_PATH));
+            // Path: /{account_hash}/{image_id}/{variant} → parts[0]='', parts[1]=hash, parts[2]=id, parts[3]=variant
+            $imageId = $parts[2] ?? null;
+
+            if ($imageId) {
+                $cloudflare = app(CloudflareImagesService::class);
+                if ($cloudflare->isConfigured()) {
+                    $cloudflare->delete($imageId);
+                    Log::info('ProcessTourMediaJob: Deleted old cover image from Cloudflare', [
+                        'tour_id' => $this->tourId,
+                        'image_id' => $imageId,
+                    ]);
+                }
+            }
+        } catch (\Exception $e) {
+            Log::warning('ProcessTourMediaJob: Failed to delete old cover image from Cloudflare', [
+                'tour_id' => $this->tourId,
+                'url' => $oldCoverUrl,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     public function failed(\Throwable $exception): void
