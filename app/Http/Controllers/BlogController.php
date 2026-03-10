@@ -421,7 +421,7 @@ class BlogController extends Controller
             'cover_image_cf_id' => $result['id'],
         ]);
 
-        return response()->json(['success' => true, 'data' => $post->fresh()->load(['category:id,name,slug', 'country:id,name_th,name_en,iso2,slug', 'city:id,name_th,name_en,slug,country_id']), 'message' => 'อัปโหลดรูปปกสำเร็จ']);
+        return response()->json(['success' => true, 'data' => $post->fresh()->load(['category:id,name,slug']), 'message' => 'อัปโหลดรูปปกสำเร็จ']);
     }
 
     public function deleteCoverImage(BlogPost $post): JsonResponse
