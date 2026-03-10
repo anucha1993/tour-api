@@ -1306,24 +1306,41 @@ class SyncToursJob implements ShouldQueue
 
         $pdfUrl = $merged['pdf_url'] ?? null;
         if ($pdfUrl && str_starts_with($pdfUrl, 'http') && !str_contains($pdfUrl, env('R2_URL', ''))) {
-            // Mark for async processing, keep original URL for now
-            $tourData['_pending_media']['pdf_url'] = $pdfUrl;
+            // Only dispatch media job if tour doesn't already have an R2 URL
+            // (prevents re-uploading every sync when wholesaler sends same external URL)
+            $existingPdf = $tourData['_pending_media']['old_pdf_url'] ?? null;
+            $alreadyOnR2 = $existingPdf && str_contains($existingPdf, env('R2_URL', 'r2.dev'));
+            if (!$alreadyOnR2) {
+                $tourData['_pending_media']['pdf_url'] = $pdfUrl;
+            }
         }
 
         $coverImageUrl = $merged['cover_image_url'] ?? null;
         if ($coverImageUrl && str_starts_with($coverImageUrl, 'http') && !str_contains($coverImageUrl, 'imagedelivery.net')) {
-            // Mark for async processing, keep original URL for now
-            $tourData['_pending_media']['cover_image_url'] = $coverImageUrl;
+            // Only dispatch media job if tour doesn't already have a Cloudflare URL
+            $existingCover = $tourData['_pending_media']['old_cover_image_url'] ?? null;
+            $alreadyOnCf = $existingCover && str_contains($existingCover, 'imagedelivery.net');
+            if (!$alreadyOnCf) {
+                $tourData['_pending_media']['cover_image_url'] = $coverImageUrl;
+            }
         }
 
-        // Write back original URLs (will be replaced by async job later)
+        // Write back URLs — keep existing R2/Cloudflare URLs if media job was not dispatched
+        $existingPdf = $tourData['_pending_media']['old_pdf_url'] ?? null;
+        $existingCover = $tourData['_pending_media']['old_cover_image_url'] ?? null;
+        $keepPdf = $existingPdf && str_contains($existingPdf, env('R2_URL', 'r2.dev')) && !$tourData['_pending_media']['pdf_url'];
+        $keepCover = $existingCover && str_contains($existingCover, 'imagedelivery.net') && !$tourData['_pending_media']['cover_image_url'];
+
+        $finalPdfUrl = $keepPdf ? $existingPdf : ($merged['pdf_url'] ?? null);
+        $finalCoverUrl = $keepCover ? $existingCover : ($merged['cover_image_url'] ?? null);
+
         if (isset($tourData['tour'])) {
-            if (isset($merged['pdf_url'])) $tourData['tour']['pdf_url'] = $merged['pdf_url'];
-            if (isset($merged['cover_image_url'])) $tourData['tour']['cover_image_url'] = $merged['cover_image_url'];
+            if ($finalPdfUrl !== null) $tourData['tour']['pdf_url'] = $finalPdfUrl;
+            if ($finalCoverUrl !== null) $tourData['tour']['cover_image_url'] = $finalCoverUrl;
         }
         if (isset($tourData['media'])) {
-            if (isset($merged['pdf_url'])) $tourData['media']['pdf_url'] = $merged['pdf_url'];
-            if (isset($merged['cover_image_url'])) $tourData['media']['cover_image_url'] = $merged['cover_image_url'];
+            if ($finalPdfUrl !== null) $tourData['media']['pdf_url'] = $finalPdfUrl;
+            if ($finalCoverUrl !== null) $tourData['media']['cover_image_url'] = $finalCoverUrl;
         }
 
         return $tourData;
