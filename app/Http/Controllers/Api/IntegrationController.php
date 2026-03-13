@@ -1127,20 +1127,43 @@ class IntegrationController extends Controller
             $adapter = AdapterFactory::create($wholesalerId);
             
             $startTime = microtime(true);
-            $syncResult = $adapter->fetchTours(null);
+            
+            // Fetch ALL pages to get complete tour list
+            $allTours = [];
+            $cursorValue = null;
+            $pageNum = 1;
+            $maxPages = 100;
+
+            do {
+                $syncResult = $adapter->fetchTours($cursorValue);
+
+                if (!$syncResult->success) {
+                    // If first page fails, return error
+                    if ($pageNum === 1) {
+                        $responseTimeMs = (int) ((microtime(true) - $startTime) * 1000);
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'เชื่อมต่อ API ไม่สำเร็จ: ' . ($syncResult->errorMessage ?? 'Unknown error'),
+                            'data' => [
+                                'response_time_ms' => $responseTimeMs,
+                            ],
+                        ], 400);
+                    }
+                    break; // Partial success — use what we have
+                }
+
+                $allTours = array_merge($allTours, $syncResult->tours);
+                $cursorValue = $syncResult->nextCursor;
+                $pageNum++;
+
+                // Safety: stop if empty page
+                if (count($syncResult->tours) === 0) break;
+
+            } while ($syncResult->shouldContinue() && $pageNum <= $maxPages);
+
             $responseTimeMs = (int) ((microtime(true) - $startTime) * 1000);
 
-            if (!$syncResult->success) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'เชื่อมต่อ API ไม่สำเร็จ: ' . ($syncResult->errorMessage ?? 'Unknown error'),
-                    'data' => [
-                        'response_time_ms' => $responseTimeMs,
-                    ],
-                ], 400);
-            }
-
-            $tours = $syncResult->tours;
+            $tours = $allTours;
             $tourCount = count($tours);
 
             // Check if Two-Phase sync is enabled

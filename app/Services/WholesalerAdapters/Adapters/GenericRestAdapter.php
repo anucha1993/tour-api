@@ -49,16 +49,68 @@ class GenericRestAdapter extends BaseAdapter
     /**
      * Fetch tours from API
      */
+    /**
+     * Fetch tours from API with pagination support
+     * 
+     * Supports multiple pagination types via auth_credentials.pagination config:
+     * - cursor:    { type: 'cursor', param: 'cursor' }
+     * - page:      { type: 'page', page_param: 'page', per_page_param: 'per_page', per_page: 50 }
+     * - offset:    { type: 'offset', offset_param: 'offset', limit_param: 'limit', limit: 50 }
+     * - post_bulk: { type: 'post_bulk', body: { limit_page: 300, ... } }  — POST with body params, single request
+     * - none:      No pagination (default) — single GET returns all data
+     */
     public function fetchTours(?string $cursor = null): SyncResult
     {
         try {
+            $credentials = $this->config->auth_credentials;
+            $paginationConfig = $credentials['pagination'] ?? [];
+            $paginationType = $paginationConfig['type'] ?? 'none';
+
             $params = [];
-            
-            if ($cursor) {
-                $params['cursor'] = $cursor;
+            $httpMethod = 'GET';
+
+            // Build pagination params based on type
+            switch ($paginationType) {
+                case 'page':
+                    $pageParam = $paginationConfig['page_param'] ?? 'page';
+                    $perPageParam = $paginationConfig['per_page_param'] ?? 'per_page';
+                    $perPage = (int) ($paginationConfig['per_page'] ?? 0);
+                    $currentPage = $cursor ? (int) $cursor : 1;
+                    $params[$pageParam] = $currentPage;
+                    // Only send per_page param when explicitly configured (> 0)
+                    if ($perPage > 0 && $perPageParam) {
+                        $params[$perPageParam] = $perPage;
+                    }
+                    break;
+
+                case 'offset':
+                    $offsetParam = $paginationConfig['offset_param'] ?? 'offset';
+                    $limitParam = $paginationConfig['limit_param'] ?? 'limit';
+                    $limit = (int) ($paginationConfig['limit'] ?? 50);
+                    $currentOffset = $cursor ? (int) $cursor : 0;
+                    $params[$offsetParam] = $currentOffset;
+                    $params[$limitParam] = $limit;
+                    break;
+
+                case 'cursor':
+                    $cursorParam = $paginationConfig['param'] ?? 'cursor';
+                    if ($cursor) {
+                        $params[$cursorParam] = $cursor;
+                    }
+                    break;
+
+                case 'post_bulk':
+                    // POST request with body params (e.g. limit_page=300) — single request fetches all
+                    $httpMethod = 'POST';
+                    $params = $paginationConfig['body'] ?? [];
+                    break;
+
+                default: // 'none'
+                    // No pagination params
+                    break;
             }
 
-            $response = $this->request('GET', $this->endpoints['tours'], $params, 'fetch_tours');
+            $response = $this->request($httpMethod, $this->endpoints['tours'], $params, 'fetch_tours');
 
             // Handle various response formats:
             // 1. Direct array: [{...}, {...}] (Zego format)
@@ -70,11 +122,87 @@ class GenericRestAdapter extends BaseAdapter
                 // Wrapped format
                 $tours = $response['data'] ?? $response['tours'] ?? $response['items'] ?? [];
             }
-            
-            $nextCursor = $response['next_cursor'] ?? $response['cursor'] ?? $response['pagination']['next'] ?? null;
-            $hasMore = $response['has_more'] ?? $response['hasMore'] ?? ($nextCursor !== null);
 
-            return SyncResult::success($tours, $nextCursor, $hasMore);
+            // Detect pagination info from response
+            $nextCursor = null;
+            $hasMore = false;
+            $responsePage = null;
+            $responseLastPage = null;
+            $responsePerPage = null;
+
+            switch ($paginationType) {
+                case 'page':
+                    $perPage = (int) ($paginationConfig['per_page'] ?? 0);
+                    $currentPage = $cursor ? (int) $cursor : 1;
+
+                    // Try to detect last_page / total_pages from various response formats
+                    $responseLastPage = $response['last_page']
+                        ?? $response['meta']['last_page']
+                        ?? $response['pagination']['last_page']
+                        ?? $response['pagination']['total_pages']
+                        ?? $response['totalPage']
+                        ?? $response['total_pages']
+                        ?? null;
+
+                    // Also try to compute from total count if last_page not available
+                    if ($responseLastPage === null) {
+                        $totalCount = $response['total']
+                            ?? $response['meta']['total']
+                            ?? $response['pagination']['total']
+                            ?? $response['totalRecord']
+                            ?? $response['count']
+                            ?? null;
+                        if ($totalCount !== null && $perPage > 0) {
+                            $responseLastPage = (int) ceil((int) $totalCount / $perPage);
+                        } elseif ($totalCount !== null && count($tours) > 0) {
+                            // per_page not set — infer from actual items returned
+                            $responseLastPage = (int) ceil((int) $totalCount / count($tours));
+                        }
+                    }
+
+                    $responsePage = $currentPage;
+                    $responsePerPage = $perPage > 0 ? $perPage : count($tours);
+
+                    if ($responseLastPage !== null) {
+                        $hasMore = $currentPage < (int) $responseLastPage;
+                    } else {
+                        // Fallback: if we got items, assume there might be more
+                        $hasMore = count($tours) > 0 && $perPage > 0 && count($tours) >= $perPage;
+                    }
+                    $nextCursor = $hasMore ? (string) ($currentPage + 1) : null;
+                    break;
+
+                case 'offset':
+                    $limit = (int) ($paginationConfig['limit'] ?? 50);
+                    $currentOffset = $cursor ? (int) $cursor : 0;
+                    $total = $response['total'] ?? $response['meta']['total'] ?? $response['pagination']['total'] ?? null;
+
+                    if ($total !== null) {
+                        $hasMore = ($currentOffset + $limit) < (int) $total;
+                    } else {
+                        $hasMore = count($tours) >= $limit;
+                    }
+                    $nextCursor = $hasMore ? (string) ($currentOffset + $limit) : null;
+                    break;
+
+                case 'cursor':
+                    $nextCursor = $response['next_cursor'] ?? $response['cursor'] ?? $response['pagination']['next'] ?? null;
+                    $hasMore = $response['has_more'] ?? $response['hasMore'] ?? ($nextCursor !== null);
+                    break;
+
+                case 'post_bulk':
+                    // Single request fetched everything — no more pages
+                    $hasMore = false;
+                    $nextCursor = null;
+                    break;
+
+                default: // 'none'
+                    $hasMore = false;
+                    $nextCursor = null;
+                    break;
+            }
+
+            return SyncResult::success($tours, $nextCursor, $hasMore, $responsePage, $responseLastPage ? (int) $responseLastPage : null, $responsePerPage);
 
         } catch (\Exception $e) {
             return SyncResult::failed($e->getMessage(), (string) $e->getCode());

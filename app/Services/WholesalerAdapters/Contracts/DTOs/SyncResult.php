@@ -15,6 +15,9 @@ class SyncResult
         public int $totalCount = 0,
         public ?string $errorMessage = null,
         public ?string $errorCode = null,
+        public ?int $currentPage = null,
+        public ?int $lastPage = null,
+        public ?int $perPage = null,
     ) {}
 
     /**
@@ -23,7 +26,10 @@ class SyncResult
     public static function success(
         array $tours,
         ?string $nextCursor = null,
-        bool $hasMore = false
+        bool $hasMore = false,
+        ?int $currentPage = null,
+        ?int $lastPage = null,
+        ?int $perPage = null,
     ): self {
         return new self(
             success: true,
@@ -31,6 +37,9 @@ class SyncResult
             nextCursor: $nextCursor,
             hasMore: $hasMore,
             totalCount: count($tours),
+            currentPage: $currentPage,
+            lastPage: $lastPage,
+            perPage: $perPage,
         );
     }
 
@@ -48,9 +57,15 @@ class SyncResult
 
     /**
      * Check if has more data to fetch
+     * Supports cursor-based (nextCursor) and page-based (currentPage < lastPage)
      */
     public function shouldContinue(): bool
     {
-        return $this->success && $this->hasMore && $this->nextCursor !== null;
+        if (!$this->success) return false;
+        if ($this->hasMore) return true;
+        if ($this->currentPage !== null && $this->lastPage !== null) {
+            return $this->currentPage < $this->lastPage;
+        }
+        return false;
     }
 }

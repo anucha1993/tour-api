@@ -227,14 +227,14 @@ class SyncToursJob implements ShouldQueue
             }
 
             // Apply limit: use parameter first, fallback to config setting
+            $totalFetched = count($toursData);
             $limit = $this->limit ?? $config->sync_limit;
             if ($limit !== null && $limit > 0) {
-                $originalCount = count($toursData);
                 $toursData = array_slice($toursData, 0, $limit);
                 Log::info('SyncToursJob: Limited records', [
                     'wholesaler_id' => $this->wholesalerId,
                     'limit' => $limit,
-                    'original_count' => $originalCount,
+                    'original_count' => $totalFetched,
                     'limited_count' => count($toursData),
                 ]);
             }
@@ -244,6 +244,7 @@ class SyncToursJob implements ShouldQueue
             $totalItems = count($toursData);
             $syncLog->update([
                 'total_items' => $totalItems,
+                'tours_received' => $totalFetched, // Total fetched from API (before limit)
                 'processed_items' => 0,
                 'progress_percent' => 0,
                 'chunk_size' => $chunkSize,
@@ -271,12 +272,12 @@ class SyncToursJob implements ShouldQueue
             }
 
             // Update sync log with retry for connection issues
-            $this->safeDbOperation(function() use ($syncLog, $finalStatus, $stats) {
+            $this->safeDbOperation(function() use ($syncLog, $finalStatus, $stats, $totalFetched) {
                 $syncLog->update([
                     'status' => $finalStatus,
                     'completed_at' => now(),
                     'duration_seconds' => abs(now()->diffInSeconds($syncLog->started_at)),
-                    'tours_received' => $stats['received'],
+                    'tours_received' => $totalFetched,
                     'tours_created' => $stats['created'],
                     'tours_updated' => $stats['updated'],
                     'tours_skipped' => $stats['skipped'],
@@ -294,6 +295,7 @@ class SyncToursJob implements ShouldQueue
             Log::info('SyncToursJob: Completed', [
                 'wholesaler_id' => $this->wholesalerId,
                 'status' => $finalStatus,
+                'total_fetched' => $totalFetched,
                 'stats' => $stats,
             ]);
 
@@ -434,13 +436,6 @@ class SyncToursJob implements ShouldQueue
         $cursor = SyncCursor::where('wholesaler_id', $this->wholesalerId)->first();
         $cursorValue = $this->syncType === 'full' ? null : $cursor?->cursor_value;
 
-        // Fetch tours
-        $result = $adapter->fetchTours($cursorValue);
-
-        if (!$result->success) {
-            throw new \Exception('Failed to fetch tours: ' . $result->errorMessage);
-        }
-
         // Get mappings from database (using correct column names)
         $mappings = WholesalerFieldMapping::where('wholesaler_id', $this->wholesalerId)
             ->where('is_active', true)
@@ -448,33 +443,85 @@ class SyncToursJob implements ShouldQueue
             ->groupBy('section_name');
 
         // Parse aggregation_config for nested data structure paths
-        // aggregation_config is already an array (cast by model), not a JSON string
         $dataStructure = $config->aggregation_config ?? [];
+
+        // Pagination loop: fetch all pages until no more data
+        $paginationConfig = $config->auth_credentials['pagination'] ?? [];
+        Log::info('SyncToursJob: Starting pagination fetch', [
+            'wholesaler_id' => $this->wholesalerId,
+            'pagination_type' => $paginationConfig['type'] ?? 'none',
+            'initial_cursor' => $cursorValue,
+            'sync_type' => $this->syncType,
+        ]);
         
-        // Map each tour using our transform logic
         $mappedTours = [];
-        foreach ($result->tours as $rawTour) {
-            $transformed = $this->transformTourData($rawTour, $mappings, $dataStructure);
-            
-            // Only include if has required fields
-            $tourSection = $transformed['tour'] ?? [];
-            if (!empty($tourSection['title']) || !empty($tourSection['tour_code']) || !empty($tourSection['wholesaler_tour_code'])) {
-                $mappedTours[] = $transformed;
+        $totalRaw = 0;
+        $page = 1;
+        $maxPages = 100; // Safety limit to prevent infinite loops
+
+        do {
+            $result = $adapter->fetchTours($cursorValue);
+
+            if (!$result->success) {
+                throw new \Exception('Failed to fetch tours (page ' . $page . '): ' . $result->errorMessage);
             }
+
+            $pageCount = count($result->tours);
+            $totalRaw += $pageCount;
+
+            Log::info('SyncToursJob: Fetched page', [
+                'wholesaler_id' => $this->wholesalerId,
+                'page' => $page,
+                'tours_in_page' => $pageCount,
+                'has_more' => $result->hasMore,
+                'next_cursor' => $result->nextCursor,
+                'current_page' => $result->currentPage,
+                'last_page' => $result->lastPage,
+            ]);
+
+            // Map each tour
+            foreach ($result->tours as $rawTour) {
+                $transformed = $this->transformTourData($rawTour, $mappings, $dataStructure);
+                
+                $tourSection = $transformed['tour'] ?? [];
+                if (!empty($tourSection['title']) || !empty($tourSection['tour_code']) || !empty($tourSection['wholesaler_tour_code'])) {
+                    $mappedTours[] = $transformed;
+                }
+            }
+
+            // Advance cursor for next page
+            $cursorValue = $result->nextCursor;
+            $page++;
+
+            // Stop if no tours returned (safety: prevent empty-page loops)
+            if ($pageCount === 0) {
+                break;
+            }
+
+        } while ($result->shouldContinue() && $page <= $maxPages);
+
+        if ($page > $maxPages) {
+            Log::warning('SyncToursJob: Reached max pages limit', [
+                'wholesaler_id' => $this->wholesalerId,
+                'max_pages' => $maxPages,
+                'total_raw' => $totalRaw,
+            ]);
         }
 
-        Log::info('SyncToursJob: Mapped tours', [
-            'raw_count' => count($result->tours),
+        Log::info('SyncToursJob: All pages fetched', [
+            'wholesaler_id' => $this->wholesalerId,
+            'total_pages' => $page - 1,
+            'raw_count' => $totalRaw,
             'mapped_count' => count($mappedTours),
         ]);
 
-        // Update cursor
-        if ($cursor && $result->nextCursor) {
+        // Update cursor with the last position
+        if ($cursor) {
             $cursor->update([
-                'cursor_value' => $result->nextCursor,
+                'cursor_value' => $cursorValue,
                 'last_synced_at' => now(),
-                'last_batch_count' => count($result->tours),
-                'total_received' => $cursor->total_received + count($result->tours),
+                'last_batch_count' => $totalRaw,
+                'total_received' => $cursor->total_received + $totalRaw,
             ]);
         }
 
