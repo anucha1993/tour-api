@@ -32,52 +32,55 @@ php artisan queue:listen database --queue=default,periods,media
 
 ---
 
-## Production Environment (Plesk Windows)
+## Production Environment (Plesk Linux)
 
-Server: **Plesk Windows + PHP 8.0**
+Server: **Plesk Linux + PHP 8.4**
 
-### วิธีที่ 1: Plesk Scheduled Tasks (แนะนำ)
+### วิธีที่ 1: Cron Script (แนะนำ)
 
-ใช้ Task Type: **Run a PHP script** ใน Plesk
+ใช้ `start_workers_linux.sh` ตั้ง Cron ใน Plesk:
 
-1. ไปที่ **Plesk > Scheduled Tasks**
+1. ไปที่ **Plesk > Scheduled Tasks (Cron Jobs)**
 2. คลิก **Add Task**
+
+| Field | Value |
+|-------|-------|
+| Command | `bash /var/www/vhosts/nexttrip.asia/api.nexttrip.asia/start_workers_linux.sh` |
+| Run as | domain owner หรือ root |
+| Schedule | `0 * * * *` (ทุก 1 ชั่วโมง) |
+
+Script จะตรวจสอบว่า worker ยังรันอยู่หรือไม่ ถ้าไม่มีจะเริ่มใหม่
+
+### วิธีที่ 2: Plesk Scheduled Tasks (ทางเลือก)
 
 #### Task 1: Queue Worker (default + periods)
 
 | Field | Value |
 |-------|-------|
-| Task Type | Run a PHP script |
-| Script path | `api.nexttrip.world/artisan` |
-| with arguments | `queue:work database --queue=default,periods --tries=1 --timeout=600 --sleep=3 --max-jobs=100 --max-time=3600` |
-| Use PHP version | 8.2.30 |
-| Run | Cron style `0 * * * *` (ทุก 1 ชั่วโมง) |
+| Task Type | Run a command |
+| Command | `/opt/plesk/php/8.4/bin/php /var/www/vhosts/nexttrip.asia/api.nexttrip.asia/artisan queue:work database --queue=default,periods --stop-when-empty --max-time=55` |
+| Run | Cron style `* * * * *` (ทุก 1 นาที) |
 
 #### Task 2: Queue Worker (media)
 
 | Field | Value |
 |-------|-------|
-| Task Type | Run a PHP script |
-| Script path | `api.nexttrip.world/artisan` |
-| with arguments | `queue:work database --queue=media --tries=2 --timeout=120 --sleep=5 --max-jobs=50 --max-time=3600` |
-| Use PHP version | 8.2.30 |
-| Run | Cron style `0 * * * *` (ทุก 1 ชั่วโมง) |
+| Task Type | Run a command |
+| Command | `/opt/plesk/php/8.4/bin/php /var/www/vhosts/nexttrip.asia/api.nexttrip.asia/artisan queue:work database --queue=media --stop-when-empty --max-time=55` |
+| Run | Cron style `* * * * *` (ทุก 1 นาที) |
 
 #### Task 3: Laravel Scheduler
 
 | Field | Value |
 |-------|-------|
-| Task Type | Run a PHP script |
-| Script path | `api.nexttrip.world/artisan` |
-| with arguments | `schedule:run` |
-| Use PHP version | 8.2.30 |
+| Task Type | Run a command |
+| Command | `/opt/plesk/php/8.4/bin/php /var/www/vhosts/nexttrip.asia/api.nexttrip.asia/artisan schedule:run` |
 | Run | Cron style `* * * * *` (ทุก 1 นาที) |
 
 ### หมายเหตุสำคัญ
 
-- Worker 1 รันยาวสูงสุด 1 ชม. หรือ 100 jobs (เหมือน Linux script)
-- Worker 2 รันยาวสูงสุด 1 ชม. หรือ 50 jobs (เหมือน Linux script)
-- Cron `0 * * * *` จะเริ่ม worker ใหม่ทุกชั่วโมง เมื่อตัวเก่าจบ
+- วิธี 1: Worker รันค้าง background สูงสุด 1 ชม. (--max-time=3600) แล้ว Cron จะเริ่มใหม่
+- วิธี 2: ใช้ --stop-when-empty --max-time=55 เพื่อให้จบก่อน Cron รอบถัดไป (60 วิ)
 - Scheduler ต้องรันทุก 1 นาที (`* * * * *`) เสมอ
 - **`.env`**: ต้องตั้ง `QUEUE_CONNECTION=database`
 
@@ -156,9 +159,9 @@ php artisan cache:clear
 php artisan optimize:clear
 ```
 
-หรือ restart PHP-FPM:
+หรือ restart PHP-FPM (Plesk Linux):
 ```bash
-sudo systemctl restart php8.2-fpm
+sudo systemctl restart plesk-php84-fpm
 ```
 
 ---
@@ -206,22 +209,22 @@ SyncPeriodsJob::handle() (ถ้าเป็น Two-Phase)
 php artisan queue:listen database --queue=default,periods,media
 ```
 
-### Production (Cron - ทุก 1 นาที)
+### Production (Plesk Linux - Cron ทุก 1 นาที)
 ```bash
-php artisan queue:work database --queue=default,periods,media --stop-when-empty --max-time=300
+/opt/plesk/php/8.4/bin/php /var/www/vhosts/nexttrip.asia/api.nexttrip.asia/artisan queue:work database --queue=default,periods,media --stop-when-empty --max-time=55
 ```
 
-### Production (Supervisor - แนะนำ)
+### Production (Plesk Linux - Background Worker)
 ```bash
-php artisan queue:work database --queue=default,periods,media --sleep=3 --tries=3 --max-time=3600
+bash /var/www/vhosts/nexttrip.asia/api.nexttrip.asia/start_workers_linux.sh
 ```
-### สรุปคำสั่งสำหรับ Production (Plesk)
-cd /var/www/vhosts/yourdomain.com/httpdocs/tour-api && /usr/bin/php artisan queue:work database --queue=default,periods,media --stop-when-empty --max-time=55
-### ตั้งค่า Scheduled Task ใน Plesk
-### Cron style:
 
-### Command:
-### อธิบาย Parameters
-### Parameter	ความหมาย	ทำไมต้องใช้
-### --stop-when-empty	หยุดเมื่อ queue ว่าง	ไม่ให้ process ค้าง
-### --max-time=55	หยุดหลัง 55 วินาที	ให้ทันก่อน cron รอบถัดไป (60 วิ)
+### Parameters
+
+| Parameter | ความหมาย | ทำไมต้องใช้ |
+|-----------|---------|------------|
+| `--stop-when-empty` | หยุดเมื่อ queue ว่าง | ไม่ให้ process ค้าง (ใช้กับ Cron) |
+| `--max-time=55` | หยุดหลัง 55 วินาที | ให้ทันก่อน cron รอบถัดไป (60 วิ) |
+| `--max-time=3600` | หยุดหลัง 1 ชม. | ใช้กับ background worker |
+| `--max-jobs=100` | หยุดหลัง 100 jobs | ป้องกัน memory leak |
+| `--sleep=3` | รอ 3 วินาทีก่อนเช็ค job ใหม่ | ลด CPU usage |
