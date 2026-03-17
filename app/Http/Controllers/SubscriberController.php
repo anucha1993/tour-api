@@ -754,7 +754,7 @@ class SubscriberController extends Controller
                 . "หากคุณไม่ได้สมัคร กรุณาเพิกเฉยอีเมลนี้";
 
             // API URL for List-Unsubscribe header (Gmail sends POST here directly)
-            $apiUrl = rtrim(env('APP_URL', 'https://api.nexttrip.world'), '/') . '/api';
+            $apiUrl = rtrim(env('APP_URL', 'https://api.nexttrip.asia'), '/') . '/api';
             $apiUnsubscribeUrl = $apiUrl . '/subscribers/unsubscribe/' . $subscriber->unsubscribe_token;
 
             $email = (new \Symfony\Component\Mime\Email())
@@ -832,7 +832,7 @@ class SubscriberController extends Controller
             $html = $this->getWelcomeEmailHtml($frontendUrl, $unsubscribeUrl);
 
             // API URL for List-Unsubscribe header (Gmail sends POST here directly)
-            $apiUrl = rtrim(env('APP_URL', 'https://api.nexttrip.world'), '/') . '/api';
+            $apiUrl = rtrim(env('APP_URL', 'https://api.nexttrip.asia'), '/') . '/api';
             $apiUnsubscribeUrl = $apiUrl . '/subscribers/unsubscribe/' . $subscriber->unsubscribe_token;
 
             $email = (new \Symfony\Component\Mime\Email())

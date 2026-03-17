@@ -18,10 +18,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
         'https://www.nexttrip.asia',
         'https://admin.nexttrip.asia',
         'https://backend.nexttrip.asia',
-        'https://nexttrip.world',
-        'https://www.nexttrip.world',
-        'https://admin.nexttrip.world',
-        'https://backend.nexttrip.world',
+        'https://nexttrip.asia',
+        'https://www.nexttrip.asia',
+        'https://admin.nexttrip.asia',
+        'https://backend.nexttrip.asia',
     ];
 
     $origin = $_SERVER['HTTP_ORIGIN'] ?? '';

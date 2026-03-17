@@ -2,7 +2,7 @@
 /**
  * ทดสอบว่า queue worker ทำงานได้จริงไหม
  * รันผ่าน CMD: "C:\Program Files (x86)\Plesk\Additional\PleskPHP82\php.exe" test_queue_worker.php
- * หรือผ่าน Plesk: Run a PHP script → api.nexttrip.world/test_queue_worker.php
+ * หรือผ่าน Plesk: Run a PHP script → api.nexttrip.asia/test_queue_worker.php
  */
 
 require __DIR__ . '/vendor/autoload.php';
