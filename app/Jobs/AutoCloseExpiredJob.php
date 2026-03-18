@@ -94,38 +94,48 @@ class AutoCloseExpiredJob implements ShouldQueue
     }
 
     /**
-     * Close tours that have all periods expired/closed
+     * Close tours that have all periods expired/closed or have no periods at all
      */
     protected function closeExpiredTours(): int
     {
         $today = now()->toDateString();
         $count = 0;
 
-        // Find tours that have NO open/upcoming periods
-        $tours = Tour::where('status', '!=', 'closed')
-            ->where('status', '!=', 'disabled')
-            ->where('status', '!=', 'inactive')
-            ->whereDoesntHave('periods', function ($q) use ($today) {
-                $q->where('start_date', '>=', $today)
-                  ->where('status', '!=', 'closed')
-                  ->where('status', '!=', 'cancelled');
+        // Find tours that have NO open/upcoming periods (all expired/closed)
+        // OR have no periods at all
+        // Only process 'active' tours (skip draft, inactive, closed)
+        $tours = Tour::where('status', 'active')
+            ->where(function ($query) use ($today) {
+                $query->whereDoesntHave('periods') // ไม่มีรอบเดินทางเลย
+                    ->orWhere(function ($q) use ($today) {
+                        // มีรอบเดินทาง แต่ไม่มีรอบที่ยังเปิดอยู่
+                        $q->whereHas('periods')
+                          ->whereDoesntHave('periods', function ($pq) use ($today) {
+                              $pq->where('start_date', '>=', $today)
+                                ->where('status', '!=', 'closed')
+                                ->where('status', '!=', 'cancelled');
+                          });
+                    });
             })
-            ->whereHas('periods') // Must have at least one period
             ->get();
 
         foreach ($tours as $tour) {
-            $tour->status = 'closed';
+            $hasPeriods = $tour->periods()->exists();
+            $reason = $hasPeriods ? 'all periods expired' : 'no periods';
+
+            $tour->status = 'inactive';
             $tour->save();
             $count++;
 
-            Log::debug('AutoCloseExpiredJob: Closed tour (all periods expired)', [
+            Log::debug("AutoCloseExpiredJob: Closed tour ({$reason})", [
                 'tour_id' => $tour->id,
                 'tour_code' => $tour->tour_code,
+                'reason' => $reason,
             ]);
         }
 
         if ($count > 0) {
-            Log::info('AutoCloseExpiredJob: Closed tours with all periods expired', [
+            Log::info('AutoCloseExpiredJob: Closed tours', [
                 'count' => $count,
             ]);
         }

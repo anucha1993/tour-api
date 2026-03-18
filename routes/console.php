@@ -1,6 +1,7 @@
 <?php
 
 use App\Jobs\AutoCloseExpiredJob;
+use App\Models\SystemSetting;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -9,8 +10,9 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-// Auto-close expired periods and tours - runs daily at 1:00 AM
-Schedule::job(new AutoCloseExpiredJob())->dailyAt('01:00')
+// Auto-close expired periods and tours - runs daily at configured time from UI
+$autoCloseRunTime = rescue(fn () => SystemSetting::getValue('auto_close.run_time', '01:00'), '01:00', false);
+Schedule::job(new AutoCloseExpiredJob())->dailyAt($autoCloseRunTime)
     ->name('auto-close-expired')
     ->withoutOverlapping()
     ->onOneServer();

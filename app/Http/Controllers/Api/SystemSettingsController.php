@@ -176,16 +176,23 @@ class SystemSettingsController extends Controller
                     ->update(['status' => 'closed']);
             }
 
-            // Close tours with no open periods
+            // Close tours with no open periods or no periods at all
             if ($settings['tours']) {
-                $toursWithNoOpenPeriods = Tour::where('status', '!=', 'closed')
-                    ->whereDoesntHave('periods', function ($query) {
-                        $query->where('status', '!=', 'closed');
+                $today = Carbon::now()->toDateString();
+                $toursToClose = Tour::where('status', 'active')
+                    ->where(function ($query) use ($today) {
+                        $query->whereDoesntHave('periods') // ไม่มีรอบเดินทางเลย
+                            ->orWhereDoesntHave('periods', function ($pq) use ($today) {
+                                $pq->where('start_date', '>=', $today)
+                                   ->where('status', '!=', 'closed')
+                                   ->where('status', '!=', 'cancelled');
+                            });
                     })
                     ->get();
 
-                foreach ($toursWithNoOpenPeriods as $tour) {
-                    $tour->update(['status' => 'closed']);
+                foreach ($toursToClose as $tour) {
+                    $tour->status = 'inactive';
+                    $tour->save();
                     $toursClosed++;
                 }
             }
