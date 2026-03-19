@@ -320,6 +320,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('tours/{tour}/periods/bulk-update', [PeriodController::class, 'bulkUpdate']);
     Route::post('tours/{tour}/periods/mass-update-promo', [PeriodController::class, 'massUpdatePromo']);
     Route::post('tours/{tour}/periods/mass-update-discount', [PeriodController::class, 'massUpdateDiscount']);
+    Route::post('tours/{tour}/periods/mass-update-price', [PeriodController::class, 'massUpdatePrice']);
     Route::apiResource('tours.periods', PeriodController::class);
 
     // Tour Itineraries CRUD

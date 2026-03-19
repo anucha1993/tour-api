@@ -371,6 +371,48 @@ class PeriodController extends Controller
     }
 
     /**
+     * Mass update price for periods.
+     */
+    public function massUpdatePrice(Request $request, Tour $tour): JsonResponse
+    {
+        $validated = $request->validate([
+            'period_ids' => 'required|array',
+            'period_ids.*' => 'exists:periods,id',
+            'price_adult' => 'nullable|numeric|min:0',
+            'price_single' => 'nullable|numeric|min:0',
+            'price_child' => 'nullable|numeric|min:0',
+            'price_child_nobed' => 'nullable|numeric|min:0',
+            'price_infant' => 'nullable|numeric|min:0',
+        ]);
+
+        $periods = Period::whereIn('id', $validated['period_ids'])
+            ->where('tour_id', $tour->id)
+            ->with('offer')
+            ->get();
+
+        $updateData = [];
+        foreach (['price_adult', 'price_single', 'price_child', 'price_child_nobed', 'price_infant'] as $field) {
+            if (isset($validated[$field]) && $validated[$field] > 0) {
+                $updateData[$field] = $validated[$field];
+            }
+        }
+
+        foreach ($periods as $period) {
+            if ($period->offer && !empty($updateData)) {
+                $period->offer->update($updateData);
+            }
+        }
+
+        // Recalculate tour aggregates
+        $tour->recalculateAggregates();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Price updated for ' . count($periods) . ' periods',
+        ]);
+    }
+
+    /**
      * Mass update discount for periods.
      */
     public function massUpdateDiscount(Request $request, Tour $tour): JsonResponse

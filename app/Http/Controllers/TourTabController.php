@@ -468,12 +468,20 @@ class TourTabController extends Controller
             $tours = $tab->getTours($tab->display_limit);
             $tourIds = $tours->pluck('id')->toArray();
 
-            // Extract discount_min_amount from conditions for period-level badge matching
+            // Extract discount conditions from conditions for period-level badge matching
             $discountMinAmount = null;
+            $hasDiscount = false;
+            $discountMinPercent = null;
             $conditions = is_array($tab->conditions) ? $tab->conditions : json_decode($tab->conditions, true) ?? [];
             foreach ($conditions as $cond) {
                 if (($cond['type'] ?? '') === 'discount_min_amount') {
                     $discountMinAmount = (float) ($cond['value'] ?? 0);
+                }
+                if (($cond['type'] ?? '') === 'has_discount') {
+                    $hasDiscount = true;
+                }
+                if (($cond['type'] ?? '') === 'discount_min_percent') {
+                    $discountMinPercent = (float) ($cond['value'] ?? 0);
                 }
             }
 
@@ -485,6 +493,8 @@ class TourTabController extends Controller
                 'badge_icon' => $tab->badge_icon,
                 'tour_ids' => $tourIds,
                 'discount_min_amount' => $discountMinAmount,
+                'has_discount' => $hasDiscount,
+                'discount_min_percent' => $discountMinPercent,
                 'display_modes' => $tab->display_modes ?? [],
             ];
         });
