@@ -80,17 +80,28 @@ class AutoCloseExpiredJob implements ShouldQueue
             ->where('status', '!=', 'cancelled')
             ->update([
                 'status' => 'closed',
+                'is_visible' => false,
                 'updated_at' => now(),
             ]);
 
-        if ($count > 0) {
+        // Also hide periods that were already closed but still visible
+        $hiddenCount = Period::where('start_date', '<', $thresholdDate)
+            ->where('status', 'closed')
+            ->where('is_visible', true)
+            ->update([
+                'is_visible' => false,
+                'updated_at' => now(),
+            ]);
+
+        if ($count > 0 || $hiddenCount > 0) {
             Log::info('AutoCloseExpiredJob: Closed expired periods', [
                 'count' => $count,
+                'hidden_count' => $hiddenCount,
                 'threshold_date' => $thresholdDate,
             ]);
         }
 
-        return $count;
+        return $count + $hiddenCount;
     }
 
     /**

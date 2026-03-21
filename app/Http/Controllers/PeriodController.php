@@ -81,7 +81,7 @@ class PeriodController extends Controller
 
         // Generate codes if not provided
         if (empty($validated['external_id'])) {
-            $validated['external_id'] = 'PD-' . $tour->tour_code . '-' . now()->format('ymdHis');
+            $validated['external_id'] = 'PD-' . $tour->tour_code . '-' . now()->format('ymdHis') . substr(uniqid(), -4);
         }
         if (empty($validated['period_code'])) {
             $validated['period_code'] = $tour->tour_code . '-' . date('ymd', strtotime($validated['start_date']));

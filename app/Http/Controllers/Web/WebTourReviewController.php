@@ -260,6 +260,11 @@ class WebTourReviewController extends Controller
             $query->whereRaw("JSON_SEARCH(tags, 'one', ?) IS NOT NULL", [$tag]);
         }
 
+        // Filter by tour_type
+        if ($request->filled('tour_type')) {
+            $query->where('tour_type', $request->tour_type);
+        }
+
         $perPage = min((int) $request->get('per_page', 12), 48);
         $reviews = $query->paginate($perPage);
 
@@ -271,6 +276,13 @@ class WebTourReviewController extends Controller
             $ratingDist[$i] = TourReview::approved()->where('rating', $i)->count();
         }
 
+        // Tour type counts
+        $tourTypeCounts = TourReview::approved()
+            ->selectRaw('tour_type, COUNT(*) as count')
+            ->whereNotNull('tour_type')
+            ->groupBy('tour_type')
+            ->pluck('count', 'tour_type');
+
         return response()->json([
             'success' => true,
             'data' => [
@@ -278,6 +290,7 @@ class WebTourReviewController extends Controller
                     'average_rating' => $avgRating,
                     'total_reviews' => $totalReviews,
                     'rating_distribution' => $ratingDist,
+                    'tour_type_counts' => $tourTypeCounts,
                 ],
                 'reviews' => $reviews,
             ],

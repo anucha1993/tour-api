@@ -375,6 +375,7 @@ class TourTabController extends Controller
             'periods_preview' => $periodsPreview,
             'total_periods' => $totalPeriods,
             'active_promotions' => $this->getActivePromotions($tour),
+            'city_ids' => $tour->relationLoaded('cities') ? $tour->cities->pluck('id')->values()->toArray() : [],
         ];
     }
 
@@ -422,7 +423,7 @@ class TourTabController extends Controller
             $tours = $tab->getTours();
 
             // Eager-load relations for airline & departure dates
-            $tours->load(['transports.transport', 'periods.offer.promotion', 'country']);
+            $tours->load(['transports.transport', 'periods.offer.promotion', 'country', 'cities']);
 
             $formattedTours = $tours->map(fn ($tour) => $this->formatTourForTab($tour));
 
@@ -470,18 +471,16 @@ class TourTabController extends Controller
 
             // Extract discount conditions from conditions for period-level badge matching
             $discountMinAmount = null;
-            $hasDiscount = false;
-            $discountMinPercent = null;
+            $requiresDiscount = false;
             $conditions = is_array($tab->conditions) ? $tab->conditions : json_decode($tab->conditions, true) ?? [];
             foreach ($conditions as $cond) {
-                if (($cond['type'] ?? '') === 'discount_min_amount') {
+                $type = $cond['type'] ?? '';
+                if ($type === 'discount_min_amount') {
                     $discountMinAmount = (float) ($cond['value'] ?? 0);
+                    $requiresDiscount = true;
                 }
-                if (($cond['type'] ?? '') === 'has_discount') {
-                    $hasDiscount = true;
-                }
-                if (($cond['type'] ?? '') === 'discount_min_percent') {
-                    $discountMinPercent = (float) ($cond['value'] ?? 0);
+                if (in_array($type, ['has_discount', 'discount_min_percent', 'discount_total_min_amount'])) {
+                    $requiresDiscount = true;
                 }
             }
 
@@ -493,8 +492,7 @@ class TourTabController extends Controller
                 'badge_icon' => $tab->badge_icon,
                 'tour_ids' => $tourIds,
                 'discount_min_amount' => $discountMinAmount,
-                'has_discount' => $hasDiscount,
-                'discount_min_percent' => $discountMinPercent,
+                'requires_discount' => $requiresDiscount,
                 'display_modes' => $tab->display_modes ?? [],
             ];
         });
@@ -516,7 +514,7 @@ class TourTabController extends Controller
         $tours = $tab->getTours($limit);
 
         // Eager-load relations for airline & departure dates
-        $tours->load(['transports.transport', 'periods.offer.promotion', 'country']);
+        $tours->load(['transports.transport', 'periods.offer.promotion', 'country', 'cities']);
 
         $formattedTours = $tours->map(fn ($tour) => $this->formatTourForTab($tour));
 
@@ -552,8 +550,8 @@ class TourTabController extends Controller
         $result = $tabs->map(function ($tab) {
             $tours = $tab->getTours();
 
-            // Eager-load relations for airline & departure dates
-            $tours->load(['transports.transport', 'periods.offer.promotion', 'country']);
+            // Eager-load relations for airline, departure dates & cities
+            $tours->load(['transports.transport', 'periods.offer.promotion', 'country', 'cities']);
 
             $formattedTours = $tours->map(fn ($tour) => $this->formatTourForTab($tour));
 
