@@ -248,6 +248,7 @@ class DomesticTourSetting extends Model
             $query->where(function ($q) use ($search) {
                 $q->where('title', 'like', "%{$search}%")
                   ->orWhere('tour_code', 'like', "%{$search}%")
+                  ->orWhere('wholesaler_tour_code', 'like', "%{$search}%")
                   ->orWhere('description', 'like', "%{$search}%");
             });
         }

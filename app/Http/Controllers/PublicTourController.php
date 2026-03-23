@@ -1004,6 +1004,14 @@ class PublicTourController extends Controller
                 $q->whereNotNull('offers.promo_name')
                   ->orWhereNotNull('offers.promotion_id');
             })
+            ->where(function ($q) use ($today) {
+                $q->whereNull('offers.promo_start_date')
+                  ->orWhere('offers.promo_start_date', '<=', $today);
+            })
+            ->where(function ($q) use ($today) {
+                $q->whereNull('offers.promo_end_date')
+                  ->orWhere('offers.promo_end_date', '>=', $today);
+            })
             ->selectRaw('COALESCE(offers.promo_name, promotions.name) as name')
             ->distinct()
             ->pluck('name')
@@ -1452,6 +1460,14 @@ class PublicTourController extends Controller
             ->where(function ($q) {
                 $q->whereNotNull('offers.promo_name')
                   ->orWhereNotNull('offers.promotion_id');
+            })
+            ->where(function ($q) use ($today) {
+                $q->whereNull('offers.promo_start_date')
+                  ->orWhere('offers.promo_start_date', '<=', $today);
+            })
+            ->where(function ($q) use ($today) {
+                $q->whereNull('offers.promo_end_date')
+                  ->orWhere('offers.promo_end_date', '>=', $today);
             })
             ->selectRaw('COALESCE(offers.promo_name, promotions.name) as name')
             ->distinct()

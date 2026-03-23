@@ -8,6 +8,7 @@ use App\Models\City;
 use App\Services\CloudflareImagesService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class GalleryImageController extends Controller
@@ -66,9 +67,18 @@ class GalleryImageController extends Controller
         $perPage = min($request->get('per_page', 20), 100);
         $images = $query->paginate($perPage);
 
+        // Append tours_count to each image
+        $items = $images->items();
+        $toursCounts = $this->getToursCountForImages($items);
+        $data = array_map(function ($image) use ($toursCounts) {
+            $arr = $image->toArray();
+            $arr['tours_count'] = $toursCounts[$image->id] ?? 0;
+            return $arr;
+        }, $items);
+
         return response()->json([
             'success' => true,
-            'data' => $images->items(),
+            'data' => $data,
             'meta' => [
                 'current_page' => $images->currentPage(),
                 'last_page' => $images->lastPage(),
@@ -76,6 +86,44 @@ class GalleryImageController extends Controller
                 'total' => $images->total(),
             ],
         ]);
+    }
+
+    /**
+     * Count tours that would display each gallery image
+     * (matched by country, city, or tags – same logic as getForTour).
+     */
+    private function getToursCountForImages(array $images): array
+    {
+        $counts = [];
+        foreach ($images as $image) {
+            $conditions = [];
+            $bindings  = [];
+
+            if ($image->city_id) {
+                $conditions[] = 'id IN (SELECT tour_id FROM tour_cities WHERE city_id = ?)';
+                $bindings[] = $image->city_id;
+            }
+            if ($image->country_id) {
+                $conditions[] = 'id IN (SELECT tour_id FROM tour_countries WHERE country_id = ?)';
+                $bindings[] = $image->country_id;
+            }
+            if (!empty($image->tags)) {
+                foreach ($image->tags as $tag) {
+                    $conditions[] = "JSON_SEARCH(hashtags, 'one', ?) IS NOT NULL";
+                    $bindings[] = $tag;
+                }
+            }
+
+            if (empty($conditions)) {
+                $counts[$image->id] = 0;
+            } else {
+                $where = implode(' OR ', $conditions);
+                $counts[$image->id] = (int) DB::table('tours')
+                    ->whereRaw("status = 'active' AND ({$where})", $bindings)
+                    ->count(DB::raw('DISTINCT id'));
+            }
+        }
+        return $counts;
     }
 
     /**

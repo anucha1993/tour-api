@@ -50,6 +50,7 @@ class TourController extends Controller
             $query->where(function ($q) use ($search) {
                 $q->where('title', 'like', "%{$search}%")
                   ->orWhere('tour_code', 'like', "%{$search}%")
+                  ->orWhere('wholesaler_tour_code', 'like', "%{$search}%")
                   ->orWhere('highlights', 'like', "%{$search}%")
                   ->orWhereJsonContains('hashtags', $search);
             });
@@ -136,6 +137,11 @@ class TourController extends Controller
         // Filter by Wholesaler (integration)
         if ($request->filled('wholesaler_id')) {
             $query->where('wholesaler_id', $request->wholesaler_id);
+        }
+
+        // Filter by Wholesaler Tour Code
+        if ($request->filled('wholesaler_tour_code')) {
+            $query->where('wholesaler_tour_code', 'like', '%' . $request->wholesaler_tour_code . '%');
         }
 
         // Sort

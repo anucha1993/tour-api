@@ -105,11 +105,12 @@ class SearchController extends Controller
             }
         }
 
-        // 4. Search Tours (title, tour_code, keywords, hashtags)
+        // 4. Search Tours (title, tour_code, wholesaler_tour_code, keywords, hashtags)
         $tours = Tour::where('status', 'active')
             ->where(function ($query) use ($q) {
                 $query->where('title', 'like', "%{$q}%")
                       ->orWhere('tour_code', 'like', "%{$q}%")
+                      ->orWhere('wholesaler_tour_code', 'like', "%{$q}%")
                       ->orWhereRaw("JSON_SEARCH(keywords, 'one', ?) IS NOT NULL", ["%{$q}%"])
                       ->orWhereRaw("JSON_SEARCH(hashtags, 'one', ?) IS NOT NULL", ["%{$q}%"]);
             })
@@ -167,6 +168,7 @@ class SearchController extends Controller
                 ->where(function ($query) use ($q) {
                     $query->where('title', 'like', "%{$q}%")
                           ->orWhere('tour_code', 'like', "%{$q}%")
+                          ->orWhere('wholesaler_tour_code', 'like', "%{$q}%")
                           ->orWhere('description', 'like', "%{$q}%")
                           ->orWhereRaw("JSON_SEARCH(keywords, 'one', ?) IS NOT NULL", ["%{$q}%"])
                           ->orWhereRaw("JSON_SEARCH(hashtags, 'one', ?) IS NOT NULL", ["%{$q}%"])
