@@ -561,8 +561,8 @@ class SyncPeriodsJob implements ShouldQueue
         // NOTE: If mapping is missing for 'booked' but the API has it, add the mapping in
         // wholesaler_field_mappings (section=departure, our_field=booked, their_field=periods[].booked)
         if (isset($data['booked']) && $data['booked'] !== null) {
-            // booked is mapped directly — clamp to [0, capacity] so available is never negative
-            $booked = min($capacity, max(0, (int) $data['booked']));
+            // booked is mapped directly — allow any value including > capacity (available can go negative)
+            $booked = max(0, (int) $data['booked']);
         } elseif (isset($data['available']) && $data['available'] !== null) {
             // API sends remaining seats — derive booked
             // Guard: available cannot exceed capacity (API data inconsistency)

@@ -89,15 +89,15 @@ class Period extends Model
         parent::boot();
 
         static::saving(function (Period $period) {
-            // Always recalculate available from capacity - booked
-            $period->available = max(0, (int) $period->capacity - (int) $period->booked);
+            // Recalculate available from capacity - booked (can be negative if overbooked)
+            $period->available = (int) $period->capacity - (int) $period->booked;
         });
     }
 
     // Accessor — safety net: always compute available even if DB value is wrong
     public function getAvailableAttribute($value): int
     {
-        $computed = max(0, (int) $this->capacity - (int) $this->booked);
+        $computed = (int) $this->capacity - (int) $this->booked;
         // If stored value doesn't match, return the computed value
         if ((int) $value !== $computed) {
             return $computed;
