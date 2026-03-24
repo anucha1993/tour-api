@@ -45,7 +45,6 @@ class Period extends Model
         'available',
         'status',
         'is_visible',
-        'sync_locked',
         'sale_status',
         'updated_at_source',
     ];
@@ -55,7 +54,6 @@ class Period extends Model
         'end_date' => 'date',
         'updated_at_source' => 'datetime',
         'is_visible' => 'boolean',
-        'sync_locked' => 'boolean',
     ];
 
     // Relationships
@@ -91,15 +89,24 @@ class Period extends Model
         parent::boot();
 
         static::saving(function (Period $period) {
-            // Recalculate available from capacity - booked (can be negative if overbooked)
-            $period->available = (int) $period->capacity - (int) $period->booked;
+            // Ensure booked is not negative
+            $period->booked = max(0, (int) $period->booked);
+            
+            // Recalculate available from capacity - booked
+            // Clamp to 0 minimum because DB column is unsigned integer
+            $period->available = max(0, (int) $period->capacity - (int) $period->booked);
+            
+            // Auto-mark as sold_out if no seats available and currently open
+            if ($period->available === 0 && $period->status === self::STATUS_OPEN) {
+                $period->status = self::STATUS_SOLD_OUT;
+            }
         });
     }
 
     // Accessor — safety net: always compute available even if DB value is wrong
     public function getAvailableAttribute($value): int
     {
-        $computed = (int) $this->capacity - (int) $this->booked;
+        $computed = max(0, (int) $this->capacity - max(0, (int) $this->booked));
         // If stored value doesn't match, return the computed value
         if ((int) $value !== $computed) {
             return $computed;

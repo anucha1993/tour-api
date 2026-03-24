@@ -1725,6 +1725,8 @@ class SyncToursJob implements ShouldQueue
         } else {
             // Single-Phase (default): process periods from same API response
             $result['periods_received'] = count($departures);
+            $syncedExternalIds = [];
+            
             foreach ($departures as $dep) {
                 $periodResult = $this->processPeriod($tour, $dep, $config);
                 if ($periodResult === 'created') {
@@ -1732,6 +1734,18 @@ class SyncToursJob implements ShouldQueue
                 } elseif ($periodResult === 'updated') {
                     $result['periods_updated']++;
                 }
+                
+                // Track synced external_ids for orphan cleanup
+                $extId = $dep['external_id'] ?? null;
+                if ($extId) {
+                    $syncedExternalIds[] = (string) $extId;
+                }
+            }
+            
+            // Cleanup orphan periods: close periods that exist in DB but not in API anymore
+            // Only if we received periods from API (don't cleanup on empty response)
+            if (!empty($syncedExternalIds) && count($departures) > 0) {
+                $this->cleanupOrphanPeriods($tour, $syncedExternalIds, $config);
             }
         }
 
@@ -1760,6 +1774,45 @@ class SyncToursJob implements ShouldQueue
         $tour->recalculateAggregates();
 
         return $result;
+    }
+
+    /**
+     * Cleanup orphan periods: close/remove periods that exist in DB but are no longer in API
+     * 
+     * This handles the case where wholesaler removes periods from their system
+     * but our DB still has them from a previous sync.
+     * 
+     * NOTE: This is different from "past_period_handling" which controls what happens
+     * to periods whose departure date has passed. Orphan cleanup always runs because
+     * these periods were actively removed by the wholesaler.
+     */
+    protected function cleanupOrphanPeriods(Tour $tour, array $syncedExternalIds, ?WholesalerApiConfig $config = null): void
+    {
+        // Find periods in DB that have external_id but were NOT in this sync batch
+        $orphanPeriods = Period::where('tour_id', $tour->id)
+            ->whereNotNull('external_id')
+            ->where('external_id', '!=', '')
+            ->whereNotIn('external_id', $syncedExternalIds)
+            ->where('status', '!=', Period::STATUS_CLOSED)
+            ->where('status', '!=', Period::STATUS_CANCELLED)
+            ->get();
+        
+        if ($orphanPeriods->isEmpty()) {
+            return;
+        }
+        
+        foreach ($orphanPeriods as $orphan) {
+            $orphan->update([
+                'status' => Period::STATUS_CLOSED,
+            ]);
+        }
+        
+        Log::info('SyncToursJob: Closed orphan periods not in API', [
+            'tour_id' => $tour->id,
+            'tour_code' => $tour->tour_code,
+            'closed_count' => $orphanPeriods->count(),
+            'closed_external_ids' => $orphanPeriods->pluck('external_id')->toArray(),
+        ]);
     }
 
     /**
@@ -1811,16 +1864,6 @@ class SyncToursJob implements ShouldQueue
         if ($isNew) {
             $period = new Period();
             $period->tour_id = $tour->id;
-        } else {
-            // Skip sync_locked periods (manual lock prevents overwrite)
-            if ($period->sync_locked) {
-                Log::debug('SyncToursJob: Skipped sync_locked period', [
-                    'tour_id' => $tour->id,
-                    'period_id' => $period->id,
-                    'start_date' => $period->start_date,
-                ]);
-                return 'skipped';
-            }
         }
 
         // Fill period fields from transformed data (no hardcode)
@@ -1849,12 +1892,23 @@ class SyncToursJob implements ShouldQueue
         //   available = capacity - booked = capacity - (capacity - available_api) = available_api
         // Without this, booked stays 0 and boot() would set available = capacity (wrong).
         if (!isset($periodFields['booked']) && isset($periodFields['capacity']) && isset($periodFields['available'])) {
-            $periodFields['booked'] = (int) $periodFields['capacity'] - (int) $periodFields['available'];
+            $periodFields['booked'] = max(0, (int) $periodFields['capacity'] - (int) $periodFields['available']);
         }
         
-        // Capacity cannot be negative; available can be negative (overbooking)
+        // Capacity cannot be negative
         if (isset($periodFields['capacity']) && $periodFields['capacity'] < 0) {
             $periodFields['capacity'] = 0;
+        }
+        
+        // Booked cannot be negative
+        if (isset($periodFields['booked']) && $periodFields['booked'] < 0) {
+            $periodFields['booked'] = 0;
+        }
+        
+        // Available cannot be negative (DB column is unsigned)
+        // Let Period::boot() recalculate from capacity - booked, but clamp the input too
+        if (isset($periodFields['available']) && $periodFields['available'] < 0) {
+            $periodFields['available'] = 0;
         }
         
         $period->fill($periodFields);
