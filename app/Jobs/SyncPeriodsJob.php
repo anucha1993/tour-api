@@ -549,16 +549,25 @@ class SyncPeriodsJob implements ShouldQueue
 
         $capacity = (int) ($data['capacity'] ?? 30);
 
-        // Resolve booked count:
-        // Case 1: API sends 'booked' directly → use it
-        // Case 2: API sends 'available' (remain seats) but not 'booked' → derive booked = capacity - available
-        // Period::boot() always recalculates available = capacity - booked on save,
-        // so we MUST set booked correctly — available from API is never used directly.
+        // Resolve booked count.
+        // Period::boot() always recalculates available = max(0, capacity - booked) on save,
+        // so we MUST set booked correctly — 'available' from API is never persisted directly.
+        //
+        // Priority:
+        //   1. API sends 'booked' (mapped) → use it directly (most accurate)
+        //   2. API sends 'available' (remain seats, mapped) but no 'booked' → derive booked = capacity - available
+        //   3. Neither → booked = 0
+        //
+        // NOTE: If mapping is missing for 'booked' but the API has it, add the mapping in
+        // wholesaler_field_mappings (section=departure, our_field=booked, their_field=periods[].booked)
         if (isset($data['booked']) && $data['booked'] !== null) {
-            $booked = (int) $data['booked'];
+            // booked is mapped directly — clamp to [0, capacity] so available is never negative
+            $booked = min($capacity, max(0, (int) $data['booked']));
         } elseif (isset($data['available']) && $data['available'] !== null) {
-            // API sent remaining seats as 'available' → derive booked
-            $booked = max(0, $capacity - (int) $data['available']);
+            // API sends remaining seats — derive booked
+            // Guard: available cannot exceed capacity (API data inconsistency)
+            $apiAvailable = max(0, min($capacity, (int) $data['available']));
+            $booked = $capacity - $apiAvailable;
         } else {
             $booked = 0;
         }
@@ -566,11 +575,12 @@ class SyncPeriodsJob implements ShouldQueue
         Log::debug('SyncPeriodsJob: Period seat calculation', [
             'tour_id' => $tour->id,
             'start_date' => $startDate,
-            'capacity' => $capacity,
-            'booked_from_api' => $data['booked'] ?? null,
-            'available_from_api' => $data['available'] ?? null,
-            'booked_resolved' => $booked,
-            'available_will_be' => max(0, $capacity - $booked),
+            'raw_capacity' => $data['capacity'] ?? null,
+            'raw_booked' => $data['booked'] ?? null,
+            'raw_available' => $data['available'] ?? null,
+            'resolved_capacity' => $capacity,
+            'resolved_booked' => $booked,
+            'will_save_available' => max(0, $capacity - $booked),
         ]);
 
         $periodData = [
