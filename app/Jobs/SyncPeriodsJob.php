@@ -514,24 +514,9 @@ class SyncPeriodsJob implements ShouldQueue
             return;
         }
         
-        // Check if this is a past period
+        // All periods are always synced regardless of date (past or future).
+        // past_period_handling is ignored — admin controls overrides via sync_locked flag per period.
         $isPastPeriod = $startDate < $thresholdDate;
-        
-        // Handle past periods based on config
-        if ($isPastPeriod) {
-            if ($pastPeriodHandling === 'skip') {
-                // Skip: ข้าม period ที่เดินทางไปแล้ว ไม่บันทึกข้อมูล
-                $stats['skipped']++;
-                Log::debug('SyncPeriodsJob: Skipped past period', [
-                    'tour_id' => $tour->id,
-                    'start_date' => $startDate,
-                    'threshold_date' => $thresholdDate,
-                    'handling' => 'skip',
-                ]);
-                return;
-            }
-            // For 'close' or 'keep': continue processing, will set status later
-        }
 
         // Generate period code if not provided
         $periodCode = $data['period_code'] ?? $data['external_id'] ?? null;
@@ -546,6 +531,17 @@ class SyncPeriodsJob implements ShouldQueue
                   ->orWhere('start_date', $startDate);
             })
             ->first();
+
+        // Skip update if period is manually locked by admin
+        if ($period && $period->sync_locked) {
+            Log::info('SyncPeriodsJob: Skipped sync_locked period', [
+                'tour_id' => $tour->id,
+                'period_id' => $period->id,
+                'start_date' => $startDate,
+            ]);
+            $stats['skipped']++;
+            return;
+        }
 
         $capacity = (int) ($data['capacity'] ?? 30);
 
@@ -564,10 +560,8 @@ class SyncPeriodsJob implements ShouldQueue
             // booked is mapped directly — allow any value including > capacity (available can go negative)
             $booked = max(0, (int) $data['booked']);
         } elseif (isset($data['available']) && $data['available'] !== null) {
-            // API sends remaining seats — derive booked
-            // Guard: available cannot exceed capacity (API data inconsistency)
-            $apiAvailable = max(0, min($capacity, (int) $data['available']));
-            $booked = $capacity - $apiAvailable;
+            // API sends remaining seats — derive booked (no clamping, allow negative available)
+            $booked = $capacity - (int) $data['available'];
         } else {
             $booked = 0;
         }
@@ -580,7 +574,7 @@ class SyncPeriodsJob implements ShouldQueue
             'raw_available' => $data['available'] ?? null,
             'resolved_capacity' => $capacity,
             'resolved_booked' => $booked,
-            'will_save_available' => max(0, $capacity - $booked),
+            'will_save_available' => $capacity - $booked,
         ]);
 
         $periodData = [
@@ -597,17 +591,6 @@ class SyncPeriodsJob implements ShouldQueue
             'is_visible' => $data['is_visible'] ?? true,
             'sale_status' => $data['sale_status'] ?? 'available',
         ];
-
-        // Override status to 'closed' for past periods if handling = 'close'
-        if ($isPastPeriod && $pastPeriodHandling === 'close') {
-            $periodData['status'] = 'closed';
-            $periodData['sale_status'] = 'closed';
-            Log::debug('SyncPeriodsJob: Set past period to closed', [
-                'tour_id' => $tour->id,
-                'start_date' => $startDate,
-                'handling' => 'close',
-            ]);
-        }
 
         if ($period) {
             $period->update($periodData);

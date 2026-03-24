@@ -45,6 +45,7 @@ class Period extends Model
         'available',
         'status',
         'is_visible',
+        'sync_locked',
         'sale_status',
         'updated_at_source',
     ];
@@ -54,6 +55,7 @@ class Period extends Model
         'end_date' => 'date',
         'updated_at_source' => 'datetime',
         'is_visible' => 'boolean',
+        'sync_locked' => 'boolean',
     ];
 
     // Relationships
