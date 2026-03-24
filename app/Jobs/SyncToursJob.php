@@ -1811,6 +1811,16 @@ class SyncToursJob implements ShouldQueue
         if ($isNew) {
             $period = new Period();
             $period->tour_id = $tour->id;
+        } else {
+            // Skip sync_locked periods (manual lock prevents overwrite)
+            if ($period->sync_locked) {
+                Log::debug('SyncToursJob: Skipped sync_locked period', [
+                    'tour_id' => $tour->id,
+                    'period_id' => $period->id,
+                    'start_date' => $period->start_date,
+                ]);
+                return 'skipped';
+            }
         }
 
         // Fill period fields from transformed data (no hardcode)
@@ -1834,10 +1844,15 @@ class SyncToursJob implements ShouldQueue
             $periodFields['status'] = $this->mapPeriodStatus($depData['status']);
         }
         
-        // Sanitize: available/capacity cannot be negative (UNSIGNED columns)
-        if (isset($periodFields['available']) && $periodFields['available'] < 0) {
-            $periodFields['available'] = 0;
+        // Derive booked from capacity - available_from_api when booked is not mapped.
+        // This ensures Period::boot() recalculates available correctly:
+        //   available = capacity - booked = capacity - (capacity - available_api) = available_api
+        // Without this, booked stays 0 and boot() would set available = capacity (wrong).
+        if (!isset($periodFields['booked']) && isset($periodFields['capacity']) && isset($periodFields['available'])) {
+            $periodFields['booked'] = (int) $periodFields['capacity'] - (int) $periodFields['available'];
         }
+        
+        // Capacity cannot be negative; available can be negative (overbooking)
         if (isset($periodFields['capacity']) && $periodFields['capacity'] < 0) {
             $periodFields['capacity'] = 0;
         }
