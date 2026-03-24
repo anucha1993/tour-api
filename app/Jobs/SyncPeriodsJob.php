@@ -547,15 +547,42 @@ class SyncPeriodsJob implements ShouldQueue
             })
             ->first();
 
+        $capacity = (int) ($data['capacity'] ?? 30);
+
+        // Resolve booked count:
+        // Case 1: API sends 'booked' directly → use it
+        // Case 2: API sends 'available' (remain seats) but not 'booked' → derive booked = capacity - available
+        // Period::boot() always recalculates available = capacity - booked on save,
+        // so we MUST set booked correctly — available from API is never used directly.
+        if (isset($data['booked']) && $data['booked'] !== null) {
+            $booked = (int) $data['booked'];
+        } elseif (isset($data['available']) && $data['available'] !== null) {
+            // API sent remaining seats as 'available' → derive booked
+            $booked = max(0, $capacity - (int) $data['available']);
+        } else {
+            $booked = 0;
+        }
+
+        Log::debug('SyncPeriodsJob: Period seat calculation', [
+            'tour_id' => $tour->id,
+            'start_date' => $startDate,
+            'capacity' => $capacity,
+            'booked_from_api' => $data['booked'] ?? null,
+            'available_from_api' => $data['available'] ?? null,
+            'booked_resolved' => $booked,
+            'available_will_be' => max(0, $capacity - $booked),
+        ]);
+
         $periodData = [
             'tour_id' => $tour->id,
             'external_id' => $data['external_id'] ?? null,
             'period_code' => $periodCode,
             'start_date' => $startDate,
             'end_date' => $data['end_date'] ?? $startDate,
-            'capacity' => $data['capacity'] ?? 30,
-            'booked' => $data['booked'] ?? 0,
-            'available' => $data['available'] ?? ($data['capacity'] ?? 30) - ($data['booked'] ?? 0),
+            'capacity' => $capacity,
+            'booked' => $booked,
+            // Note: 'available' is intentionally omitted here.
+            // Period::boot() always recalculates available = capacity - booked on save.
             'status' => $this->mapPeriodStatus($data['status'] ?? null),
             'is_visible' => $data['is_visible'] ?? true,
             'sale_status' => $data['sale_status'] ?? 'available',
