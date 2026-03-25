@@ -1037,11 +1037,11 @@ class TourController extends Controller
     public function uploadPdf(Request $request, Tour $tour): JsonResponse
     {
         $request->validate([
-            'pdf' => ['required', 'file', 'mimes:pdf', 'max:10240'], // 10MB max
+            'pdf' => ['required', 'file', 'mimes:pdf', 'max:51200'], // 50MB max
         ], [
             'pdf.required' => 'กรุณาเลือกไฟล์ PDF',
             'pdf.mimes' => 'ไฟล์ต้องเป็น PDF เท่านั้น',
-            'pdf.max' => 'ขนาดไฟล์ต้องไม่เกิน 10MB',
+            'pdf.max' => 'ขนาดไฟล์ต้องไม่เกิน 50MB',
         ]);
 
         $file = $request->file('pdf');
@@ -1296,11 +1296,11 @@ class TourController extends Controller
     public function uploadCustomPdf(Request $request, Tour $tour): JsonResponse
     {
         $request->validate([
-            'pdf' => ['required', 'file', 'mimes:pdf', 'max:20480'], // 20MB max
+            'pdf' => ['required', 'file', 'mimes:pdf', 'max:51200'], // 50MB max
         ], [
             'pdf.required' => 'กรุณาเลือกไฟล์ PDF',
             'pdf.mimes' => 'ไฟล์ต้องเป็น PDF เท่านั้น',
-            'pdf.max' => 'ขนาดไฟล์ต้องไม่เกิน 20MB',
+            'pdf.max' => 'ขนาดไฟล์ต้องไม่เกิน 50MB',
         ]);
 
         $file = $request->file('pdf');
