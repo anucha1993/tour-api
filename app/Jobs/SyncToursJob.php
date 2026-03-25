@@ -859,7 +859,7 @@ class SyncToursJob implements ShouldQueue
             $departureItems = $this->flattenNestedPath($rawTour, $departuresPath);
         } else {
             // Default: use standard periods/schedules/departures array
-            $departureItems = $rawTour['Periods'] ?? $rawTour['periods'] ?? $rawTour['Schedules'] ?? $rawTour['schedules'] ?? $rawTour['Departures'] ?? $rawTour['departures'] ?? [];
+            $departureItems = $rawTour['Periods'] ?? $rawTour['periods'] ?? $rawTour['period'] ?? $rawTour['Period'] ?? $rawTour['Schedules'] ?? $rawTour['schedules'] ?? $rawTour['Departures'] ?? $rawTour['departures'] ?? [];
         }
         
         if (isset($mappings['departure']) && !empty($departureItems)) {
@@ -1061,7 +1061,7 @@ class SyncToursJob implements ShouldQueue
         }
         
         // Default: remove standard prefixes (backwards compatibility)
-        $cleanPath = preg_replace('/^[Pp]eriods\[\]\./', '', $fullPath);
+        $cleanPath = preg_replace('/^[Pp]eriods?\[\]\./', '', $fullPath);
         $cleanPath = preg_replace('/^[Ss]chedules\[\]\./', '', $cleanPath);
         $cleanPath = preg_replace('/^[Dd]epartures\[\]\./', '', $cleanPath);
         $cleanPath = preg_replace('/^[Ff]lights\[\]\./', '', $cleanPath);
