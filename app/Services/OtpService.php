@@ -18,6 +18,26 @@ class OtpService
     private int $defaultTtl = 300; // 5 minutes
     private int $defaultDigits = 6;
 
+    /**
+     * Normalize ThaiBulkSMS endpoint to API base URL (without /sms suffix)
+     */
+    private function normalizeBaseEndpoint(?string $endpoint): string
+    {
+        $value = trim((string) $endpoint);
+
+        if ($value === '') {
+            return 'https://api-v2.thaibulksms.com';
+        }
+
+        $value = rtrim($value, '/');
+
+        if (str_ends_with(strtolower($value), '/sms')) {
+            $value = substr($value, 0, -4);
+        }
+
+        return $value !== '' ? $value : 'https://api-v2.thaibulksms.com';
+    }
+
     public function __construct()
     {
         $this->loadConfig();
@@ -32,8 +52,8 @@ class OtpService
 
         if ($otpConfig && !empty($otpConfig['api_key'])) {
             // Use database config
-            $this->baseUrl = $otpConfig['endpoint'] ?? 'https://api-v2.thaibulksms.com';
-            $this->sender = $otpConfig['sender'] ?? 'SMS.';
+            $this->baseUrl = $this->normalizeBaseEndpoint($otpConfig['endpoint'] ?? null);
+            $this->sender = trim((string) ($otpConfig['sender'] ?? 'SMS.'));
             $this->enabled = $otpConfig['enabled'] ?? true;
             $this->debugMode = $otpConfig['debug_mode'] ?? false;
 
@@ -51,12 +71,16 @@ class OtpService
             }
         } else {
             // Fallback to .env config
-            $this->baseUrl = 'https://api-v2.thaibulksms.com';
+            $this->baseUrl = $this->normalizeBaseEndpoint(env('THAIBULKSMS_ENDPOINT'));
             $this->apiKey = config('services.thaibulksms.api_key') ?? '';
             $this->apiSecret = config('services.thaibulksms.api_secret') ?? '';
-            $this->sender = 'SMS.';
+            $this->sender = trim((string) env('THAIBULKSMS_SENDER', 'SMS.'));
             $this->enabled = true;
             $this->debugMode = false;
+        }
+
+        if ($this->sender === '') {
+            $this->sender = 'SMS.';
         }
     }
 
@@ -142,11 +166,28 @@ class OtpService
                     'sender' => $this->sender,
                 ]);
 
+            /** @var \Illuminate\Http\Client\Response $response */
+
+            $data = $response->json() ?? [];
+
             if (!$response->successful()) {
+                $error = $data['error'] ?? [];
+                $errorCode = (int) ($error['code'] ?? 0);
+
                 Log::error('ThaiBulkSMS SMS request failed', [
                     'status' => $response->status(),
                     'body' => $response->body(),
+                    'endpoint' => "{$this->baseUrl}/sms",
+                    'sender' => $this->sender,
                 ]);
+
+                if ($errorCode === 111) {
+                    return [
+                        'success' => false,
+                        'error' => 'sender_not_found',
+                        'message' => 'ชื่อผู้ส่ง (Sender) ไม่ถูกต้องหรือยังไม่อนุมัติใน ThaiBulkSMS',
+                    ];
+                }
 
                 return [
                     'success' => false,
@@ -155,7 +196,22 @@ class OtpService
                 ];
             }
 
-            $data = $response->json();
+            if (!empty($data['error'])) {
+                $errorCode = (int) ($data['error']['code'] ?? 0);
+                if ($errorCode === 111) {
+                    return [
+                        'success' => false,
+                        'error' => 'sender_not_found',
+                        'message' => 'ชื่อผู้ส่ง (Sender) ไม่ถูกต้องหรือยังไม่อนุมัติใน ThaiBulkSMS',
+                    ];
+                }
+
+                return [
+                    'success' => false,
+                    'error' => 'api_error',
+                    'message' => 'ไม่สามารถส่ง OTP ได้ กรุณาลองใหม่',
+                ];
+            }
             
             // Check for bad phone numbers
             if (!empty($data['bad_phone_number_list'])) {

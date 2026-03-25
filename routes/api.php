@@ -778,6 +778,9 @@ Route::prefix('web')->group(function () {
 
     // Public auth routes
     Route::prefix('auth')->group(function () {
+        // OTP status (public)
+        Route::get('/otp-status', [WebAuthController::class, 'getOtpStatus']);
+
         // Registration
         Route::post('/register/request-otp', [WebAuthController::class, 'requestRegisterOtp']);
         Route::post('/register', [WebAuthController::class, 'register']);

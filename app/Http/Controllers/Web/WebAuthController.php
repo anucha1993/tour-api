@@ -3,13 +3,12 @@
 namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
+use App\Models\Setting;
 use App\Models\WebMember;
-use App\Models\OtpRequest;
 use App\Models\WebPasswordResetToken;
 use App\Services\OtpService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rules\Password;
 
@@ -20,6 +19,20 @@ class WebAuthController extends Controller
     public function __construct(OtpService $otpService)
     {
         $this->otpService = $otpService;
+    }
+
+    /**
+     * Return whether OTP sending is currently enabled (public endpoint)
+     */
+    public function getOtpStatus()
+    {
+        $otpConfig = Setting::get('otp_config', []);
+        $enabled = $otpConfig['enabled'] ?? true;
+
+        return response()->json([
+            'success' => true,
+            'data' => ['enabled' => (bool) $enabled],
+        ]);
     }
 
     /**
@@ -65,6 +78,15 @@ class WebAuthController extends Controller
             $request->userAgent()
         );
 
+        // If OTP is disabled, allow registration to proceed without OTP
+        if (!$result['success'] && ($result['error'] ?? '') === 'disabled') {
+            return response()->json([
+                'success' => true,
+                'otp_disabled' => true,
+                'message' => 'OTP ถูกปิดใช้งาน ดำเนินการสมัครสมาชิกได้เลย',
+            ]);
+        }
+
         return response()->json($result, $result['success'] ? 200 : 400);
     }
 
@@ -73,25 +95,32 @@ class WebAuthController extends Controller
      */
     public function register(Request $request)
     {
-        $validator = Validator::make($request->all(), [
-            'otp_request_id' => 'required|integer|exists:otp_requests,id',
-            'otp' => 'required|string|size:6',
+        $otpConfig = Setting::get('otp_config', []);
+        $otpEnabled = $otpConfig['enabled'] ?? true;
+
+        $rules = [
             'first_name' => 'required|string|max:100',
             'last_name' => 'required|string|max:100',
             'email' => 'required|email|unique:web_members,email',
             'password' => [
                 'required',
                 'confirmed',
-                Password::min(8)
-                    ->letters()
-                    ->mixedCase()
-                    ->numbers()
-                    ->symbols(),
+                Password::min(8)->letters()->mixedCase()->numbers()->symbols(),
             ],
             'consent_terms' => 'required|accepted',
             'consent_privacy' => 'required|accepted',
             'consent_marketing' => 'boolean',
-        ], [
+        ];
+
+        if ($otpEnabled) {
+            $rules['otp_request_id'] = 'required|integer|exists:otp_requests,id';
+            $rules['otp'] = 'required|string|size:6';
+        } else {
+            // When OTP is disabled we still need the phone to create the member
+            $rules['phone'] = 'required|string|min:10|max:15';
+        }
+
+        $validator = Validator::make($request->all(), $rules, [
             'password.min' => 'รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร',
             'password.letters' => 'รหัสผ่านต้องมีตัวอักษร',
             'password.mixed' => 'รหัสผ่านต้องมีตัวพิมพ์เล็กและตัวพิมพ์ใหญ่',
@@ -108,11 +137,37 @@ class WebAuthController extends Controller
             ], 422);
         }
 
-        // Verify OTP
-        $otpResult = $this->otpService->verifyOtp($request->otp_request_id, $request->otp);
+        // Resolve phone: via OTP verification or direct input when OTP disabled
+        if ($otpEnabled) {
+            $otpResult = $this->otpService->verifyOtp($request->otp_request_id, $request->otp);
 
-        if (!$otpResult['success']) {
-            return response()->json($otpResult, 400);
+            if (!$otpResult['success']) {
+                return response()->json($otpResult, 400);
+            }
+
+            $phone = $otpResult['phone_msisdn'];
+            $phoneVerified = true;
+        } else {
+            try {
+                $phone = WebMember::normalizePhone($request->phone);
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'invalid_phone',
+                    'message' => 'หมายเลขโทรศัพท์ไม่ถูกต้อง',
+                ], 400);
+            }
+
+            $phoneVerified = false;
+        }
+
+        // Check phone uniqueness
+        if (WebMember::where('phone', $phone)->exists()) {
+            return response()->json([
+                'success' => false,
+                'error' => 'phone_exists',
+                'message' => 'หมายเลขโทรศัพท์นี้ถูกใช้งานแล้ว',
+            ], 400);
         }
 
         // Create member
@@ -120,10 +175,10 @@ class WebAuthController extends Controller
             'first_name' => $request->first_name,
             'last_name' => $request->last_name,
             'email' => $request->email,
-            'phone' => $otpResult['phone_msisdn'],
+            'phone' => $phone,
             'password' => Hash::make($request->password),
-            'phone_verified' => true,
-            'phone_verified_at' => now(),
+            'phone_verified' => $phoneVerified,
+            'phone_verified_at' => $phoneVerified ? now() : null,
             'consent_terms' => true,
             'consent_privacy' => true,
             'consent_marketing' => $request->consent_marketing ?? false,
@@ -245,6 +300,17 @@ class WebAuthController extends Controller
      */
     public function requestLoginOtp(Request $request)
     {
+        $otpConfig = Setting::get('otp_config', []);
+        $otpEnabled = $otpConfig['enabled'] ?? true;
+
+        if (!$otpEnabled) {
+            return response()->json([
+                'success' => false,
+                'error' => 'otp_disabled',
+                'message' => 'ระบบ OTP ถูกปิดใช้งาน',
+            ], 400);
+        }
+
         $validator = Validator::make($request->all(), [
             'phone' => 'required|string|min:10|max:15',
         ]);
@@ -301,6 +367,17 @@ class WebAuthController extends Controller
      */
     public function verifyLoginOtp(Request $request)
     {
+        $otpConfig = Setting::get('otp_config', []);
+        $otpEnabled = $otpConfig['enabled'] ?? true;
+
+        if (!$otpEnabled) {
+            return response()->json([
+                'success' => false,
+                'error' => 'otp_disabled',
+                'message' => 'ระบบ OTP ถูกปิดใช้งาน',
+            ], 400);
+        }
+
         $validator = Validator::make($request->all(), [
             'otp_request_id' => 'required|integer|exists:otp_requests,id',
             'otp' => 'required|string|size:6',

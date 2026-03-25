@@ -601,10 +601,28 @@ class SettingsController extends Controller
             'endpoint' => 'required|string|url|max:255',
             'api_key' => 'nullable|string|max:255',
             'api_secret' => 'nullable|string|max:255',
-            'sender' => 'required|string|max:50',
+            'sender' => [
+                'required',
+                'string',
+                'min:4',
+                'max:10',
+                'regex:/^[A-Za-z0-9._-]+$/',
+                function ($attribute, $value, $fail) {
+                    // Reject values that look like Thai phone numbers.
+                    if (preg_match('/^(0\d{9}|66\d{9})$/', (string) $value)) {
+                        $fail('Sender ต้องไม่เป็นหมายเลขโทรศัพท์');
+                    }
+                },
+            ],
             'enabled' => 'boolean',
             'debug_mode' => 'boolean',
         ]);
+
+        $validated['endpoint'] = rtrim($validated['endpoint'], '/');
+        if (str_ends_with(strtolower($validated['endpoint']), '/sms')) {
+            $validated['endpoint'] = substr($validated['endpoint'], 0, -4);
+        }
+        $validated['sender'] = trim($validated['sender']);
 
         // Get current config
         $currentConfig = Setting::get('otp_config', []);
@@ -676,23 +694,51 @@ class SettingsController extends Controller
                 $phone = '66' . substr($phone, 1);
             }
 
+            $endpoint = rtrim((string) ($otpConfig['endpoint'] ?? 'https://api-v2.thaibulksms.com'), '/');
+            if (str_ends_with(strtolower($endpoint), '/sms')) {
+                $endpoint = substr($endpoint, 0, -4);
+            }
+
+            $sender = trim((string) ($otpConfig['sender'] ?? 'SMS.'));
+            if ($sender === '') {
+                $sender = 'SMS.';
+            }
+
             // Send test SMS
             $response = \Illuminate\Support\Facades\Http::withBasicAuth($apiKey, $apiSecret)
                 ->timeout(30)
-                ->post($otpConfig['endpoint'] . '/sms', [
+                ->post($endpoint . '/sms', [
                     'msisdn' => $phone,
                     'message' => 'ทดสอบการส่ง SMS จากระบบ NextTrip',
-                    'sender' => $otpConfig['sender'] ?? 'SMS.',
+                    'sender' => $sender,
                 ]);
+
+            /** @var \Illuminate\Http\Client\Response $response */
 
             if ($response->successful()) {
                 $data = $response->json();
+
+                if (!empty($data['error']['code']) && (int) $data['error']['code'] === 111) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Sender ไม่ถูกต้องหรือยังไม่ได้อนุมัติใน ThaiBulkSMS กรุณาใช้ Sender ที่ Approved ในบัญชีของคุณ',
+                    ], 400);
+                }
+
                 return response()->json([
                     'success' => true,
                     'message' => 'ส่ง SMS ทดสอบสำเร็จ',
                     'remaining_credit' => $data['remaining_credit'] ?? null,
                 ]);
             } else {
+                $data = $response->json() ?? [];
+                if (!empty($data['error']['code']) && (int) $data['error']['code'] === 111) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Sender ไม่ถูกต้องหรือยังไม่ได้อนุมัติใน ThaiBulkSMS กรุณาใช้ Sender ที่ Approved ในบัญชีของคุณ',
+                    ], 400);
+                }
+
                 return response()->json([
                     'success' => false,
                     'message' => 'ส่ง SMS ไม่สำเร็จ: ' . $response->body(),
