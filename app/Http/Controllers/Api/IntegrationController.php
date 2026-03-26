@@ -160,13 +160,61 @@ class IntegrationController extends Controller
     }
 
     /**
-     * Calculate the next sync time from a cron expression.
-     * Supports patterns:
-     *   "M *\/N * * *"  = every N hours at minute M (e.g. "10 *\/12 * * *")
-     *   "*\/N * * * *"  = every N minutes
-     *   "M H * * *"     = daily at H:M (e.g. "30 3 * * *")
+     * Calculate the next sync time from a schedule string.
+     * Supports two formats:
+     *   1. Time-list: "09:30,12:00,18:00" (preferred)
+     *   2. Legacy cron: "0 star/2 * * *"
      */
-    private function calculateNextSyncFromCron(string $cron): ?\Carbon\Carbon
+    private function calculateNextSyncFromCron(string $schedule): ?\Carbon\Carbon
+    {
+        $schedule = trim($schedule);
+
+        // Time-list format: "09:30,12:00,18:00"
+        if (preg_match('/^\d{1,2}:\d{2}(\s*,\s*\d{1,2}:\d{2})*$/', $schedule)) {
+            return $this->calculateNextSyncFromTimeList($schedule);
+        }
+
+        // Legacy cron format
+        return $this->calculateNextSyncFromCronLegacy($schedule);
+    }
+
+    /**
+     * Calculate next sync from time-list format: "09:30,12:00,18:00"
+     */
+    private function calculateNextSyncFromTimeList(string $timeList): ?\Carbon\Carbon
+    {
+        $now = now();
+        $times = array_map('trim', explode(',', $timeList));
+        $candidates = [];
+
+        foreach ($times as $time) {
+            $parts = explode(':', $time);
+            if (count($parts) !== 2) continue;
+            $hour = (int) $parts[0];
+            $minute = (int) $parts[1];
+            if ($hour < 0 || $hour > 23 || $minute < 0 || $minute > 59) continue;
+
+            $candidate = $now->copy()->setTime($hour, $minute, 0);
+            if ($candidate->lte($now)) {
+                // This time already passed today — try tomorrow
+                $candidate->addDay();
+            }
+            $candidates[] = $candidate;
+        }
+
+        if (empty($candidates)) {
+            return null;
+        }
+
+        // Return the soonest upcoming time
+        usort($candidates, fn($a, $b) => $a->timestamp <=> $b->timestamp);
+        return $candidates[0];
+    }
+
+    /**
+     * Legacy: calculate next sync from cron expression.
+     */
+    private function calculateNextSyncFromCronLegacy(string $cron): ?\Carbon\Carbon
     {
         $parts = preg_split('/\s+/', trim($cron));
         if (count($parts) < 5) {
@@ -181,26 +229,17 @@ class IntegrationController extends Controller
             $minute = (int) $mm[1];
             $interval = (int) $hm[1];
 
-            // Find next matching hour from now
             $candidate = $now->copy()->setMinute($minute)->setSecond(0);
-
-            // Find the next hour that matches */N pattern
             $currentHour = $now->hour;
-            $nextHour = $currentHour;
-
-            // */N means hours 0, N, 2N, 3N, ...
             $remainder = $currentHour % $interval;
-            $nextHour = $currentHour - $remainder; // current slot start
+            $nextHour = $currentHour - $remainder;
 
             $candidate->setHour($nextHour);
 
-            // If candidate is in the past, move to next slot
             if ($candidate->lte($now)) {
                 $nextHour += $interval;
                 if ($nextHour >= 24) {
-                    // Wrap to next day
                     $candidate = $now->copy()->addDay()->startOfDay()->setHour($nextHour % 24)->setMinute($minute)->setSecond(0);
-                    // If wrapped hour is 0, it's the start of next day
                     if ($nextHour >= 24) {
                         $candidate->setHour($nextHour - 24);
                     }
@@ -246,72 +285,299 @@ class IntegrationController extends Controller
 
     /**
      * Validate that a sync schedule does not conflict with other integrations.
-     * Two schedules conflict if their "minute offset" is within 10 minutes of each other
-     * AND they share the same hour interval pattern.
+     * Supports both time-list format ("09:30,12:00") and legacy cron.
+     *
+     * For time-list: checks if any time slot is within 10 minutes of another integration's slot.
+     * For legacy cron: checks hour pattern overlap + minute gap.
      *
      * Returns null if OK, or an error array if conflict found.
      */
     private function validateScheduleConflict(string $newSchedule, ?int $excludeConfigId = null): ?array
     {
-        $newParts = preg_split('/\s+/', trim($newSchedule));
-        if (count($newParts) < 5) {
-            return null; // Can't validate non-standard cron
+        $newSchedule = trim($newSchedule);
+        $isTimeList = preg_match('/^\d{1,2}:\d{2}(\s*,\s*\d{1,2}:\d{2})*$/', $newSchedule);
+
+        $others = WholesalerApiConfig::where('sync_enabled', true)
+            ->where('is_active', true)
+            ->when($excludeConfigId, fn($q) => $q->where('id', '!=', $excludeConfigId))
+            ->with('wholesaler:id,name')
+            ->get(['id', 'wholesaler_id', 'sync_schedule']);
+
+        $minGapMinutes = 10;
+
+        if ($isTimeList) {
+            return $this->validateTimeListConflict($newSchedule, $others, $minGapMinutes);
         }
+
+        return $this->validateCronConflict($newSchedule, $others, $minGapMinutes);
+    }
+
+    /**
+     * Validate time-list schedule ("09:30,12:00") against all other integrations.
+     */
+    private function validateTimeListConflict(string $newSchedule, $others, int $minGapMinutes): ?array
+    {
+        $newTimes = $this->parseTimeListToMinutesOfDay($newSchedule);
+        if (empty($newTimes)) return null;
+
+        foreach ($others as $other) {
+            $otherSchedule = trim($other->sync_schedule);
+            $otherTimes = [];
+            $wholesalerName = $other->wholesaler?->name ?? "Config #{$other->id}";
+
+            if (preg_match('/^\d{1,2}:\d{2}(\s*,\s*\d{1,2}:\d{2})*$/', $otherSchedule)) {
+                $otherTimes = $this->parseTimeListToMinutesOfDay($otherSchedule);
+            } else {
+                // Legacy cron — expand to minute-of-day list for comparison
+                $otherTimes = $this->cronToMinutesOfDay($otherSchedule);
+            }
+
+            foreach ($newTimes as $newMod) {
+                foreach ($otherTimes as $otherMod) {
+                    $diff = abs($newMod - $otherMod);
+                    $circDiff = min($diff, 1440 - $diff); // 1440 = minutes in a day
+                    if ($circDiff < $minGapMinutes) {
+                        $conflictTimeH = intdiv($otherMod, 60);
+                        $conflictTimeM = $otherMod % 60;
+                        $conflictTime = sprintf('%02d:%02d', $conflictTimeH, $conflictTimeM);
+                        $newTimeH = intdiv($newMod, 60);
+                        $newTimeM = $newMod % 60;
+                        $newTime = sprintf('%02d:%02d', $newTimeH, $newTimeM);
+                        return [
+                            'conflict' => true,
+                            'severity' => 'hard',
+                            'message' => "เวลา {$newTime} ชนกับ {$wholesalerName} ({$conflictTime}) ห่างกันแค่ {$circDiff} นาที ต้องห่างกันอย่างน้อย {$minGapMinutes} นาที",
+                            'conflicting_integration' => $wholesalerName,
+                            'conflicting_time' => $conflictTime,
+                            'gap_minutes' => $circDiff,
+                            'min_gap' => $minGapMinutes,
+                        ];
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Parse time-list "09:30,12:00" into array of minutes-of-day [570, 720].
+     */
+    private function parseTimeListToMinutesOfDay(string $timeList): array
+    {
+        $times = array_map('trim', explode(',', $timeList));
+        $result = [];
+        foreach ($times as $t) {
+            $parts = explode(':', $t);
+            if (count($parts) !== 2) continue;
+            $h = (int) $parts[0];
+            $m = (int) $parts[1];
+            if ($h >= 0 && $h <= 23 && $m >= 0 && $m <= 59) {
+                $result[] = $h * 60 + $m;
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * Expand a legacy cron schedule to an array of minutes-of-day when it fires.
+     * Used for cross-format comparison.
+     */
+    private function cronToMinutesOfDay(string $cron): array
+    {
+        $parts = preg_split('/\s+/', trim($cron));
+        if (count($parts) < 5) return [];
+
+        [$minutePart, $hourPart] = $parts;
+
+        // "M */N * * *" → minute M at hours 0, N, 2N, ...
+        if (preg_match('/^(\d+)$/', $minutePart, $mm) && preg_match('/^\*\/(\d+)$/', $hourPart, $hm)) {
+            $minute = (int) $mm[1];
+            $step = max(1, (int) $hm[1]);
+            $result = [];
+            for ($h = 0; $h < 24; $h += $step) {
+                $result[] = $h * 60 + $minute;
+            }
+            return $result;
+        }
+
+        // "*/N * * * *" → every N minutes, every hour
+        if (preg_match('/^\*\/(\d+)$/', $minutePart, $mm) && $hourPart === '*') {
+            $step = max(1, (int) $mm[1]);
+            $result = [];
+            for ($mod = 0; $mod < 1440; $mod += $step) {
+                $result[] = $mod;
+            }
+            return $result;
+        }
+
+        // "M * * * *" → minute M every hour
+        if (preg_match('/^(\d+)$/', $minutePart) && $hourPart === '*') {
+            $minute = (int) $minutePart;
+            $result = [];
+            for ($h = 0; $h < 24; $h++) {
+                $result[] = $h * 60 + $minute;
+            }
+            return $result;
+        }
+
+        // "M H * * *" → daily at H:M
+        if (preg_match('/^(\d+)$/', $minutePart, $mm) && preg_match('/^(\d+)$/', $hourPart, $hm)) {
+            return [(int) $hm[1] * 60 + (int) $mm[1]];
+        }
+
+        return [];
+    }
+
+    /**
+     * Legacy cron conflict detection (kept for backward compatibility).
+     */
+    private function validateCronConflict(string $newSchedule, $others, int $minGapMinutes): ?array
+    {
+        $newParts = preg_split('/\s+/', trim($newSchedule));
+        if (count($newParts) < 5) return null;
 
         $newMinute = $newParts[0];
         $newHourPart = $newParts[1];
 
-        // Only validate fixed-minute patterns (e.g. "10 */12 * * *", "0 * * * *")
-        if (!preg_match('/^\d+$/', $newMinute)) {
-            return null; // Skip validation for */N minute patterns
-        }
+        if (!preg_match('/^\d+$/', $newMinute)) return null;
 
         $newMin = (int) $newMinute;
+        $newHours = $this->expandHourPattern($newHourPart);
 
-        // Get all other active integrations
-        $others = WholesalerApiConfig::where('sync_enabled', true)
-            ->where('is_active', true)
-            ->when($excludeConfigId, fn($q) => $q->where('id', '!=', $excludeConfigId))
-            ->get(['id', 'wholesaler_id', 'sync_schedule']);
-
-        $minGap = 10; // Minimum 10 minutes apart
+        $softConflict = null;
 
         foreach ($others as $other) {
-            $otherParts = preg_split('/\s+/', trim($other->sync_schedule));
+            $otherSchedule = trim($other->sync_schedule);
+
+            // If other is time-list format, use cross-format comparison
+            if (preg_match('/^\d{1,2}:\d{2}(\s*,\s*\d{1,2}:\d{2})*$/', $otherSchedule)) {
+                $newModList = $this->cronToMinutesOfDay($newSchedule);
+                $otherModList = $this->parseTimeListToMinutesOfDay($otherSchedule);
+                $wholesalerName = $other->wholesaler?->name ?? "Config #{$other->id}";
+                foreach ($newModList as $newMod) {
+                    foreach ($otherModList as $otherMod) {
+                        $diff = abs($newMod - $otherMod);
+                        $circDiff = min($diff, 1440 - $diff);
+                        if ($circDiff < $minGapMinutes) {
+                            return [
+                                'conflict' => true,
+                                'severity' => 'hard',
+                                'message' => "Schedule ชนกับ {$wholesalerName} — ห่างกันแค่ {$circDiff} นาที ต้องห่างกันอย่างน้อย {$minGapMinutes} นาที",
+                                'conflicting_integration' => $wholesalerName,
+                                'gap_minutes' => $circDiff,
+                                'min_gap' => $minGapMinutes,
+                            ];
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Both are cron — use original logic
+            $otherParts = preg_split('/\s+/', trim($otherSchedule));
             if (count($otherParts) < 5) continue;
 
             $otherMinute = $otherParts[0];
             $otherHourPart = $otherParts[1];
-
             if (!preg_match('/^\d+$/', $otherMinute)) continue;
 
-            // Only compare if same hour pattern (both could run at the same hour)
-            if ($newHourPart !== $otherHourPart) continue;
-
             $otherMin = (int) $otherMinute;
-
-            // Calculate circular distance (0-59 wraps around)
             $diff = abs($newMin - $otherMin);
             $circularDiff = min($diff, 60 - $diff);
+            if ($circularDiff >= $minGapMinutes) continue;
 
-            if ($circularDiff < $minGap) {
-                $wholesalerName = $other->wholesaler?->name ?? "Config #{$other->id}";
+            $isSamePattern = ($newHourPart === $otherHourPart);
+            $otherHours = $this->expandHourPattern($otherHourPart);
+            $sharedHours = array_intersect($newHours, $otherHours);
+            if (empty($sharedHours)) continue;
+
+            $wholesalerName = $other->wholesaler?->name ?? "Config #{$other->id}";
+
+            if ($isSamePattern) {
                 return [
                     'conflict' => true,
-                    'message' => "Schedule ชนกับ {$wholesalerName} (นาทีที่ {$otherMin}) ห่างกันแค่ {$circularDiff} นาที ต้องห่างกันอย่างน้อย {$minGap} นาที",
+                    'severity' => 'hard',
+                    'message' => "Schedule ชนกับ {$wholesalerName} (นาทีที่ {$otherMin}) ห่างกันแค่ {$circularDiff} นาที ต้องห่างกันอย่างน้อย {$minGapMinutes} นาที",
                     'conflicting_integration' => $wholesalerName,
                     'conflicting_minute' => $otherMin,
                     'gap_minutes' => $circularDiff,
-                    'min_gap' => $minGap,
+                    'min_gap' => $minGapMinutes,
+                ];
+            }
+
+            $overlapCount = count($sharedHours);
+            $totalHours = max(count($newHours), count($otherHours));
+            $overlapRatio = $totalHours > 0 ? $overlapCount / $totalHours : 0;
+
+            if ($overlapRatio >= 0.3 && ($softConflict === null || $circularDiff < $softConflict['gap_minutes'])) {
+                $sharedHoursList = implode(', ', array_slice(array_values($sharedHours), 0, 6));
+                $softConflict = [
+                    'conflict' => true,
+                    'severity' => 'soft',
+                    'message' => "Schedule อาจชนกับ {$wholesalerName} (นาทีที่ {$otherMin}) ในบางชั่วโมง ({$sharedHoursList}) ห่างกัน {$circularDiff} นาที — แนะนำให้เลื่อนนาที",
+                    'conflicting_integration' => $wholesalerName,
+                    'conflicting_minute' => $otherMin,
+                    'gap_minutes' => $circularDiff,
+                    'min_gap' => $minGapMinutes,
+                    'overlap_hours' => array_values($sharedHours),
+                    'overlap_ratio' => round($overlapRatio, 2),
                 ];
             }
         }
 
-        return null; // No conflict
+        return $softConflict;
     }
 
     /**
-     * API: Check schedule conflicts before saving
+     * Expand a cron hour pattern into an array of actual hours (0-23).
+     *
+     * Examples:
+     *   "*"     → [0,1,2,...,23]
+     *   "* /2"  → [0,2,4,...,22]  (every 2 hours)
+     *   "* /4"  → [0,4,8,12,16,20]
+     *   "6"     → [6]
+     *   "9,18"  → [9,18]
+     *   "1-5"   → [1,2,3,4,5]
+     */
+    private function expandHourPattern(string $pattern): array
+    {
+        $pattern = trim($pattern);
+
+        // "*" → every hour
+        if ($pattern === '*') {
+            return range(0, 23);
+        }
+
+        // "*/N" → every N hours starting from 0
+        if (preg_match('/^\*\/(\d+)$/', $pattern, $m)) {
+            $step = max(1, (int) $m[1]);
+            return range(0, 23, $step);
+        }
+
+        // "N-M" range (e.g. "9-17")
+        if (preg_match('/^(\d+)-(\d+)$/', $pattern, $m)) {
+            $start = max(0, min(23, (int) $m[1]));
+            $end = max(0, min(23, (int) $m[2]));
+            return $start <= $end ? range($start, $end) : range($start, 23);
+        }
+
+        // Comma-separated (e.g. "9,18") or single number (e.g. "6")
+        $hours = [];
+        foreach (explode(',', $pattern) as $part) {
+            $part = trim($part);
+            if (is_numeric($part)) {
+                $h = max(0, min(23, (int) $part));
+                $hours[] = $h;
+            }
+        }
+
+        return !empty($hours) ? $hours : range(0, 23);
+    }
+
+    /**
+     * API: Check schedule conflicts before saving.
+     * Returns conflict info + list of occupied times for UI visualization.
      */
     public function checkScheduleConflict(Request $request): JsonResponse
     {
@@ -322,12 +588,16 @@ class IntegrationController extends Controller
             return response()->json(['success' => false, 'message' => 'schedule is required'], 422);
         }
 
+        $schedule = trim($schedule);
+        $isTimeList = preg_match('/^\d{1,2}:\d{2}(\s*,\s*\d{1,2}:\d{2})*$/', $schedule);
+
         $conflict = $this->validateScheduleConflict($schedule, $excludeId ? (int) $excludeId : null);
 
+        // Gather occupied times from all other integrations for UI display
+        $occupiedTimes = $this->getOccupiedTimes($excludeId ? (int) $excludeId : null);
+
         if ($conflict) {
-            // Also suggest available minutes
-            $suggestions = $this->suggestAvailableMinutes($schedule, $excludeId ? (int) $excludeId : null);
-            $conflict['suggested_minutes'] = $suggestions;
+            $conflict['occupied_times'] = $occupiedTimes;
 
             return response()->json([
                 'success' => true,
@@ -340,38 +610,118 @@ class IntegrationController extends Controller
             'data' => [
                 'conflict' => false,
                 'message' => 'ไม่มี schedule ชนกัน',
+                'occupied_times' => $occupiedTimes,
             ],
         ]);
     }
 
     /**
-     * Suggest available minute offsets that don't conflict
+     * Get all occupied sync times across integrations (for UI display).
+     * Returns array of { time: "09:30", name: "...", schedule: "..." }
+     */
+    private function getOccupiedTimes(?int $excludeConfigId = null): array
+    {
+        $others = WholesalerApiConfig::where('sync_enabled', true)
+            ->where('is_active', true)
+            ->whereNotNull('sync_schedule')
+            ->when($excludeConfigId, fn($q) => $q->where('id', '!=', $excludeConfigId))
+            ->with('wholesaler:id,name')
+            ->get(['id', 'wholesaler_id', 'sync_schedule']);
+
+        $occupiedTimes = [];
+
+        foreach ($others as $other) {
+            $otherSchedule = trim($other->sync_schedule);
+            $wholesalerName = $other->wholesaler?->name ?? "Config #{$other->id}";
+
+            if (preg_match('/^\d{1,2}:\d{2}(\s*,\s*\d{1,2}:\d{2})*$/', $otherSchedule)) {
+                // Time-list format
+                $times = array_map('trim', explode(',', $otherSchedule));
+                foreach ($times as $t) {
+                    $parts = explode(':', $t);
+                    $normalized = str_pad($parts[0], 2, '0', STR_PAD_LEFT) . ':' . $parts[1];
+                    $occupiedTimes[] = [
+                        'time' => $normalized,
+                        'name' => $wholesalerName,
+                        'schedule' => $otherSchedule,
+                    ];
+                }
+            } else {
+                // Legacy cron — show approximate times
+                $modList = $this->cronToMinutesOfDay($otherSchedule);
+                foreach ($modList as $mod) {
+                    $h = intdiv($mod, 60);
+                    $m = $mod % 60;
+                    $occupiedTimes[] = [
+                        'time' => sprintf('%02d:%02d', $h, $m),
+                        'name' => $wholesalerName,
+                        'schedule' => $otherSchedule,
+                    ];
+                }
+            }
+        }
+
+        // Sort by time
+        usort($occupiedTimes, fn($a, $b) => strcmp($a['time'], $b['time']));
+
+        return $occupiedTimes;
+    }
+
+    /**
+     * Suggest available minute offsets that don't hard-conflict.
+     * Only blocks minutes used by integrations with the SAME hour pattern.
+     * Returns { available: int[], occupied: Array<{minute, name, severity}> }
      */
     private function suggestAvailableMinutes(string $schedule, ?int $excludeConfigId = null): array
     {
         $parts = preg_split('/\s+/', trim($schedule));
         $hourPart = $parts[1] ?? '*';
-        $rest = implode(' ', array_slice($parts, 2));
+        $newHours = $this->expandHourPattern($hourPart);
 
-        $usedMinutes = [];
+        $hardUsed = [];   // same pattern → block
+        $softUsed = [];   // overlapping pattern → warn only
+        $occupiedInfo = []; // for UI display
+
         $others = WholesalerApiConfig::where('sync_enabled', true)
             ->where('is_active', true)
             ->when($excludeConfigId, fn($q) => $q->where('id', '!=', $excludeConfigId))
-            ->get(['sync_schedule']);
+            ->with('wholesaler:id,name')
+            ->get(['id', 'wholesaler_id', 'sync_schedule']);
 
         foreach ($others as $other) {
             $otherParts = preg_split('/\s+/', trim($other->sync_schedule));
             if (count($otherParts) < 5) continue;
-            if ($otherParts[1] !== $hourPart) continue;
-            if (preg_match('/^\d+$/', $otherParts[0])) {
-                $usedMinutes[] = (int) $otherParts[0];
+            if (!preg_match('/^\d+$/', $otherParts[0])) continue;
+
+            $otherHourPart = $otherParts[1];
+            $otherMin = (int) $otherParts[0];
+            $otherHours = $this->expandHourPattern($otherHourPart);
+            $sharedHours = array_intersect($newHours, $otherHours);
+            $wholesalerName = $other->wholesaler?->name ?? "Config #{$other->id}";
+
+            if ($hourPart === $otherHourPart) {
+                // Same hour pattern → hard block
+                $hardUsed[] = $otherMin;
+                $occupiedInfo[] = [
+                    'minute' => $otherMin,
+                    'name' => $wholesalerName,
+                    'severity' => 'hard',
+                ];
+            } elseif (!empty($sharedHours)) {
+                // Overlapping → soft (warn)
+                $softUsed[] = $otherMin;
+                $occupiedInfo[] = [
+                    'minute' => $otherMin,
+                    'name' => $wholesalerName,
+                    'severity' => 'soft',
+                ];
             }
         }
 
         $available = [];
         for ($m = 0; $m < 60; $m++) {
             $ok = true;
-            foreach ($usedMinutes as $used) {
+            foreach ($hardUsed as $used) {
                 $diff = abs($m - $used);
                 $circDiff = min($diff, 60 - $diff);
                 if ($circDiff < 10) {
@@ -384,11 +734,16 @@ class IntegrationController extends Controller
             }
         }
 
-        return $available;
+        return [
+            'available' => $available,
+            'occupied' => $occupiedInfo,
+        ];
     }
 
     /**
-     * Auto-resolve a schedule conflict by picking the closest available minute.
+     * Auto-resolve a schedule conflict by picking the best available minute.
+     * Strategy: maximize the minimum gap from all occupied minutes so that
+     * the new integration is as far as possible from every other one.
      * Returns the adjusted cron expression with a non-conflicting minute.
      */
     private function autoResolveScheduleConflict(string $schedule, ?int $excludeConfigId = null): string
@@ -398,22 +753,34 @@ class IntegrationController extends Controller
             return $schedule;
         }
 
-        $requestedMinute = (int) $parts[0];
-        $available = $this->suggestAvailableMinutes($schedule, $excludeConfigId);
+        $result = $this->suggestAvailableMinutes($schedule, $excludeConfigId);
+        $available = $result['available'] ?? [];
+        $occupiedMinutes = array_map(fn($o) => $o['minute'], $result['occupied'] ?? []);
 
         if (empty($available)) {
-            // All minutes taken — fall back to original (shouldn't happen with 10-min gap)
             return $schedule;
         }
 
-        // Pick the closest available minute to the originally requested one
+        // If no occupied minutes, just use first available
+        if (empty($occupiedMinutes)) {
+            $parts[0] = (string) $available[0];
+            return implode(' ', $parts);
+        }
+
+        // Pick the available minute with the maximum minimum circular distance
         $best = $available[0];
-        $bestDiff = min(abs($best - $requestedMinute), 60 - abs($best - $requestedMinute));
+        $bestMinGap = 0;
+
         foreach ($available as $m) {
-            $diff = min(abs($m - $requestedMinute), 60 - abs($m - $requestedMinute));
-            if ($diff < $bestDiff) {
+            $minGap = 60;
+            foreach ($occupiedMinutes as $used) {
+                $diff = abs($m - $used);
+                $circDiff = min($diff, 60 - $diff);
+                $minGap = min($minGap, $circDiff);
+            }
+            if ($minGap > $bestMinGap) {
+                $bestMinGap = $minGap;
                 $best = $m;
-                $bestDiff = $diff;
             }
         }
 
@@ -511,8 +878,17 @@ class IntegrationController extends Controller
         $validated = $validator->validated();
         if (!empty($validated['sync_schedule'])) {
             $conflict = $this->validateScheduleConflict($validated['sync_schedule']);
-            if ($conflict) {
-                // Auto-assign closest available minute instead of returning error
+            if ($conflict && ($conflict['severity'] ?? 'hard') === 'hard') {
+                // For time-list format, return error — user must pick a different time
+                if (preg_match('/^\d{1,2}:\d{2}/', trim($validated['sync_schedule']))) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => $conflict['message'],
+                        'errors' => ['sync_schedule' => [$conflict['message']]],
+                        'conflict' => $conflict,
+                    ], 422);
+                }
+                // For legacy cron, auto-resolve
                 $validated['sync_schedule'] = $this->autoResolveScheduleConflict($validated['sync_schedule']);
             }
         }
@@ -633,11 +1009,11 @@ class IntegrationController extends Controller
             ], 422);
         }
 
-        // Validate sync schedule conflict (must be 10+ minutes apart)
+        // Validate sync schedule conflict — only block on "hard" conflicts (same hour pattern)
         $validated = $validator->validated();
         if (!empty($validated['sync_schedule'])) {
             $conflict = $this->validateScheduleConflict($validated['sync_schedule'], $id);
-            if ($conflict) {
+            if ($conflict && ($conflict['severity'] ?? 'hard') === 'hard') {
                 return response()->json([
                     'success' => false,
                     'message' => $conflict['message'],
@@ -645,6 +1021,7 @@ class IntegrationController extends Controller
                     'conflict' => $conflict,
                 ], 422);
             }
+            // Soft conflicts → allow save (just a warning on the frontend)
         }
 
         // For headcode integrations, ensure api_base_url and auth_type are always set correctly
