@@ -347,27 +347,45 @@ class Tour extends Model
             }])
             ->get();
 
-        // Get all prices from offers (offer already eager loaded - no extra queries)
-        $prices = $openPeriods->map(fn($p) => $p->offer?->price_adult)->filter()->values();
+        // All upcoming periods (open + waitlist + sold_out) for min/max price calculation.
+        // Using ALL future periods (not just open) gives correct "starting from" price —
+        // e.g. a tour with cheap sold-out dates and expensive open dates should still
+        // advertise the cheaper price as the starting price.
+        $allFuturePeriods = $this->periods()
+            ->whereIn('status', ['open', 'waitlist', 'sold_out'])
+            ->where('start_date', '>=', now()->toDateString())
+            ->with('offer')
+            ->get();
+
+        // Prices for open periods only (used for priceAdult/discount/display aggregates)
+        $prices    = $openPeriods->map(fn($p) => $p->offer?->price_adult)->filter()->values();
         $netPrices = $openPeriods->map(function($p) {
             if (!$p->offer || !$p->offer->price_adult) return null;
             $discount = $p->offer->discount_adult ?? 0;
             return $p->offer->price_adult - $discount;
         })->filter()->values();
         $discounts = $openPeriods->map(fn($p) => $p->offer?->discount_adult)->filter()->values();
+
+        // All-future prices for min/max (includes sold-out → correct "starting from" price)
+        $allPrices    = $allFuturePeriods->map(fn($p) => $p->offer?->price_adult)->filter()->values();
+        $allNetPrices = $allFuturePeriods->map(function($p) {
+            if (!$p->offer || !$p->offer->price_adult) return null;
+            $discount = $p->offer->discount_adult ?? 0;
+            return $p->offer->price_adult - $discount;
+        })->filter()->values();
         
-        // Calculate price_adult using config method
+        // Calculate price_adult using config method (open periods only — current bookable price)
         $priceAdult = $this->aggregateValue($prices, $config['price_adult'] ?? 'min');
-        
+
         // Calculate discount_adult using config method
         $discountAdult = $this->aggregateValue($discounts, $config['discount_adult'] ?? 'max');
         
-        // Calculate min/max prices from net prices (after discount)
-        $minPrice = $this->aggregateValue($netPrices->isNotEmpty() ? $netPrices : $prices, $config['min_price'] ?? 'min');
-        $maxPrice = $this->aggregateValue($netPrices->isNotEmpty() ? $netPrices : $prices, $config['max_price'] ?? 'max');
-        
-        // Calculate display_price from net prices (after discount)
-        $displayPrice = $this->aggregateValue($netPrices->isNotEmpty() ? $netPrices : $prices, $config['display_price'] ?? 'min');
+        // min/max/display price: use ALL future periods (open + waitlist + sold_out)
+        // so "starting from" price is correct even when cheap dates are sold out.
+        $minPriceSource  = $allNetPrices->isNotEmpty() ? $allNetPrices : $allPrices;
+        $minPrice     = $this->aggregateValue($minPriceSource, $config['min_price']     ?? 'min');
+        $maxPrice     = $this->aggregateValue($minPriceSource, $config['max_price']     ?? 'max');
+        $displayPrice = $this->aggregateValue($minPriceSource, $config['display_price'] ?? 'min');
         
         // FIX: หาส่วนลดจาก promotion จาก eager-loaded data (ไม่ต้อง query ทีละ period)
         $maxPromoDiscount = 0;
@@ -412,20 +430,20 @@ class Tour extends Model
         }
 
         $this->update([
-            'price_adult' => $priceAdult,
+            'price_adult' => $priceAdult ?? $this->price_adult,
             'discount_adult' => $discountAdult,
-            'min_price' => $minPrice,
-            'max_price' => $maxPrice,
-            'display_price' => $displayPrice,
+            'min_price' => $minPrice ?? $this->min_price,
+            'max_price' => $maxPrice ?? $this->max_price,
+            'display_price' => $displayPrice ?? $this->display_price,
             'discount_amount' => $totalDiscount > 0 ? $totalDiscount : null,
             'discount_label' => $discountLabel,
-            'next_departure_date' => $openPeriods->min('start_date'),
-            'total_departures' => $openPeriods->count(),
-            'available_seats' => $openPeriods->sum('available'),
+            'next_departure_date' => $openPeriods->min('start_date') ?? $this->next_departure_date,
+            'total_departures' => $openPeriods->count() ?: $this->total_departures,
+            'available_seats' => $openPeriods->sum('available') ?: $this->available_seats,
             'has_promotion' => $totalDiscount > 0,
-            'hotel_star' => $hotelStar,
-            'hotel_star_min' => $hotelStars->min(),
-            'hotel_star_max' => $hotelStars->max(),
+            'hotel_star' => $hotelStar ?? $this->hotel_star,
+            'hotel_star_min' => $hotelStars->min() ?? $this->hotel_star_min,
+            'hotel_star_max' => $hotelStars->max() ?? $this->hotel_star_max,
             'max_discount_percent' => round($maxDiscountPercent, 2),
         ]);
     }

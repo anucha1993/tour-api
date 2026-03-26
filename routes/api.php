@@ -74,6 +74,8 @@ Route::get('integrations/{id}/mappings', [IntegrationController::class, 'getFiel
 Route::post('integrations/{id}/mappings', [IntegrationController::class, 'saveFieldMappings']);
 Route::post('integrations/{id}/test-mapping', [IntegrationController::class, 'testMapping']);
 Route::get('integrations/{id}/check-tour-count', [IntegrationController::class, 'checkTourCount']);
+Route::post('integrations/{id}/test-headcode', [IntegrationController::class, 'testHeadcodeAsync']);
+Route::get('integrations/{id}/test-headcode/{taskId}/status', [IntegrationController::class, 'testHeadcodeStatus']);
 
 // Unified Tour Search (Realtime from Wholesaler APIs)
 Route::get('tours/search', [TourSearchController::class, 'search']);

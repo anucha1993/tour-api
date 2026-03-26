@@ -5,6 +5,7 @@ namespace App\Services\WholesalerAdapters;
 use App\Models\Wholesaler;
 use App\Models\WholesalerApiConfig;
 use App\Services\WholesalerAdapters\Contracts\AdapterInterface;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 
 /**
@@ -37,6 +38,11 @@ class AdapterFactory
             throw new InvalidArgumentException("No API config found for wholesaler ID: $wholesalerId");
         }
 
+        // Headcode integration: load and invoke a custom PHP file
+        if ($config->integration_type === 'headcode') {
+            return static::createHeadcodeAdapter($config);
+        }
+
         // Check for registered adapter
         $code = strtoupper($wholesaler->code);
         
@@ -47,6 +53,49 @@ class AdapterFactory
 
         // Fall back to generic adapter based on API format
         return static::createGenericAdapter($config);
+    }
+
+    /**
+     * Create a headcode adapter from a custom PHP file in storage/headcode/
+     *
+     * Security: filename is validated to [a-zA-Z0-9_-] only before loading.
+     * The file must define class Headcode{StudlyCase(filename)}Adapter
+     * extending HeadcodeBaseAdapter.
+     */
+    protected static function createHeadcodeAdapter(WholesalerApiConfig $config): AdapterInterface
+    {
+        $headcodeFile = $config->headcode_file ?? '';
+
+        if (empty($headcodeFile)) {
+            throw new InvalidArgumentException(
+                "Headcode integration requires headcode_file for wholesaler ID: {$config->wholesaler_id}"
+            );
+        }
+
+        // Strip .php extension if provided, then validate (prevent path traversal)
+        $basename = pathinfo($headcodeFile, PATHINFO_FILENAME);
+        if (!preg_match('/^[a-zA-Z0-9_-]+$/', $basename)) {
+            throw new InvalidArgumentException("Invalid headcode filename: '{$basename}'");
+        }
+
+        $filePath = storage_path("headcode/{$basename}.php");
+        if (!file_exists($filePath)) {
+            throw new InvalidArgumentException("Headcode file not found: {$filePath}");
+        }
+
+        require_once $filePath;
+
+        // Derive class name: e.g. 'look_planets' → 'HeadcodeLookPlanetsAdapter'
+        $className = 'Headcode' . Str::studly($basename) . 'Adapter';
+
+        if (!class_exists($className)) {
+            throw new InvalidArgumentException(
+                "Class {$className} not found in {$filePath}. " .
+                "The file must define: class {$className} extends \\App\\Services\\WholesalerAdapters\\HeadcodeBaseAdapter"
+            );
+        }
+
+        return new $className($config);
     }
 
     /**

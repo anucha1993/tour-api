@@ -71,6 +71,9 @@ class WholesalerApiConfig extends Model
         'notification_types',
         // City Extraction
         'extract_cities_from_name',
+        // Headcode Integration
+        'integration_type',
+        'headcode_file',
     ];
 
     protected $casts = [

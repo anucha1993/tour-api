@@ -388,6 +388,40 @@ class IntegrationController extends Controller
     }
 
     /**
+     * Auto-resolve a schedule conflict by picking the closest available minute.
+     * Returns the adjusted cron expression with a non-conflicting minute.
+     */
+    private function autoResolveScheduleConflict(string $schedule, ?int $excludeConfigId = null): string
+    {
+        $parts = preg_split('/\s+/', trim($schedule));
+        if (count($parts) < 5) {
+            return $schedule;
+        }
+
+        $requestedMinute = (int) $parts[0];
+        $available = $this->suggestAvailableMinutes($schedule, $excludeConfigId);
+
+        if (empty($available)) {
+            // All minutes taken — fall back to original (shouldn't happen with 10-min gap)
+            return $schedule;
+        }
+
+        // Pick the closest available minute to the originally requested one
+        $best = $available[0];
+        $bestDiff = min(abs($best - $requestedMinute), 60 - abs($best - $requestedMinute));
+        foreach ($available as $m) {
+            $diff = min(abs($m - $requestedMinute), 60 - abs($m - $requestedMinute));
+            if ($diff < $bestDiff) {
+                $best = $m;
+                $bestDiff = $diff;
+            }
+        }
+
+        $parts[0] = (string) $best;
+        return implode(' ', $parts);
+    }
+
+    /**
      * Calculate sync statistics for different time periods
      */
     private function calculateSyncStats(int $wholesalerId): array
@@ -433,7 +467,7 @@ class IntegrationController extends Controller
         
         $validator = Validator::make($request->all(), [
             'wholesaler_id' => 'required|exists:wholesalers,id|unique:wholesaler_api_configs,wholesaler_id',
-            'api_base_url' => 'required|url|max:500',
+            'api_base_url' => 'required_unless:integration_type,headcode|nullable|url|max:500',
             'api_version' => 'nullable|string|max:20',
             'api_format' => 'nullable|in:rest,soap,graphql',
             'auth_type' => 'required|in:api_key,oauth2,basic,bearer,custom',
@@ -460,6 +494,9 @@ class IntegrationController extends Controller
             'supports_availability_check' => 'nullable|boolean',
             'supports_hold_booking' => 'nullable|boolean',
             'supports_modify_booking' => 'nullable|boolean',
+            // Headcode integration type
+            'integration_type' => 'nullable|in:config,headcode',
+            'headcode_file' => 'nullable|string|max:100|regex:/^[a-zA-Z0-9_-]*$/',
         ]);
 
         if ($validator->fails()) {
@@ -470,17 +507,27 @@ class IntegrationController extends Controller
             ], 422);
         }
 
-        // Validate sync schedule conflict (must be 10+ minutes apart)
+        // Auto-resolve sync schedule conflict (must be 10+ minutes apart)
         $validated = $validator->validated();
         if (!empty($validated['sync_schedule'])) {
             $conflict = $this->validateScheduleConflict($validated['sync_schedule']);
             if ($conflict) {
-                return response()->json([
-                    'success' => false,
-                    'message' => $conflict['message'],
-                    'errors' => ['sync_schedule' => [$conflict['message']]],
-                    'conflict' => $conflict,
-                ], 422);
+                // Auto-assign closest available minute instead of returning error
+                $validated['sync_schedule'] = $this->autoResolveScheduleConflict($validated['sync_schedule']);
+            }
+        }
+
+        // For headcode integrations, api_base_url and auth_type are optional
+        if (($validated['integration_type'] ?? 'config') === 'headcode') {
+            $validated['api_base_url'] = $validated['api_base_url'] ?? 'headcode://custom';
+            $validated['auth_type'] = $validated['auth_type'] ?? 'custom';
+            // sync_schedule is NOT NULL in DB — auto-assign a non-conflicting slot
+            if (empty($validated['sync_schedule'])) {
+                $validated['sync_schedule'] = $this->autoResolveScheduleConflict('0 3 * * *');
+            }
+            // Strip .php extension if user accidentally typed "itravel.php" instead of "itravel"
+            if (!empty($validated['headcode_file'])) {
+                $validated['headcode_file'] = preg_replace('/\.php$/i', '', $validated['headcode_file']);
             }
         }
 
@@ -489,8 +536,8 @@ class IntegrationController extends Controller
 
             $config = WholesalerApiConfig::create($validated);
 
-            // Create default sync cursor
-            SyncCursor::create([
+            // Create default sync cursor (if not already exists)
+            SyncCursor::firstOrCreate([
                 'wholesaler_id' => $config->wholesaler_id,
                 'sync_type' => 'all',
             ]);
@@ -522,7 +569,7 @@ class IntegrationController extends Controller
         $config = WholesalerApiConfig::findOrFail($id);
 
         $validator = Validator::make($request->all(), [
-            'api_base_url' => 'nullable|url|max:500',
+            'api_base_url' => 'nullable|string|max:500|regex:/^(https?:\/\/|headcode:\/\/|$)/',
             'api_version' => 'nullable|string|max:20',
             'api_format' => 'nullable|in:rest,soap,graphql',
             'auth_type' => 'nullable|in:api_key,oauth2,basic,bearer,custom',
@@ -573,6 +620,9 @@ class IntegrationController extends Controller
             'aggregation_config.data_structure.departures.path' => 'nullable|string|max:255',
             'aggregation_config.data_structure.itineraries' => 'nullable|array',
             'aggregation_config.data_structure.itineraries.path' => 'nullable|string|max:255',
+            // Headcode integration type
+            'integration_type' => 'nullable|in:config,headcode',
+            'headcode_file' => 'nullable|string|max:100|regex:/^[a-zA-Z0-9_-]*$/',
         ]);
 
         if ($validator->fails()) {
@@ -594,6 +644,19 @@ class IntegrationController extends Controller
                     'errors' => ['sync_schedule' => [$conflict['message']]],
                     'conflict' => $conflict,
                 ], 422);
+            }
+        }
+
+        // For headcode integrations, ensure api_base_url and auth_type are always set correctly
+        $effectiveType = $validated['integration_type'] ?? $config->integration_type ?? 'config';
+        if ($effectiveType === 'headcode') {
+            if (empty($validated['api_base_url'])) {
+                $validated['api_base_url'] = 'headcode://custom';
+            }
+            $validated['auth_type'] = 'custom';
+            // Strip .php extension if present
+            if (!empty($validated['headcode_file'])) {
+                $validated['headcode_file'] = preg_replace('/\.php$/i', '', $validated['headcode_file']);
             }
         }
 
@@ -1342,6 +1405,66 @@ class IntegrationController extends Controller
     }
 
     /**
+     * Dispatch a background job to test a Headcode adapter connection (Phase 1 only).
+     * Returns a task_id immediately so the web server thread is never blocked.
+     *
+     * POST /integrations/{id}/test-headcode
+     */
+    public function testHeadcodeAsync(int $id): JsonResponse
+    {
+        $config = WholesalerApiConfig::find($id);
+
+        if (!$config) {
+            return response()->json(['success' => false, 'message' => 'ไม่พบ Integration'], 404);
+        }
+
+        if ($config->integration_type !== 'headcode') {
+            return response()->json(['success' => false, 'message' => 'Integration นี้ไม่ใช่ประเภท Headcode'], 400);
+        }
+
+        $taskId   = (string) \Illuminate\Support\Str::uuid();
+        $cacheKey = "headcode_test:{$taskId}";
+
+        // Mark as pending before dispatching so first poll returns 'pending' not null
+        \Illuminate\Support\Facades\Cache::put($cacheKey, ['status' => 'pending'], now()->addMinutes(5));
+
+        \App\Jobs\TestHeadcodeConnectionJob::dispatch($id, $taskId)->onQueue('default');
+
+        return response()->json([
+            'success' => true,
+            'task_id' => $taskId,
+            'message' => 'กำลังตรวจสอบในพื้นหลัง...',
+        ]);
+    }
+
+    /**
+     * Poll the result of a headcode connection test.
+     *
+     * GET /integrations/{id}/test-headcode/{taskId}/status
+     */
+    public function testHeadcodeStatus(int $id, string $taskId): JsonResponse
+    {
+        $cacheKey = "headcode_test:{$taskId}";
+        $data     = \Illuminate\Support\Facades\Cache::get($cacheKey);
+
+        if ($data === null) {
+            return response()->json([
+                'success' => false,
+                'status'  => 'expired',
+                'message' => 'Task หมดอายุหรือไม่พบ',
+            ], 404);
+        }
+
+        return response()->json([
+            'success'      => true,
+            'status'       => $data['status'],            // pending | success | failed
+            'tours_count'  => $data['tours_count'] ?? null,
+            'elapsed_ms'   => $data['elapsed_ms']  ?? null,
+            'message'      => $data['message']     ?? null,
+        ]);
+    }
+
+    /**
      * Test mapping with dry run (validate without saving)
      * Simulates sync process and reports any issues
      * 
@@ -1839,8 +1962,13 @@ class IntegrationController extends Controller
         try {
             $adapter = AdapterFactory::create($config->wholesaler_id);
             
+            // For headcode adapters: pass '__ping__' cursor so the adapter only runs
+            // Phase 1 (tour list) and returns immediately — no per-tour period fetches.
+            // This keeps fetchSample fast (~8s API response) without blocking the server.
+            $sampleCursor = ($config->integration_type === 'headcode') ? '__ping__' : null;
+
             // Fetch tours (first page)
-            $result = $adapter->fetchTours(null);
+            $result = $adapter->fetchTours($sampleCursor);
 
             if ($result->success && !empty($result->tours)) {
                 $sampleTour = $result->tours[0]; // First record
@@ -1956,6 +2084,7 @@ class IntegrationController extends Controller
                 return response()->json([
                     'success' => true,
                     'data' => $sampleTour,
+                    'tours_count' => count($result->tours),
                     'meta' => [
                         'total' => count($result->tours),
                         'fetched_at' => now()->toIso8601String(),

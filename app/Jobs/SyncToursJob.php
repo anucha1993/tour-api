@@ -436,6 +436,13 @@ class SyncToursJob implements ShouldQueue
         $cursor = SyncCursor::where('wholesaler_id', $this->wholesalerId)->first();
         $cursorValue = $this->syncType === 'full' ? null : $cursor?->cursor_value;
 
+        // For headcode adapters with a limit, pass a special cursor so the adapter
+        // can stop Phase 2 early instead of fetching all N tours first.
+        // This avoids the post-fetch slice that still runs all API calls.
+        if ($this->limit && $config->integration_type === 'headcode') {
+            $cursorValue = "__limit:{$this->limit}__";
+        }
+
         // Get mappings from database (using correct column names)
         $mappings = WholesalerFieldMapping::where('wholesaler_id', $this->wholesalerId)
             ->where('is_active', true)
@@ -481,8 +488,14 @@ class SyncToursJob implements ShouldQueue
 
             // Map each tour
             foreach ($result->tours as $rawTour) {
-                $transformed = $this->transformTourData($rawTour, $mappings, $dataStructure);
-                
+                // Headcode adapters may return pre-mapped data (has 'tour' key already)
+                // In that case skip transformTourData and use the structure directly
+                if (isset($rawTour['tour'])) {
+                    $transformed = $rawTour;
+                } else {
+                    $transformed = $this->transformTourData($rawTour, $mappings, $dataStructure);
+                }
+
                 $tourSection = $transformed['tour'] ?? [];
                 if (!empty($tourSection['title']) || !empty($tourSection['tour_code']) || !empty($tourSection['wholesaler_tour_code'])) {
                     $mappedTours[] = $transformed;
