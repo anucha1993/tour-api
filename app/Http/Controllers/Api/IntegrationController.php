@@ -2020,9 +2020,10 @@ class IntegrationController extends Controller
     /**
      * Fetch sample data from API (first record)
      */
-    public function fetchSample(int $id): JsonResponse
+    public function fetchSample(Request $request, int $id): JsonResponse
     {
         $config = WholesalerApiConfig::findOrFail($id);
+        $tourIndex = max(0, (int) $request->query('tour_index', 0));
 
         try {
             $adapter = AdapterFactory::create($config->wholesaler_id);
@@ -2036,12 +2037,22 @@ class IntegrationController extends Controller
             $result = $adapter->fetchTours($sampleCursor);
 
            if ($result->success && !empty($result->tours)) {
-    // ใช้ collect()->first() เพื่อดึงตัวแรกออกมา ไม่ว่า index จะเป็นอะไรก็ตาม
-    $sampleTour = collect($result->tours)->first(); 
+    $toursCollection = collect($result->tours)->values();
+
+    // Build tours_list for frontend browsing (lightweight: index + label)
+    $toursList = $toursCollection->map(function ($t, $i) {
+        $code = $t['tour']['wholesaler_tour_code'] ?? $t['tourcode'] ?? $t['code'] ?? $t['tour_code'] ?? $t['seriesCode'] ?? null;
+        $name = $t['tour']['title'] ?? $t['name_th'] ?? $t['seriesName'] ?? $t['tour_name'] ?? $t['name'] ?? null;
+        $label = $code ? ($name ? "{$code} - " . mb_substr($name, 0, 60) : $code) : ($name ? mb_substr($name, 0, 60) : "Tour #{$i}");
+        return ['index' => $i, 'label' => $label];
+    })->toArray();
+
+    // Clamp index to valid range
+    $tourIndex = min($tourIndex, $toursCollection->count() - 1);
+    $sampleTour = $toursCollection->get($tourIndex);
 
     if (!$sampleTour) {
-         // กรณีที่ tours เป็น array ว่างจริงๆ (แม้จะผ่าน !empty มาได้ในบางเคส)
-         return $this->returnMockData(); // หรือจัดการตามเหมาะสม
+         return $this->returnMockData();
     }
                 // Check if two-phase sync is enabled
                 // Support both: sync_mode column and auth_credentials.two_phase_sync
@@ -2085,11 +2096,29 @@ class IntegrationController extends Controller
                         $periodsResult = $adapter->fetchPeriods($endpoint);
 
                         if ($periodsResult->success && !empty($periodsResult->periods)) {
+                            $periods = $periodsResult->periods;
+
+                            // If bulk endpoint (no placeholders in original URL) and match key configured, filter periods
+                            $periodsMatchKey = $credentials['periods_match_key'] ?? null;
+                            $isBulkEndpoint = !preg_match('/\{[^}]+\}/', $periodsEndpoint);
+                            if ($isBulkEndpoint && $periodsMatchKey) {
+                                $periodsTourKey = $credentials['periods_tour_key'] ?? $periodsMatchKey;
+                                $tourMatchValue = $sampleTour[$periodsTourKey] ?? null;
+                                if ($tourMatchValue !== null) {
+                                    $periods = array_values(array_filter($periods, function ($p) use ($periodsMatchKey, $tourMatchValue) {
+                                        return isset($p[$periodsMatchKey]) && (string) $p[$periodsMatchKey] === (string) $tourMatchValue;
+                                    }));
+                                    $sampleTour['_periods_bulk_mode'] = true;
+                                    $sampleTour['_periods_match'] = "{$periodsMatchKey}={$tourMatchValue}";
+                                    $sampleTour['_periods_total_before_filter'] = count($periodsResult->periods);
+                                }
+                            }
+
                             // Determine the field name to store periods
                             $periodsFieldName = $credentials['periods_field_name'] ?? 'periods';
-                            $sampleTour[$periodsFieldName] = $periodsResult->periods;
+                            $sampleTour[$periodsFieldName] = $periods;
                             $sampleTour['_periods_fetched_from'] = $endpoint;
-                            $sampleTour['_periods_count'] = count($periodsResult->periods);
+                            $sampleTour['_periods_count'] = count($periods);
                         } else {
                             $sampleTour['_periods_error'] = $periodsResult->error ?? 'No periods found';
                             $sampleTour['_periods_endpoint'] = $endpoint;
@@ -2151,6 +2180,8 @@ class IntegrationController extends Controller
                     'success' => true,
                     'data' => $sampleTour,
                     'tours_count' => count($result->tours),
+                    'tours_list' => $toursList,
+                    'tour_index' => $tourIndex,
                     'meta' => [
                         'total' => count($result->tours),
                         'fetched_at' => now()->toIso8601String(),

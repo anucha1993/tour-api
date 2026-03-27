@@ -942,6 +942,22 @@ class SyncToursJob implements ShouldQueue
                     break;
                 }
             }
+            
+            // Auto-detect from mapping paths if standard candidates didn't match
+            // e.g., mapping path "detail[].day_order" → extract key "detail" from rawTour
+            if (empty($itineraryItems) && isset($mappings['itinerary'])) {
+                foreach ($mappings['itinerary'] as $mapping) {
+                    $path = $mapping->their_field_path ?? $mapping->their_field ?? '';
+                    if (preg_match('/^(\w+)\[\]/', $path, $m)) {
+                        $autoKey = $m[1];
+                        if (isset($rawTour[$autoKey]) && is_array($rawTour[$autoKey])) {
+                            $itineraryItems = $rawTour[$autoKey];
+                            $itinerariesPath = $autoKey . '[]';
+                            break;
+                        }
+                    }
+                }
+            }
         }
         
         if (isset($mappings['itinerary']) && !empty($itineraryItems)) {
@@ -1181,6 +1197,9 @@ class SyncToursJob implements ShouldQueue
         $processedCount = 0;
         $lastHeartbeat = time();
 
+        // Pre-fetch bulk periods for two_phase mode with bulk endpoint (no placeholder)
+        $bulkPeriodsMap = $this->prefetchBulkPeriods($config, $toursData);
+
         foreach ($chunks as $chunk) {
             $chunkIndex++;
             
@@ -1223,6 +1242,11 @@ class SyncToursJob implements ShouldQueue
 
                     // FIX: Mark media for async processing (no HTTP calls here)
                     $tourData = $this->processMediaBeforeTransaction($tourData, $config, $pdfBranding, $wholesalerCode);
+
+                    // Inject bulk periods if available (two_phase + bulk endpoint)
+                    if (!empty($bulkPeriodsMap)) {
+                        $tourData = $this->injectBulkPeriods($tourData, $bulkPeriodsMap, $config);
+                    }
 
                     DB::beginTransaction();
 
@@ -1409,6 +1433,159 @@ class SyncToursJob implements ShouldQueue
         if (isset($tourData['media'])) {
             if ($finalPdfUrl !== null) $tourData['media']['pdf_url'] = $finalPdfUrl;
             if ($finalCoverUrl !== null) $tourData['media']['cover_image_url'] = $finalCoverUrl;
+        }
+
+        return $tourData;
+    }
+
+    /**
+     * Pre-fetch all periods from bulk endpoint for two_phase mode.
+     * Returns a map grouped by the match key, or empty array if not applicable.
+     *
+     * @return array<string, array> Map of matchKeyValue => periods[]
+     */
+    protected function prefetchBulkPeriods(WholesalerApiConfig $config, array $toursData): array
+    {
+        $syncMode = $config->sync_mode ?? 'single';
+        if ($syncMode !== 'two_phase') {
+            return [];
+        }
+
+        $credentials = $config->auth_credentials ?? [];
+        $endpoints = $credentials['endpoints'] ?? [];
+        $periodsEndpoint = $endpoints['periods'] ?? null;
+
+        if (!$periodsEndpoint) {
+            return [];
+        }
+
+        // Detect bulk endpoint: no {placeholder} in URL
+        if (preg_match('/\{[^}]+\}/', $periodsEndpoint)) {
+            return []; // Per-tour endpoint — handled by SyncPeriodsJob
+        }
+
+        $periodsMatchKey = $credentials['periods_match_key'] ?? null;
+        if (!$periodsMatchKey) {
+            Log::warning('SyncToursJob: Bulk periods endpoint detected but no periods_match_key configured', [
+                'wholesaler_id' => $this->wholesalerId,
+                'endpoint' => $periodsEndpoint,
+            ]);
+            return [];
+        }
+
+        Log::info('SyncToursJob: Fetching bulk periods', [
+            'wholesaler_id' => $this->wholesalerId,
+            'endpoint' => $periodsEndpoint,
+            'match_key' => $periodsMatchKey,
+        ]);
+
+        try {
+            $adapter = AdapterFactory::create($this->wholesalerId);
+            $result = $adapter->fetchPeriods($periodsEndpoint);
+
+            if (!$result->success || empty($result->periods)) {
+                Log::warning('SyncToursJob: Bulk periods fetch failed or empty', [
+                    'wholesaler_id' => $this->wholesalerId,
+                    'error' => $result->error ?? 'empty',
+                ]);
+                return [];
+            }
+
+            // Group periods by match key value
+            $grouped = collect($result->periods)->groupBy($periodsMatchKey)->toArray();
+
+            Log::info('SyncToursJob: Bulk periods fetched', [
+                'wholesaler_id' => $this->wholesalerId,
+                'total_periods' => count($result->periods),
+                'unique_keys' => count($grouped),
+            ]);
+
+            return $grouped;
+        } catch (\Exception $e) {
+            Log::error('SyncToursJob: Error fetching bulk periods', [
+                'wholesaler_id' => $this->wholesalerId,
+                'error' => $e->getMessage(),
+            ]);
+            return [];
+        }
+    }
+
+    /**
+     * Inject bulk periods into a tour's data by matching the tour's identifier
+     * with the pre-fetched grouped periods.
+     */
+    protected function injectBulkPeriods(array $tourData, array $bulkPeriodsMap, WholesalerApiConfig $config): array
+    {
+        $credentials = $config->auth_credentials ?? [];
+        $periodsMatchKey = $credentials['periods_match_key'] ?? null;
+        $periodsTourKey = $credentials['periods_tour_key'] ?? null;
+
+        if (!$periodsMatchKey) {
+            return $tourData;
+        }
+
+        // Determine the tour's value to match against
+        // Priority: periods_tour_key from config → common tour identifiers
+        $tourSection = $tourData['tour'] ?? [];
+        $matchValue = null;
+
+        if ($periodsTourKey) {
+            $matchValue = $tourSection[$periodsTourKey] ?? null;
+        }
+
+        // Fallback: try common identifiers
+        if (!$matchValue) {
+            $matchValue = $tourSection['external_id']
+                ?? $tourSection['wholesaler_tour_code']
+                ?? $tourSection['tour_code']
+                ?? null;
+        }
+
+        if ($matchValue && isset($bulkPeriodsMap[$matchValue])) {
+            // Transform raw periods using field mappings
+            $rawPeriods = $bulkPeriodsMap[$matchValue];
+            $wholesalerId = $config->wholesaler_id;
+
+            $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)
+                ->where('section_name', 'departure')
+                ->where('is_active', true)
+                ->get();
+
+            $aggConfig = $config->aggregation_config ?? [];
+            $departuresPath = $aggConfig['data_structure']['departures']['path'] ?? null;
+
+            $transformedPeriods = [];
+            foreach ($rawPeriods as $rawPeriod) {
+                $dep = [];
+                foreach ($mappings as $mapping) {
+                    $fieldName = $mapping->our_field;
+                    $path = $mapping->their_field_path ?? $mapping->their_field ?? '';
+
+                    if (empty($path)) continue;
+
+                    // Clean the path (remove array prefix like periods[]. )
+                    $cleanPath = $this->cleanNestedPath($path, $departuresPath);
+                    $value = $this->extractNestedValue($rawPeriod, $cleanPath);
+
+                    if ($value === null && !empty($mapping->default_value)) {
+                        $value = $mapping->default_value;
+                    }
+
+                    $dep[$fieldName] = $value;
+                }
+                if (!empty($dep)) {
+                    $transformedPeriods[] = $dep;
+                }
+            }
+
+            if (!empty($transformedPeriods)) {
+                $tourData['departure'] = $transformedPeriods;
+
+                Log::debug('SyncToursJob: Injected bulk periods', [
+                    'match_value' => $matchValue,
+                    'periods_count' => count($transformedPeriods),
+                ]);
+            }
         }
 
         return $tourData;
@@ -1722,6 +1899,22 @@ class SyncToursJob implements ShouldQueue
         $hasDeparturesData = !empty($departures);
         
         if ($syncMode === 'two_phase' && !$hasDeparturesData) {
+            // Check if bulk periods mode is active — if so, skip SyncPeriodsJob dispatch
+            // (no matching periods means this tour simply has no periods)
+            $credentials = $config->auth_credentials ?? [];
+            $periodsEndpoint = $credentials['endpoints']['periods'] ?? null;
+            $isBulkPeriods = $periodsEndpoint && !preg_match('/\{[^}]+\}/', $periodsEndpoint) && !empty($credentials['periods_match_key']);
+
+            if ($isBulkPeriods) {
+                // Bulk mode: no matching periods found — skip, don't dispatch per-tour job
+                Log::debug('SyncToursJob: No matching bulk periods for tour', [
+                    'tour_id' => $tour->id,
+                    'external_id' => $tour->external_id,
+                ]);
+                $result['periods_received'] = 0;
+                $result['periods_created'] = 0;
+                $result['periods_updated'] = 0;
+            } else {
             // Two-Phase Sync: dispatch SyncPeriodsJob to fetch periods separately
             $externalId = $tour->external_id ?? $tour->wholesaler_tour_code;
             
@@ -1743,6 +1936,7 @@ class SyncToursJob implements ShouldQueue
             $result['periods_received'] = 0;
             $result['periods_created'] = 0;
             $result['periods_updated'] = 0;
+            } // end else (non-bulk per-tour dispatch)
         } else {
             // Single-Phase (default): process periods from same API response
             $result['periods_received'] = count($departures);
@@ -2002,9 +2196,13 @@ class SyncToursJob implements ShouldQueue
         }
 
         // Find existing itinerary
+        // Use both external_id + day_number when available to handle cases where
+        // external_id is a tour-level code (same for all days, e.g. tour_code)
         $itinerary = TourItinerary::where('tour_id', $tour->id)
             ->where(function ($q) use ($dayNumber, $externalId) {
-                if ($externalId) {
+                if ($externalId && $dayNumber) {
+                    $q->where('external_id', $externalId)->where('day_number', $dayNumber);
+                } elseif ($externalId) {
                     $q->where('external_id', $externalId);
                 } else {
                     $q->where('day_number', $dayNumber);
