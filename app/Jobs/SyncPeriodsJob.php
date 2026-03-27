@@ -577,9 +577,13 @@ class SyncPeriodsJob implements ShouldQueue
             'will_save_available' => $capacity - $booked,
         ]);
 
+        // FIX: Fallback external_id → period_code when API sends null id
+        // e.g. iTravel sends "id": null but has "full_code": "CCZ318-20260915"
+        $externalId = $data['external_id'] ?? $periodCode;
+
         $periodData = [
             'tour_id' => $tour->id,
-            'external_id' => $data['external_id'] ?? null,
+            'external_id' => $externalId,
             'period_code' => $periodCode,
             'start_date' => $startDate,
             'end_date' => $data['end_date'] ?? $startDate,

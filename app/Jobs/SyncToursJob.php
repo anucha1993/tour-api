@@ -1448,13 +1448,58 @@ class SyncToursJob implements ShouldQueue
         $finalPdfUrl = $keepPdf ? $existingPdf : ($merged['pdf_url'] ?? null);
         $finalCoverUrl = $keepCover ? $existingCover : ($merged['cover_image_url'] ?? null);
 
+        // FIX: ถ้า URL ยาวเกิน 500 chars (เช่น signed URL จาก iTravel)
+        // ไม่ใส่ลง tour/media section → ป้องกัน "Data too long" error
+        // ProcessTourMediaJob จะดาวน์โหลดแล้วเซ็ต URL ใหม่ (R2/Cloudflare) ที่สั้นกว่าทีหลัง
+        $maxUrlLength = 500;
+
+        if ($finalPdfUrl && strlen($finalPdfUrl) > $maxUrlLength) {
+            Log::debug('SyncToursJob: pdf_url too long, will be set by ProcessTourMediaJob', [
+                'tour_code' => $tourCode ?? 'unknown',
+                'url_length' => strlen($finalPdfUrl),
+            ]);
+            // Ensure it's still in _pending_media for async download
+            if (empty($tourData['_pending_media']['pdf_url'])) {
+                $tourData['_pending_media']['pdf_url'] = $finalPdfUrl;
+            }
+            $finalPdfUrl = null; // Don't write to DB now
+        }
+
+        if ($finalCoverUrl && strlen($finalCoverUrl) > $maxUrlLength) {
+            Log::debug('SyncToursJob: cover_image_url too long, will be set by ProcessTourMediaJob', [
+                'tour_code' => $tourCode ?? 'unknown',
+                'url_length' => strlen($finalCoverUrl),
+            ]);
+            if (empty($tourData['_pending_media']['cover_image_url'])) {
+                $tourData['_pending_media']['cover_image_url'] = $finalCoverUrl;
+            }
+            $finalCoverUrl = null;
+        }
+
         if (isset($tourData['tour'])) {
-            if ($finalPdfUrl !== null) $tourData['tour']['pdf_url'] = $finalPdfUrl;
-            if ($finalCoverUrl !== null) $tourData['tour']['cover_image_url'] = $finalCoverUrl;
+            if ($finalPdfUrl !== null) {
+                $tourData['tour']['pdf_url'] = $finalPdfUrl;
+            } else {
+                // Remove long external URL from tour section to prevent DB error
+                unset($tourData['tour']['pdf_url']);
+            }
+            if ($finalCoverUrl !== null) {
+                $tourData['tour']['cover_image_url'] = $finalCoverUrl;
+            } else {
+                unset($tourData['tour']['cover_image_url']);
+            }
         }
         if (isset($tourData['media'])) {
-            if ($finalPdfUrl !== null) $tourData['media']['pdf_url'] = $finalPdfUrl;
-            if ($finalCoverUrl !== null) $tourData['media']['cover_image_url'] = $finalCoverUrl;
+            if ($finalPdfUrl !== null) {
+                $tourData['media']['pdf_url'] = $finalPdfUrl;
+            } else {
+                unset($tourData['media']['pdf_url']);
+            }
+            if ($finalCoverUrl !== null) {
+                $tourData['media']['cover_image_url'] = $finalCoverUrl;
+            } else {
+                unset($tourData['media']['cover_image_url']);
+            }
         }
 
         return $tourData;
@@ -1818,12 +1863,25 @@ class SyncToursJob implements ShouldQueue
         // FIX: เปลี่ยน debug log จาก info → debug
         Log::debug('SyncToursJob: tourFields before save', [
             'tour_code' => $tourFields['tour_code'] ?? $tour->tour_code ?? 'N/A',
+            'has_external_id' => array_key_exists('external_id', $tourFields),
+            'external_id' => $tourFields['external_id'] ?? 'NOT_IN_FIELDS',
             'has_primary_country_id' => array_key_exists('primary_country_id', $tourFields),
             'primary_country_id' => $tourFields['primary_country_id'] ?? 'NOT_IN_FIELDS',
             'has_transport_id' => array_key_exists('transport_id', $tourFields),
             'transport_id' => $tourFields['transport_id'] ?? 'NOT_IN_FIELDS',
             'skipped_fields' => $skippedFields,
+            'is_new' => $isNew,
+            'all_field_keys' => array_keys($tourFields),
         ]);
+        
+        // FIX: ถ้า tour ใหม่แต่ยังไม่มี external_id ให้ใช้ wholesaler_tour_code แทน
+        if ($isNew && empty($tourFields['external_id']) && !empty($tour->wholesaler_tour_code)) {
+            $tourFields['external_id'] = $tour->wholesaler_tour_code;
+            Log::info('SyncToursJob: Auto-set external_id from wholesaler_tour_code', [
+                'tour_code' => $tourFields['tour_code'] ?? $tour->tour_code ?? 'N/A',
+                'external_id' => $tourFields['external_id'],
+            ]);
+        }
         
         $tour->fill($tourFields);
         $tour->save();
