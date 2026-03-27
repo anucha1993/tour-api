@@ -1246,12 +1246,34 @@ class SyncToursJob implements ShouldQueue
                     // Inject bulk periods if available (two_phase + bulk endpoint)
                     if (!empty($bulkPeriodsMap)) {
                         $tourData = $this->injectBulkPeriods($tourData, $bulkPeriodsMap, $config);
+
+                        // Skip tours with no matching periods in bulk mode
+                        if (empty($tourData['departure'])) {
+                            Log::debug('SyncToursJob: Skipping tour with no bulk periods', [
+                                'tour_code' => $currentTourCode,
+                            ]);
+                            $stats['skipped']++;
+                            continue;
+                        }
                     }
 
                     DB::beginTransaction();
 
                     $result = $this->processSingleTour($tourData, $config, $pdfBranding, $wholesalerCode, $syncLog);
                     
+                    // Bulk mode: if newly created tour ended up with 0 active periods
+                    // (all periods were past dates), rollback and skip
+                    if (!empty($bulkPeriodsMap) && $result['action'] === 'created'
+                        && ($result['periods_created'] ?? 0) === 0 && ($result['periods_updated'] ?? 0) === 0) {
+                        DB::rollBack();
+                        Log::debug('SyncToursJob: Rollback tour with no active periods (all past)', [
+                            'tour_code' => $currentTourCode,
+                            'periods_received' => $result['periods_received'] ?? 0,
+                        ]);
+                        $stats['skipped']++;
+                        continue;
+                    }
+
                     if ($result['action'] === 'created') {
                         $stats['created']++;
                     } elseif ($result['action'] === 'updated') {
