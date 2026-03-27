@@ -25,8 +25,7 @@ class IntegrationController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = WholesalerApiConfig::with('wholesaler')
-            ->orderBy('created_at', 'desc');
+        $query = WholesalerApiConfig::with('wholesaler')->orderBy('created_at', 'desc');
 
         // Filter by active status
         if ($request->has('is_active')) {
@@ -36,9 +35,7 @@ class IntegrationController extends Controller
         $configs = $query->get();
 
         $integrations = $configs->map(function ($config) {
-            $lastSync = SyncLog::where('wholesaler_id', $config->wholesaler_id)
-                ->latest('started_at')
-                ->first();
+            $lastSync = SyncLog::where('wholesaler_id', $config->wholesaler_id)->latest('started_at')->first();
 
             $errorCount = SyncLog::where('wholesaler_id', $config->wholesaler_id)
                 ->where('status', 'failed')
@@ -93,31 +90,21 @@ class IntegrationController extends Controller
         $config = WholesalerApiConfig::with('wholesaler')->findOrFail($id);
         $wholesalerId = $config->wholesaler_id;
 
-        $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)
-            ->orderBy('section_name')
-            ->orderBy('sort_order')
-            ->get()
-            ->groupBy('section_name');
+        $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)->orderBy('section_name')->orderBy('sort_order')->get()->groupBy('section_name');
 
-        $syncLogs = SyncLog::where('wholesaler_id', $wholesalerId)
-            ->latest('started_at')
-            ->limit(10)
-            ->get();
+        $syncLogs = SyncLog::where('wholesaler_id', $wholesalerId)->latest('started_at')->limit(10)->get();
 
         $cursor = SyncCursor::where('wholesaler_id', $wholesalerId)->first();
 
         // Get tour counts
         $toursCount = \App\Models\Tour::where('wholesaler_id', $wholesalerId)->count();
-        
+
         // Get periods count through tours (Period doesn't have wholesaler_id directly)
         $tourIds = \App\Models\Tour::where('wholesaler_id', $wholesalerId)->pluck('id');
         $periodsCount = \App\Models\Period::whereIn('tour_id', $tourIds)->count();
 
         // Get last sync info
-        $lastSync = SyncLog::where('wholesaler_id', $wholesalerId)
-            ->where('status', '!=', 'running')
-            ->latest('completed_at')
-            ->first();
+        $lastSync = SyncLog::where('wholesaler_id', $wholesalerId)->where('status', '!=', 'running')->latest('completed_at')->first();
 
         // Calculate next sync time based on schedule (simple cron parser for common patterns)
         $nextSync = null;
@@ -166,9 +153,31 @@ class IntegrationController extends Controller
      *   "*\/N * * * *"  = every N minutes
      *   "M H * * *"     = daily at H:M (e.g. "30 3 * * *")
      */
-    private function calculateNextSyncFromCron(string $cron): ?\Carbon\Carbon
+    private function calculateNextSyncFromCron(string $schedule): ?\Carbon\Carbon
     {
-        $parts = preg_split('/\s+/', trim($cron));
+        $schedule = trim($schedule);
+
+        // Time-list format: "HH:MM" or "HH:MM,HH:MM,..."
+        if (preg_match('/^\d{1,2}:\d{2}(\s*,\s*\d{1,2}:\d{2})*$/', $schedule)) {
+            $now = now();
+            $times = array_map('trim', explode(',', $schedule));
+            $candidates = [];
+            foreach ($times as $time) {
+                [$h, $m] = explode(':', $time);
+                // Today at this time
+                $candidate = $now->copy()->setTime((int) $h, (int) $m, 0);
+                if ($candidate->lte($now)) {
+                    $candidate->addDay();
+                }
+                $candidates[] = $candidate;
+            }
+            // Return the soonest
+            usort($candidates, fn($a, $b) => $a->timestamp - $b->timestamp);
+            return $candidates[0] ?? null;
+        }
+
+        // Cron format
+        $parts = preg_split('/\s+/', $schedule);
         if (count($parts) < 5) {
             return null;
         }
@@ -199,7 +208,13 @@ class IntegrationController extends Controller
                 $nextHour += $interval;
                 if ($nextHour >= 24) {
                     // Wrap to next day
-                    $candidate = $now->copy()->addDay()->startOfDay()->setHour($nextHour % 24)->setMinute($minute)->setSecond(0);
+                    $candidate = $now
+                        ->copy()
+                        ->addDay()
+                        ->startOfDay()
+                        ->setHour($nextHour % 24)
+                        ->setMinute($minute)
+                        ->setSecond(0);
                     // If wrapped hour is 0, it's the start of next day
                     if ($nextHour >= 24) {
                         $candidate->setHour($nextHour - 24);
@@ -278,15 +293,21 @@ class IntegrationController extends Controller
 
         foreach ($others as $other) {
             $otherParts = preg_split('/\s+/', trim($other->sync_schedule));
-            if (count($otherParts) < 5) continue;
+            if (count($otherParts) < 5) {
+                continue;
+            }
 
             $otherMinute = $otherParts[0];
             $otherHourPart = $otherParts[1];
 
-            if (!preg_match('/^\d+$/', $otherMinute)) continue;
+            if (!preg_match('/^\d+$/', $otherMinute)) {
+                continue;
+            }
 
             // Only compare if same hour pattern (both could run at the same hour)
-            if ($newHourPart !== $otherHourPart) continue;
+            if ($newHourPart !== $otherHourPart) {
+                continue;
+            }
 
             $otherMin = (int) $otherMinute;
 
@@ -361,8 +382,12 @@ class IntegrationController extends Controller
 
         foreach ($others as $other) {
             $otherParts = preg_split('/\s+/', trim($other->sync_schedule));
-            if (count($otherParts) < 5) continue;
-            if ($otherParts[1] !== $hourPart) continue;
+            if (count($otherParts) < 5) {
+                continue;
+            }
+            if ($otherParts[1] !== $hourPart) {
+                continue;
+            }
             if (preg_match('/^\d+$/', $otherParts[0])) {
                 $usedMinutes[] = (int) $otherParts[0];
             }
@@ -442,9 +467,7 @@ class IntegrationController extends Controller
      */
     private function getSyncStatsForPeriod(int $wholesalerId, $startDate): array
     {
-        $logs = SyncLog::where('wholesaler_id', $wholesalerId)
-            ->where('started_at', '>=', $startDate)
-            ->get();
+        $logs = SyncLog::where('wholesaler_id', $wholesalerId)->where('started_at', '>=', $startDate)->get();
 
         return [
             'syncs' => $logs->count(),
@@ -464,7 +487,7 @@ class IntegrationController extends Controller
             'auth_type' => $request->auth_type,
             'auth_credentials' => $request->auth_credentials,
         ]);
-        
+
         $validator = Validator::make($request->all(), [
             'wholesaler_id' => 'required|exists:wholesalers,id|unique:wholesaler_api_configs,wholesaler_id',
             'api_base_url' => 'required_unless:integration_type,headcode|nullable|url|max:500',
@@ -500,11 +523,14 @@ class IntegrationController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors(),
+                ],
+                422,
+            );
         }
 
         // Auto-resolve sync schedule conflict (must be 10+ minutes apart)
@@ -544,20 +570,25 @@ class IntegrationController extends Controller
 
             DB::commit();
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Integration created successfully',
-                'data' => $config->load('wholesaler'),
-            ], 201);
-
+            return response()->json(
+                [
+                    'success' => true,
+                    'message' => 'Integration created successfully',
+                    'data' => $config->load('wholesaler'),
+                ],
+                201,
+            );
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Failed to create integration: ' . $e->getMessage());
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to create integration: ' . $e->getMessage(),
-            ], 500);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Failed to create integration: ' . $e->getMessage(),
+                ],
+                500,
+            );
         }
     }
 
@@ -569,7 +600,10 @@ class IntegrationController extends Controller
         $config = WholesalerApiConfig::findOrFail($id);
 
         $validator = Validator::make($request->all(), [
-            'api_base_url' => 'nullable|string|max:500|regex:/^(https?:\/\/|headcode:\/\/|$)/',
+            // โค้ดเดิมที่ทำให้พัง:
+            'api_base_url' => ['nullable','string','max:500','regex:#^(https?://|headcode://|$)#', // เปลี่ยนตัวปิดจาก / เป็น # เพื่อไม่ให้สับสนกับ URL
+            ],
+            
             'api_version' => 'nullable|string|max:20',
             'api_format' => 'nullable|in:rest,soap,graphql',
             'auth_type' => 'nullable|in:api_key,oauth2,basic,bearer,custom',
@@ -626,11 +660,14 @@ class IntegrationController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors(),
+                ],
+                422,
+            );
         }
 
         // Validate sync schedule conflict (must be 10+ minutes apart)
@@ -638,17 +675,20 @@ class IntegrationController extends Controller
         if (!empty($validated['sync_schedule'])) {
             $conflict = $this->validateScheduleConflict($validated['sync_schedule'], $id);
             if ($conflict) {
-                return response()->json([
-                    'success' => false,
-                    'message' => $conflict['message'],
-                    'errors' => ['sync_schedule' => [$conflict['message']]],
-                    'conflict' => $conflict,
-                ], 422);
+                return response()->json(
+                    [
+                        'success' => false,
+                        'message' => $conflict['message'],
+                        'errors' => ['sync_schedule' => [$conflict['message']]],
+                        'conflict' => $conflict,
+                    ],
+                    422,
+                );
             }
         }
 
         // For headcode integrations, ensure api_base_url and auth_type are always set correctly
-        $effectiveType = $validated['integration_type'] ?? $config->integration_type ?? 'config';
+        $effectiveType = $validated['integration_type'] ?? ($config->integration_type ?? 'config');
         if ($effectiveType === 'headcode') {
             if (empty($validated['api_base_url'])) {
                 $validated['api_base_url'] = 'headcode://custom';
@@ -675,7 +715,7 @@ class IntegrationController extends Controller
     public function destroy(int $id): JsonResponse
     {
         $config = WholesalerApiConfig::findOrFail($id);
-        
+
         $config->delete();
 
         return response()->json([
@@ -699,11 +739,14 @@ class IntegrationController extends Controller
                 'integration_id' => $id,
                 'error' => $e->getMessage(),
             ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'เกิดข้อผิดพลาด: ' . $e->getMessage(),
-            ], 500);
+
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'เกิดข้อผิดพลาด: ' . $e->getMessage(),
+                ],
+                500,
+            );
         }
     }
 
@@ -719,11 +762,14 @@ class IntegrationController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed: ' . $validator->errors()->first(),
-                'errors' => $validator->errors(),
-            ], 422);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Validation failed: ' . $validator->errors()->first(),
+                    'errors' => $validator->errors(),
+                ],
+                422,
+            );
         }
 
         try {
@@ -744,24 +790,27 @@ class IntegrationController extends Controller
 
             // Apply auth
             $credentials = $request->auth_credentials;
-            
+
             // Handle OAuth2 - get token first
             if ($request->auth_type === 'oauth2') {
                 $tokenUrl = $credentials['token_url'] ?? null;
                 if (!$tokenUrl) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'OAuth2 token_url is required',
-                    ], 422);
+                    return response()->json(
+                        [
+                            'success' => false,
+                            'message' => 'OAuth2 token_url is required',
+                        ],
+                        422,
+                    );
                 }
-                
+
                 // Build OAuth2 request body from oauth_fields
                 $oauthBody = [];
                 $oauthFields = $credentials['oauth_fields'] ?? [];
-                
+
                 // Log incoming data for debugging
                 Log::info('OAuth2 oauth_fields received:', ['oauth_fields' => $oauthFields, 'type' => gettype($oauthFields)]);
-                
+
                 // If oauth_fields is an array of {key, value} objects
                 if (is_array($oauthFields)) {
                     foreach ($oauthFields as $field) {
@@ -770,7 +819,7 @@ class IntegrationController extends Controller
                         }
                     }
                 }
-                
+
                 // Fallback to old format
                 if (empty($oauthBody)) {
                     $oauthBody = [
@@ -779,45 +828,45 @@ class IntegrationController extends Controller
                         'client_secret' => $credentials['client_secret'] ?? '',
                     ];
                 }
-                
+
                 Log::info('OAuth2 oauthBody built:', ['oauthBody' => $oauthBody]);
-                
+
                 try {
                     // Get token request headers if provided
                     $tokenHeaders = $credentials['token_headers'] ?? [];
-                    
+
                     // Determine content type from headers (default to JSON)
-                    $contentType = $tokenHeaders['Content-Type'] ?? $tokenHeaders['content-type'] ?? 'application/json';
+                    $contentType = $tokenHeaders['Content-Type'] ?? ($tokenHeaders['content-type'] ?? 'application/json');
                     $isFormData = stripos($contentType, 'form-urlencoded') !== false;
-                    
+
                     // Build the HTTP client with custom headers
                     $tokenClient = \Illuminate\Support\Facades\Http::timeout(30);
-                    
+
                     if (!empty($tokenHeaders)) {
                         $tokenClient = $tokenClient->withHeaders($tokenHeaders);
                     }
-                    
+
                     // Send as JSON or form-data based on Content-Type
                     if ($isFormData) {
                         $tokenResponse = $tokenClient->asForm()->post($tokenUrl, $oauthBody);
                     } else {
                         $tokenResponse = $tokenClient->asJson()->post($tokenUrl, $oauthBody);
                     }
-                    
+
                     // If first attempt fails with 4xx, try the other format
                     if ($tokenResponse->clientError()) {
                         $tokenClient2 = \Illuminate\Support\Facades\Http::timeout(30);
                         if (!empty($tokenHeaders)) {
                             $tokenClient2 = $tokenClient2->withHeaders($tokenHeaders);
                         }
-                        
+
                         if ($isFormData) {
                             $tokenResponse = $tokenClient2->asJson()->post($tokenUrl, $oauthBody);
                         } else {
                             $tokenResponse = $tokenClient2->asForm()->post($tokenUrl, $oauthBody);
                         }
                     }
-                    
+
                     if (!$tokenResponse->successful()) {
                         $timeMs = (int) ((microtime(true) - $startTime) * 1000);
                         return response()->json([
@@ -831,17 +880,13 @@ class IntegrationController extends Controller
                             ],
                         ]);
                     }
-                    
+
                     $tokenData = $tokenResponse->json();
-                    
+
                     // Extract token from response (try common field names)
                     $responseTokenField = $credentials['response_token_field'] ?? 'access_token';
-                    $accessToken = $tokenData[$responseTokenField] 
-                        ?? $tokenData['access_token'] 
-                        ?? $tokenData['token'] 
-                        ?? $tokenData['accessToken']
-                        ?? null;
-                    
+                    $accessToken = $tokenData[$responseTokenField] ?? ($tokenData['access_token'] ?? ($tokenData['token'] ?? ($tokenData['accessToken'] ?? null)));
+
                     if (!$accessToken) {
                         $timeMs = (int) ((microtime(true) - $startTime) * 1000);
                         return response()->json([
@@ -855,16 +900,15 @@ class IntegrationController extends Controller
                             ],
                         ]);
                     }
-                    
+
                     // Use the token for API request
                     $client = $client->withToken($accessToken);
-                    
+
                     // Add additional API headers if provided (user-defined, no defaults)
                     $apiHeaders = $credentials['api_headers'] ?? [];
                     if (!empty($apiHeaders)) {
                         $client = $client->withHeaders($apiHeaders);
                     }
-                    
                 } catch (\Exception $e) {
                     $timeMs = (int) ((microtime(true) - $startTime) * 1000);
                     return response()->json([
@@ -908,7 +952,7 @@ class IntegrationController extends Controller
 
             if ($response && $response->successful()) {
                 $body = $response->json();
-                $toursCount = count($body['data'] ?? $body['tours'] ?? $body['items'] ?? []);
+                $toursCount = count($body['data'] ?? ($body['tours'] ?? ($body['items'] ?? [])));
 
                 return response()->json([
                     'success' => true,
@@ -932,12 +976,14 @@ class IntegrationController extends Controller
                     'error' => $response?->body() ?? 'No response',
                 ],
             ]);
-
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Connection error: ' . $e->getMessage(),
-            ], 500);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Connection error: ' . $e->getMessage(),
+                ],
+                500,
+            );
         }
     }
 
@@ -946,10 +992,7 @@ class IntegrationController extends Controller
      */
     public function getSectionDefinitions(): JsonResponse
     {
-        $sections = SectionDefinition::orderBy('section_name')
-            ->orderBy('sort_order')
-            ->get()
-            ->groupBy('section_name');
+        $sections = SectionDefinition::orderBy('section_name')->orderBy('sort_order')->get()->groupBy('section_name');
 
         return response()->json([
             'success' => true,
@@ -967,10 +1010,7 @@ class IntegrationController extends Controller
         $config = WholesalerApiConfig::find($wholesalerId);
         $actualWholesalerId = $config ? $config->wholesaler_id : $wholesalerId;
 
-        $mappings = WholesalerFieldMapping::where('wholesaler_id', $actualWholesalerId)
-            ->orderBy('section_name')
-            ->orderBy('sort_order')
-            ->get();
+        $mappings = WholesalerFieldMapping::where('wholesaler_id', $actualWholesalerId)->orderBy('section_name')->orderBy('sort_order')->get();
 
         // Get enabled fields from config
         $enabledFields = $config?->enabled_fields ?? [];
@@ -984,7 +1024,7 @@ class IntegrationController extends Controller
             } elseif ($m->their_field || $m->their_field_path) {
                 $sourceType = 'api';
             }
-            
+
             return [
                 'section' => $m->section_name,
                 'our_field' => $m->our_field,
@@ -1030,11 +1070,14 @@ class IntegrationController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors(),
+                ],
+                422,
+            );
         }
 
         try {
@@ -1066,11 +1109,11 @@ class IntegrationController extends Controller
                     $stringTransformType = $mapping['string_transform']['type'];
                     // Map frontend types to database enum values
                     $typeMapping = [
-                        'split' => 'split',      // split - direct match
-                        'template' => 'concat',  // template uses concat
-                        'replace' => 'custom',   // replace uses custom
-                        'join' => 'split',       // join is part of split operation
-                        'formula' => 'formula',  // formula - คำนวณจากหลาย fields
+                        'split' => 'split', // split - direct match
+                        'template' => 'concat', // template uses concat
+                        'replace' => 'custom', // replace uses custom
+                        'join' => 'split', // join is part of split operation
+                        'formula' => 'formula', // formula - คำนวณจากหลาย fields
                     ];
                     $transformType = $typeMapping[$stringTransformType] ?? 'custom';
                 } elseif (!empty($mapping['value_map'])) {
@@ -1109,15 +1152,17 @@ class IntegrationController extends Controller
                     'count' => count($request->mappings),
                 ],
             ]);
-
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Failed to save field mappings: ' . $e->getMessage());
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to save field mappings: ' . $e->getMessage(),
-            ], 500);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Failed to save field mappings: ' . $e->getMessage(),
+                ],
+                500,
+            );
         }
     }
 
@@ -1131,11 +1176,14 @@ class IntegrationController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors(),
+                ],
+                422,
+            );
         }
 
         try {
@@ -1146,12 +1194,14 @@ class IntegrationController extends Controller
                 'success' => true,
                 'data' => $result,
             ]);
-
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Preview failed: ' . $e->getMessage(),
-            ], 500);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Preview failed: ' . $e->getMessage(),
+                ],
+                500,
+            );
         }
     }
 
@@ -1159,7 +1209,7 @@ class IntegrationController extends Controller
      * Check tour count from wholesaler API
      * Fetches data from API and counts available tours
      * Supports both Single-Phase and Two-Phase sync modes
-     * 
+     *
      * @param int $id Integration ID (WholesalerApiConfig primary key)
      */
     public function checkTourCount(int $id): JsonResponse
@@ -1169,10 +1219,13 @@ class IntegrationController extends Controller
             $config = WholesalerApiConfig::find($id);
 
             if (!$config) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'ไม่พบการตั้งค่า API สำหรับ Integration นี้',
-                ], 404);
+                return response()->json(
+                    [
+                        'success' => false,
+                        'message' => 'ไม่พบการตั้งค่า API สำหรับ Integration นี้',
+                    ],
+                    404,
+                );
             }
 
             // Get wholesaler_id from config
@@ -1180,17 +1233,20 @@ class IntegrationController extends Controller
 
             $wholesaler = Wholesaler::find($wholesalerId);
             if (!$wholesaler) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'ไม่พบ Wholesaler',
-                ], 404);
+                return response()->json(
+                    [
+                        'success' => false,
+                        'message' => 'ไม่พบ Wholesaler',
+                    ],
+                    404,
+                );
             }
 
             // Create adapter and fetch data
             $adapter = AdapterFactory::create($wholesalerId);
-            
+
             $startTime = microtime(true);
-            
+
             // Fetch ALL pages to get complete tour list
             $allTours = [];
             $cursorValue = null;
@@ -1204,13 +1260,16 @@ class IntegrationController extends Controller
                     // If first page fails, return error
                     if ($pageNum === 1) {
                         $responseTimeMs = (int) ((microtime(true) - $startTime) * 1000);
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'เชื่อมต่อ API ไม่สำเร็จ: ' . ($syncResult->errorMessage ?? 'Unknown error'),
-                            'data' => [
-                                'response_time_ms' => $responseTimeMs,
+                        return response()->json(
+                            [
+                                'success' => false,
+                                'message' => 'เชื่อมต่อ API ไม่สำเร็จ: ' . ($syncResult->errorMessage ?? 'Unknown error'),
+                                'data' => [
+                                    'response_time_ms' => $responseTimeMs,
+                                ],
                             ],
-                        ], 400);
+                            400,
+                        );
                     }
                     break; // Partial success — use what we have
                 }
@@ -1220,8 +1279,9 @@ class IntegrationController extends Controller
                 $pageNum++;
 
                 // Safety: stop if empty page
-                if (count($syncResult->tours) === 0) break;
-
+                if (count($syncResult->tours) === 0) {
+                    break;
+                }
             } while ($syncResult->shouldContinue() && $pageNum <= $maxPages);
 
             $responseTimeMs = (int) ((microtime(true) - $startTime) * 1000);
@@ -1231,23 +1291,19 @@ class IntegrationController extends Controller
 
             // Check if Two-Phase sync is enabled
             $credentials = $config->auth_credentials ?? [];
-            $isTwoPhase = ($config->sync_mode === 'two_phase') || !empty($credentials['two_phase_sync']);
-            $periodsEndpoint = $credentials['endpoints']['periods'] 
-                ?? $credentials['periods_endpoint'] 
-                ?? null;
+            $isTwoPhase = $config->sync_mode === 'two_phase' || !empty($credentials['two_phase_sync']);
+            $periodsEndpoint = $credentials['endpoints']['periods'] ?? ($credentials['periods_endpoint'] ?? null);
 
             // ดึง mapping เพื่อหา field names ที่ใช้
-            $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)
-                ->where('is_active', true)
-                ->get();
-            
+            $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)->where('is_active', true)->get();
+
             // หา field path สำหรับ departure และ country จาก mapping
             $departureArrayPath = null;
             $countryFieldPath = null;
-            
+
             foreach ($mappings as $mapping) {
                 $path = $mapping->their_field_path ?? $mapping->their_field;
-                
+
                 // หา departure array path (เช่น "Periods[]" หรือ "departures[]")
                 if ($mapping->section_name === 'departure' && $path && strpos($path, '[]') !== false) {
                     // Extract array name before []
@@ -1256,7 +1312,7 @@ class IntegrationController extends Controller
                         $departureArrayPath = $parts[0];
                     }
                 }
-                
+
                 // หา country field path (เช่น "CountryName" หรือ "country")
                 if ($mapping->section_name === 'tour' && $mapping->our_field === 'primary_country_id' && $path) {
                     $countryFieldPath = $path;
@@ -1271,12 +1327,16 @@ class IntegrationController extends Controller
             $twoPhaseNote = null;
 
             // Helper function: Extract value from nested path
-            $extractValue = function($data, $path) {
-                if (empty($path)) return null;
+            $extractValue = function ($data, $path) {
+                if (empty($path)) {
+                    return null;
+                }
                 $keys = explode('.', $path);
                 $value = $data;
                 foreach ($keys as $key) {
-                    if (!is_array($value) || !isset($value[$key])) return null;
+                    if (!is_array($value) || !isset($value[$key])) {
+                        return null;
+                    }
                     $value = $value[$key];
                 }
                 return $value;
@@ -1288,23 +1348,23 @@ class IntegrationController extends Controller
                 $sampleTours = array_slice($tours, 0, 3);
                 $totalSamplePeriods = 0;
                 $sampledCount = 0;
-                
+
                 foreach ($sampleTours as $sampleTour) {
                     // Build the periods endpoint URL
                     $endpoint = $periodsEndpoint;
-                    
+
                     if (preg_match_all('/\{([^}]+)\}/', $periodsEndpoint, $matches)) {
                         foreach ($matches[1] as $fieldName) {
                             $value = $sampleTour[$fieldName] ?? null;
                             if ($value === null) {
-                                $value = $sampleTour['id'] ?? $sampleTour['tour_id'] ?? $sampleTour['external_id'] ?? $sampleTour['code'] ?? null;
+                                $value = $sampleTour['id'] ?? ($sampleTour['tour_id'] ?? ($sampleTour['external_id'] ?? ($sampleTour['code'] ?? null)));
                             }
                             if ($value !== null) {
                                 $endpoint = str_replace('{' . $fieldName . '}', $value, $endpoint);
                             }
                         }
                     }
-                    
+
                     // Check if all placeholders were replaced
                     if (!preg_match('/\{[^}]+\}/', $endpoint)) {
                         try {
@@ -1322,15 +1382,15 @@ class IntegrationController extends Controller
                         }
                     }
                 }
-                
+
                 // ประมาณจำนวน periods ทั้งหมดจาก sample
                 if ($sampledCount > 0) {
                     $avgPeriodsPerTour = $totalSamplePeriods / $sampledCount;
                     $totalDepartures = (int) round($avgPeriodsPerTour * $tourCount);
                     $samplePeriodsCount = $totalSamplePeriods;
-                    $twoPhaseNote = "ประมาณจาก sample {$sampledCount} ทัวร์ (พบ {$totalSamplePeriods} periods, เฉลี่ย " . round($avgPeriodsPerTour, 1) . " periods/tour)";
+                    $twoPhaseNote = "ประมาณจาก sample {$sampledCount} ทัวร์ (พบ {$totalSamplePeriods} periods, เฉลี่ย " . round($avgPeriodsPerTour, 1) . ' periods/tour)';
                 } else {
-                    $twoPhaseNote = "ไม่สามารถดึง periods จาก API แยกได้";
+                    $twoPhaseNote = 'ไม่สามารถดึง periods จาก API แยกได้';
                 }
             } else {
                 // Single-Phase: นับ departures จาก response โดยตรง
@@ -1341,9 +1401,9 @@ class IntegrationController extends Controller
                         $departures = $tour[$departureArrayPath];
                     } else {
                         // Fallback: ลองหลาย field names ที่เป็นไปได้
-                        $departures = $tour['Periods'] ?? $tour['departures'] ?? $tour['programdepartures'] ?? $tour['schedules'] ?? [];
+                        $departures = $tour['Periods'] ?? ($tour['departures'] ?? ($tour['programdepartures'] ?? ($tour['schedules'] ?? [])));
                     }
-                    
+
                     if (is_array($departures) && count($departures) > 0) {
                         $toursWithDepartures++;
                         $totalDepartures += count($departures);
@@ -1359,9 +1419,9 @@ class IntegrationController extends Controller
                 }
                 if (!$country) {
                     // Fallback: ลองหลาย field names ที่เป็นไปได้
-                    $country = $tour['CountryName'] ?? $tour['country'] ?? $tour['destination'] ?? $tour['region'] ?? null;
+                    $country = $tour['CountryName'] ?? ($tour['country'] ?? ($tour['destination'] ?? ($tour['region'] ?? null)));
                 }
-                
+
                 if ($country && !in_array($country, $countries)) {
                     $countries[] = $country;
                 }
@@ -1378,7 +1438,7 @@ class IntegrationController extends Controller
                 'wholesaler_name' => $wholesaler->name,
                 'sync_mode' => $isTwoPhase ? 'two_phase' : 'single',
             ];
-            
+
             // เพิ่มข้อมูล Two-Phase
             if ($isTwoPhase) {
                 $responseData['two_phase_info'] = [
@@ -1393,14 +1453,16 @@ class IntegrationController extends Controller
                 'message' => "พบทัวร์ทั้งหมด {$tourCount} ทัวร์" . ($isTwoPhase ? ' (Two-Phase Sync)' : ''),
                 'data' => $responseData,
             ]);
-
         } catch (\Exception $e) {
             Log::error('Check tour count failed: ' . $e->getMessage());
 
-            return response()->json([
-                'success' => false,
-                'message' => 'เกิดข้อผิดพลาด: ' . $e->getMessage(),
-            ], 500);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'เกิดข้อผิดพลาด: ' . $e->getMessage(),
+                ],
+                500,
+            );
         }
     }
 
@@ -1422,7 +1484,7 @@ class IntegrationController extends Controller
             return response()->json(['success' => false, 'message' => 'Integration นี้ไม่ใช่ประเภท Headcode'], 400);
         }
 
-        $taskId   = (string) \Illuminate\Support\Str::uuid();
+        $taskId = (string) \Illuminate\Support\Str::uuid();
         $cacheKey = "headcode_test:{$taskId}";
 
         // Mark as pending before dispatching so first poll returns 'pending' not null
@@ -1445,29 +1507,32 @@ class IntegrationController extends Controller
     public function testHeadcodeStatus(int $id, string $taskId): JsonResponse
     {
         $cacheKey = "headcode_test:{$taskId}";
-        $data     = \Illuminate\Support\Facades\Cache::get($cacheKey);
+        $data = \Illuminate\Support\Facades\Cache::get($cacheKey);
 
         if ($data === null) {
-            return response()->json([
-                'success' => false,
-                'status'  => 'expired',
-                'message' => 'Task หมดอายุหรือไม่พบ',
-            ], 404);
+            return response()->json(
+                [
+                    'success' => false,
+                    'status' => 'expired',
+                    'message' => 'Task หมดอายุหรือไม่พบ',
+                ],
+                404,
+            );
         }
 
         return response()->json([
-            'success'      => true,
-            'status'       => $data['status'],            // pending | success | failed
-            'tours_count'  => $data['tours_count'] ?? null,
-            'elapsed_ms'   => $data['elapsed_ms']  ?? null,
-            'message'      => $data['message']     ?? null,
+            'success' => true,
+            'status' => $data['status'], // pending | success | failed
+            'tours_count' => $data['tours_count'] ?? null,
+            'elapsed_ms' => $data['elapsed_ms'] ?? null,
+            'message' => $data['message'] ?? null,
         ]);
     }
 
     /**
      * Test mapping with dry run (validate without saving)
      * Simulates sync process and reports any issues
-     * 
+     *
      * @param int $id Integration ID (WholesalerApiConfig primary key)
      */
     public function testMapping(Request $request, int $id): JsonResponse
@@ -1480,11 +1545,14 @@ class IntegrationController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors(),
+                ],
+                422,
+            );
         }
 
         $results = [
@@ -1505,7 +1573,7 @@ class IntegrationController extends Controller
             $transformedData = $request->transformed_data;
             $enabledFields = $request->enabled_fields ?? []; // fields ที่เปิดใช้งาน
             $mappingsData = $request->mappings ?? []; // mapping info
-            
+
             // สร้าง lookup map สำหรับ mapping info
             // key = "section.field", value = ['api_field' => ..., 'source_type' => ...]
             $mappingsLookup = [];
@@ -1517,39 +1585,41 @@ class IntegrationController extends Controller
                     'fixed_value' => $m['fixed_value'] ?? null,
                 ];
             }
-            
+
             // Helper function: ตรวจสอบว่า field นี้เปิดใช้งานหรือไม่
-            $isFieldEnabled = function($section, $key) use ($enabledFields) {
-                if (empty($enabledFields)) return true; // ถ้าไม่ส่งมา = ตรวจสอบทั้งหมด
+            $isFieldEnabled = function ($section, $key) use ($enabledFields) {
+                if (empty($enabledFields)) {
+                    return true;
+                } // ถ้าไม่ส่งมา = ตรวจสอบทั้งหมด
                 return in_array("{$section}.{$key}", $enabledFields);
             };
-            
+
             // Helper function: ดึง mapping info
-            $getMappingInfo = function($section, $key) use ($mappingsLookup) {
+            $getMappingInfo = function ($section, $key) use ($mappingsLookup) {
                 $lookupKey = "{$section}.{$key}";
                 return $mappingsLookup[$lookupKey] ?? ['api_field' => null, 'source_type' => null];
             };
-            
+
             // === Validate Tour Section ===
             // Field names must match ALL_FIELDS in frontend:
             // title, tour_code, primary_country_id, duration_days, duration_nights
             $tourSection = $transformedData['tour'] ?? [];
-            
+
             // รวบรวม fields ที่เปิดใช้งานใน tour section
             $tourFieldsAll = ['external_id', 'tour_code', 'wholesaler_tour_code', 'title', 'tour_type', 'duration_days', 'duration_nights', 'primary_country_id', 'region', 'transport_id', 'hotel_star', 'themes', 'suitable_for'];
             $tourEnabledFields = [];
             $tourTestedFields = [];
-            
+
             foreach ($tourFieldsAll as $tf) {
                 if ($isFieldEnabled('tour', $tf)) {
                     $mapInfo = $getMappingInfo('tour', $tf);
-                    
+
                     // ข้าม fields ที่ไม่ได้ map (ไม่มี api_field และไม่ใช่ fixed)
                     $hasMapping = !empty($mapInfo['api_field']) || $mapInfo['source_type'] === 'fixed';
                     if (!$hasMapping) {
                         continue; // ไม่แสดง field ที่ไม่ได้ map
                     }
-                    
+
                     $tourEnabledFields[] = $tf;
                     $value = $tourSection[$tf] ?? null;
                     $hasValue = isset($tourSection[$tf]) && $tourSection[$tf] !== '' && $tourSection[$tf] !== null;
@@ -1563,7 +1633,7 @@ class IntegrationController extends Controller
                     ];
                 }
             }
-            
+
             $tourValidation = [
                 'section' => 'tour',
                 'status' => 'success',
@@ -1602,13 +1672,13 @@ class IntegrationController extends Controller
                 'duration_days' => 'duration_days (จำนวนวัน)',
                 'duration_nights' => 'duration_nights (จำนวนคืน)',
             ];
-            
+
             foreach ($recommendedFields as $field => $label) {
                 // ข้ามถ้า field นี้ไม่ได้เปิดใช้งาน
                 if (!$isFieldEnabled('tour', $field)) {
                     continue;
                 }
-                
+
                 // ใช้ isset + !== '' แทน empty() เพราะ empty("0") === true ใน PHP
                 $hasValue = isset($tourSection[$field]) && $tourSection[$field] !== '' && $tourSection[$field] !== null;
                 if (!$hasValue) {
@@ -1620,7 +1690,7 @@ class IntegrationController extends Controller
                     $results['summary']['warnings']++;
                 }
             }
-            
+
             $tourValidation['fields'] = [
                 'title' => $tourSection['title'] ?? null,
                 'tour_code' => $tourSection['tour_code'] ?? '(auto generate)',
@@ -1632,23 +1702,23 @@ class IntegrationController extends Controller
 
             // === Validate Departure Section ===
             $departures = $transformedData['departure'] ?? [];
-            
+
             // กำหนด departureFields ก่อนใช้งาน
             $departureFields = ['external_id', 'departure_date', 'return_date', 'capacity', 'available_seats', 'status', 'guarantee_status', 'currency', 'price_adult', 'discount_adult', 'price_child', 'discount_child_bed', 'price_child_nobed', 'discount_child_nobed', 'price_infant', 'price_joinland', 'price_single', 'discount_single', 'deposit', 'commission_agent', 'commission_sale', 'cancellation_policy', 'refund_policy', 'notes', 'ttl_minutes'];
-            
+
             // รวบรวม fields ที่เปิดใช้งานใน departure section พร้อม mapping info
             $departureEnabledFields = [];
             $departureTestedFields = [];
             foreach ($departureFields as $df) {
                 if ($isFieldEnabled('departure', $df)) {
                     $mapInfo = $getMappingInfo('departure', $df);
-                    
+
                     // ข้าม fields ที่ไม่ได้ map
                     $hasMapping = !empty($mapInfo['api_field']) || $mapInfo['source_type'] === 'fixed';
                     if (!$hasMapping) {
                         continue;
                     }
-                    
+
                     $departureEnabledFields[] = $df;
                     $departureTestedFields[] = [
                         'field' => $df,
@@ -1659,7 +1729,7 @@ class IntegrationController extends Controller
                     ];
                 }
             }
-            
+
             $departureValidation = [
                 'section' => 'departure',
                 'status' => 'success',
@@ -1673,7 +1743,7 @@ class IntegrationController extends Controller
 
             // ตรวจสอบว่า departure section มี field ใดเปิดใช้งานบ้าง
             $hasDepartureFieldsEnabled = count($departureEnabledFields) > 0;
-            
+
             if (!$hasDepartureFieldsEnabled) {
                 // ไม่มี departure field ใดเปิดใช้งาน ข้ามไป
                 $departureValidation['message'] = 'Departure section disabled';
@@ -1729,7 +1799,7 @@ class IntegrationController extends Controller
                             'status' => $hasValue ? 'ok' : 'empty',
                         ];
                     }
-                    
+
                     $depItem['data'] = [
                         'departure_date' => $dep['departure_date'] ?? null,
                         'return_date' => $dep['return_date'] ?? null,
@@ -1739,7 +1809,7 @@ class IntegrationController extends Controller
                     $depItem['tested_fields'] = $depTestedFields;
 
                     $departureValidation['items'][] = $depItem;
-                    
+
                     // Update section-level tested_fields with first item values
                     if ($i === 0) {
                         $departureValidation['tested_fields'] = $depTestedFields;
@@ -1751,23 +1821,23 @@ class IntegrationController extends Controller
 
             // === Validate Itinerary Section ===
             $itineraries = $transformedData['itinerary'] ?? [];
-            
+
             // กำหนด itineraryFields ก่อนใช้งาน
             $itineraryFields = ['external_id', 'day_number', 'title', 'description', 'places', 'has_breakfast', 'has_lunch', 'has_dinner', 'meals_note', 'accommodation', 'hotel_star', 'images'];
-            
+
             // รวบรวม fields ที่เปิดใช้งานใน itinerary section พร้อม mapping info
             $itineraryEnabledFields = [];
             $itineraryTestedFields = [];
             foreach ($itineraryFields as $itf) {
                 if ($isFieldEnabled('itinerary', $itf)) {
                     $mapInfo = $getMappingInfo('itinerary', $itf);
-                    
+
                     // ข้าม fields ที่ไม่ได้ map
                     $hasMapping = !empty($mapInfo['api_field']) || $mapInfo['source_type'] === 'fixed';
                     if (!$hasMapping) {
                         continue;
                     }
-                    
+
                     $itineraryEnabledFields[] = $itf;
                     $itineraryTestedFields[] = [
                         'field' => $itf,
@@ -1778,7 +1848,7 @@ class IntegrationController extends Controller
                     ];
                 }
             }
-            
+
             $itineraryValidation = [
                 'section' => 'itinerary',
                 'status' => 'success',
@@ -1792,7 +1862,7 @@ class IntegrationController extends Controller
 
             // ตรวจสอบว่า itinerary section มี field ใดเปิดใช้งานบ้าง
             $hasItineraryFieldsEnabled = count($itineraryEnabledFields) > 0;
-            
+
             if (!$hasItineraryFieldsEnabled) {
                 // ไม่มี itinerary field ใดเปิดใช้งาน ข้ามไป
                 $itineraryValidation['message'] = 'Itinerary section disabled';
@@ -1848,7 +1918,7 @@ class IntegrationController extends Controller
                             'status' => $hasValue ? 'ok' : 'empty',
                         ];
                     }
-                    
+
                     $itinItem['data'] = [
                         'day_number' => $itin['day_number'] ?? null,
                         'title' => $itin['title'] ?? null,
@@ -1859,7 +1929,7 @@ class IntegrationController extends Controller
                     $itinItem['tested_fields'] = $itinTestedFields;
 
                     $itineraryValidation['items'][] = $itinItem;
-                    
+
                     // Update section-level tested_fields with first item values
                     if ($i === 0) {
                         $itineraryValidation['tested_fields'] = $itinTestedFields;
@@ -1871,18 +1941,18 @@ class IntegrationController extends Controller
 
             // === Final Status ===
             $results['success'] = $results['summary']['errors'] === 0;
-            $results['message'] = $results['success'] 
-                ? 'Mapping ผ่านการทดสอบ พร้อม sync ได้เลย!' 
-                : 'พบปัญหา ' . $results['summary']['errors'] . ' รายการ กรุณาแก้ไขก่อน sync';
+            $results['message'] = $results['success'] ? 'Mapping ผ่านการทดสอบ พร้อม sync ได้เลย!' : 'พบปัญหา ' . $results['summary']['errors'] . ' รายการ กรุณาแก้ไขก่อน sync';
 
             return response()->json($results);
-
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Test failed: ' . $e->getMessage(),
-                'trace' => config('app.debug') ? $e->getTraceAsString() : null,
-            ], 500);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Test failed: ' . $e->getMessage(),
+                    'trace' => config('app.debug') ? $e->getTraceAsString() : null,
+                ],
+                500,
+            );
         }
     }
 
@@ -1896,11 +1966,7 @@ class IntegrationController extends Controller
         $config = WholesalerApiConfig::find($id);
         $wholesalerId = $config ? $config->wholesaler_id : $id;
 
-        $logs = SyncLog::where('wholesaler_id', $wholesalerId)
-            ->with('errorLogs')
-            ->orderBy('started_at', 'desc')
-            ->limit(50)
-            ->get();
+        $logs = SyncLog::where('wholesaler_id', $wholesalerId)->with('errorLogs')->orderBy('started_at', 'desc')->limit(50)->get();
 
         return response()->json([
             'success' => true,
@@ -1942,7 +2008,6 @@ class IntegrationController extends Controller
                     'health_status' => $config->fresh()->health_status,
                 ],
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -1961,61 +2026,64 @@ class IntegrationController extends Controller
 
         try {
             $adapter = AdapterFactory::create($config->wholesaler_id);
-            
+
             // For headcode adapters: pass '__ping__' cursor so the adapter only runs
             // Phase 1 (tour list) and returns immediately — no per-tour period fetches.
             // This keeps fetchSample fast (~8s API response) without blocking the server.
-            $sampleCursor = ($config->integration_type === 'headcode') ? '__ping__' : null;
+            $sampleCursor = $config->integration_type === 'headcode' ? '__ping__' : null;
 
             // Fetch tours (first page)
             $result = $adapter->fetchTours($sampleCursor);
 
-            if ($result->success && !empty($result->tours)) {
-                $sampleTour = $result->tours[0]; // First record
-                
+           if ($result->success && !empty($result->tours)) {
+    // ใช้ collect()->first() เพื่อดึงตัวแรกออกมา ไม่ว่า index จะเป็นอะไรก็ตาม
+    $sampleTour = collect($result->tours)->first(); 
+
+    if (!$sampleTour) {
+         // กรณีที่ tours เป็น array ว่างจริงๆ (แม้จะผ่าน !empty มาได้ในบางเคส)
+         return $this->returnMockData(); // หรือจัดการตามเหมาะสม
+    }
                 // Check if two-phase sync is enabled
                 // Support both: sync_mode column and auth_credentials.two_phase_sync
                 $credentials = $config->auth_credentials ?? [];
-                $isTwoPhase = ($config->sync_mode === 'two_phase') || !empty($credentials['two_phase_sync']);
-                
+                $isTwoPhase = $config->sync_mode === 'two_phase' || !empty($credentials['two_phase_sync']);
+
                 // Get periods endpoint - support both formats
-                $periodsEndpoint = $credentials['endpoints']['periods'] 
-                    ?? $credentials['periods_endpoint'] 
-                    ?? null;
-                
+                $periodsEndpoint = $credentials['endpoints']['periods'] ?? ($credentials['periods_endpoint'] ?? null);
+
                 if ($isTwoPhase && $periodsEndpoint && $adapter instanceof \App\Services\WholesalerAdapters\Adapters\GenericRestAdapter) {
                     // Build the periods endpoint URL by replacing all placeholders
                     // Extract all {field_name} patterns from the endpoint
                     $endpoint = $periodsEndpoint;
-                    
+
                     // Find all placeholders like {external_id}, {tour_code}, {id}, etc.
                     if (preg_match_all('/\{([^}]+)\}/', $periodsEndpoint, $matches)) {
                         foreach ($matches[1] as $fieldName) {
                             // Try to get value from sample tour using the field name
                             $value = $sampleTour[$fieldName] ?? null;
-                            
+
                             // If not found, try common fallbacks based on field name
                             if ($value === null) {
                                 // For id-like fields, prefer numeric id
                                 if (in_array($fieldName, ['external_id', 'tour_id', 'id'])) {
-                                    $value = $sampleTour['id'] ?? $sampleTour['tour_id'] ?? $sampleTour['external_id'] ?? null;
+                                    $value = $sampleTour['id'] ?? ($sampleTour['tour_id'] ?? ($sampleTour['external_id'] ?? null));
                                 } else {
                                     // For code-like fields, prefer code
-                                    $value = $sampleTour['code'] ?? $sampleTour['tour_code'] ?? $sampleTour['id'] ?? null;
+                                    $value = $sampleTour['code'] ?? ($sampleTour['tour_code'] ?? ($sampleTour['id'] ?? null));
                                 }
                             }
-                            
+
                             if ($value !== null) {
                                 $endpoint = str_replace('{' . $fieldName . '}', $value, $endpoint);
                             }
                         }
                     }
-                    
+
                     // Check if all placeholders were replaced
                     if (!preg_match('/\{[^}]+\}/', $endpoint)) {
                         // Fetch periods
                         $periodsResult = $adapter->fetchPeriods($endpoint);
-                        
+
                         if ($periodsResult->success && !empty($periodsResult->periods)) {
                             // Determine the field name to store periods
                             $periodsFieldName = $credentials['periods_field_name'] ?? 'periods';
@@ -2032,38 +2100,36 @@ class IntegrationController extends Controller
                         $sampleTour['_periods_endpoint_resolved'] = $endpoint;
                     }
                 }
-                
+
                 // Fetch itineraries if endpoint is configured
-                $itinerariesEndpoint = $credentials['endpoints']['itineraries'] 
-                    ?? $credentials['itineraries_endpoint'] 
-                    ?? null;
-                
+                $itinerariesEndpoint = $credentials['endpoints']['itineraries'] ?? ($credentials['itineraries_endpoint'] ?? null);
+
                 if ($itinerariesEndpoint && $adapter instanceof \App\Services\WholesalerAdapters\Adapters\GenericRestAdapter) {
                     // Build the itineraries endpoint URL by replacing all placeholders
                     $endpoint = $itinerariesEndpoint;
-                    
+
                     // Find all placeholders like {external_id}, {id}, etc.
                     if (preg_match_all('/\{([^}]+)\}/', $itinerariesEndpoint, $matches)) {
                         foreach ($matches[1] as $fieldName) {
                             // Try to get value from sample tour using the field name
                             $value = $sampleTour[$fieldName] ?? null;
-                            
+
                             // If not found, try common fallbacks
                             if ($value === null) {
-                                $value = $sampleTour['id'] ?? $sampleTour['code'] ?? $sampleTour['tour_code'] ?? null;
+                                $value = $sampleTour['id'] ?? ($sampleTour['code'] ?? ($sampleTour['tour_code'] ?? null));
                             }
-                            
+
                             if ($value !== null) {
                                 $endpoint = str_replace('{' . $fieldName . '}', $value, $endpoint);
                             }
                         }
                     }
-                    
+
                     // Check if all placeholders were replaced
                     if (!preg_match('/\{[^}]+\}/', $endpoint)) {
                         // Fetch itineraries
                         $itinerariesResult = $adapter->fetchItineraries($endpoint);
-                        
+
                         if ($itinerariesResult->success && !empty($itinerariesResult->itineraries)) {
                             // Determine the field name to store itineraries
                             $itinerariesFieldName = $credentials['itineraries_field_name'] ?? 'itineraries';
@@ -2080,7 +2146,7 @@ class IntegrationController extends Controller
                         $sampleTour['_itineraries_endpoint_resolved'] = $endpoint;
                     }
                 }
-                
+
                 return response()->json([
                     'success' => true,
                     'data' => $sampleTour,
@@ -2098,17 +2164,20 @@ class IntegrationController extends Controller
 
             // If SyncResult has error, return it
             if (!$result->success) {
-                return response()->json([
-                    'success' => false,
-                    'message' => $result->errorMessage ?? 'API returned error',
-                    'error_code' => $result->errorCode ?? 'unknown',
-                    'data' => null,
-                    'meta' => [
-                        'fetched_at' => now()->toIso8601String(),
-                        'api_base_url' => $config->api_base_url,
-                        'wholesaler' => $config->wholesaler?->name ?? 'Unknown',
+                return response()->json(
+                    [
+                        'success' => false,
+                        'message' => $result->errorMessage ?? 'API returned error',
+                        'error_code' => $result->errorCode ?? 'unknown',
+                        'data' => null,
+                        'meta' => [
+                            'fetched_at' => now()->toIso8601String(),
+                            'api_base_url' => $config->api_base_url,
+                            'wholesaler' => $config->wholesaler?->name ?? 'Unknown',
+                        ],
                     ],
-                ], 502); // Bad Gateway - upstream server error
+                    502,
+                ); // Bad Gateway - upstream server error
             }
 
             // If API returns empty data, return mock data for testing mapping
@@ -2128,15 +2197,8 @@ class IntegrationController extends Controller
                 'available_seats' => 25,
                 'inclusions' => ['Hotel', 'Breakfast', 'Transportation'],
                 'exclusions' => ['Lunch', 'Dinner', 'Personal expenses'],
-                'itinerary' => [
-                    ['day' => 1, 'title' => 'Arrival', 'description' => 'Arrive at destination'],
-                    ['day' => 2, 'title' => 'Sightseeing', 'description' => 'Visit attractions'],
-                    ['day' => 3, 'title' => 'Departure', 'description' => 'Return home'],
-                ],
-                'images' => [
-                    'https://example.com/tour1.jpg',
-                    'https://example.com/tour2.jpg',
-                ],
+                'itinerary' => [['day' => 1, 'title' => 'Arrival', 'description' => 'Arrive at destination'], ['day' => 2, 'title' => 'Sightseeing', 'description' => 'Visit attractions'], ['day' => 3, 'title' => 'Departure', 'description' => 'Return home']],
+                'images' => ['https://example.com/tour1.jpg', 'https://example.com/tour2.jpg'],
                 'status' => 'active',
                 'created_at' => now()->toIso8601String(),
                 'updated_at' => now()->toIso8601String(),
@@ -2152,7 +2214,6 @@ class IntegrationController extends Controller
                     'note' => 'API returned empty data. Using sample data for mapping preview.',
                 ],
             ]);
-
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
             // Connection timeout or failed
             Log::error('Connection failed to wholesaler API', [
@@ -2161,42 +2222,46 @@ class IntegrationController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'ไม่สามารถเชื่อมต่อ API ได้: Connection timeout หรือ server ไม่ตอบสนอง',
-                'error_detail' => $e->getMessage(),
-                'error_type' => 'connection_failed',
-                'data' => null,
-                'meta' => [
-                    'api_base_url' => $config->api_base_url,
-                    'timeout_seconds' => $config->request_timeout_seconds,
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'ไม่สามารถเชื่อมต่อ API ได้: Connection timeout หรือ server ไม่ตอบสนอง',
+                    'error_detail' => $e->getMessage(),
+                    'error_type' => 'connection_failed',
+                    'data' => null,
+                    'meta' => [
+                        'api_base_url' => $config->api_base_url,
+                        'timeout_seconds' => $config->request_timeout_seconds,
+                    ],
                 ],
-            ], 504); // Gateway Timeout
-
+                504,
+            ); // Gateway Timeout
         } catch (\Illuminate\Http\Client\RequestException $e) {
             // HTTP error response
             $response = $e->response;
             $statusCode = $response?->status() ?? 500;
             $body = $response?->json() ?? ['raw' => $response?->body()];
-            
+
             Log::error('Wholesaler API returned error', [
                 'integration_id' => $id,
                 'status_code' => $statusCode,
                 'response' => $body,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => $this->parseApiErrorMessage($statusCode, $body),
-                'error_type' => 'api_error',
-                'status_code' => $statusCode,
-                'api_response' => $body,
-                'data' => null,
-                'meta' => [
-                    'api_base_url' => $config->api_base_url,
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => $this->parseApiErrorMessage($statusCode, $body),
+                    'error_type' => 'api_error',
+                    'status_code' => $statusCode,
+                    'api_response' => $body,
+                    'data' => null,
+                    'meta' => [
+                        'api_base_url' => $config->api_base_url,
+                    ],
                 ],
-            ], $statusCode >= 500 ? 502 : $statusCode);
-
+                $statusCode >= 500 ? 502 : $statusCode,
+            );
         } catch (\Exception $e) {
             Log::error('Failed to fetch sample data', [
                 'integration_id' => $id,
@@ -2208,7 +2273,7 @@ class IntegrationController extends Controller
             // Parse exception message for common errors
             $errorMessage = $e->getMessage();
             $errorType = 'unknown';
-            
+
             if (str_contains($errorMessage, 'Could not resolve host')) {
                 $errorType = 'dns_error';
                 $errorMessage = 'ไม่พบ domain: ' . $config->api_base_url;
@@ -2223,17 +2288,20 @@ class IntegrationController extends Controller
                 // Extract actual error message
             }
 
-            return response()->json([
-                'success' => false,
-                'message' => $errorMessage,
-                'error_type' => $errorType,
-                'error_code' => $e->getCode() ?: null,
-                'data' => null,
-                'meta' => [
-                    'api_base_url' => $config->api_base_url,
-                    'wholesaler' => $config->wholesaler?->name ?? 'Unknown',
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => $errorMessage,
+                    'error_type' => $errorType,
+                    'error_code' => $e->getCode() ?: null,
+                    'data' => null,
+                    'meta' => [
+                        'api_base_url' => $config->api_base_url,
+                        'wholesaler' => $config->wholesaler?->name ?? 'Unknown',
+                    ],
                 ],
-            ], 500);
+                500,
+            );
         }
     }
 
@@ -2243,12 +2311,7 @@ class IntegrationController extends Controller
     private function parseApiErrorMessage(int $statusCode, array $body): string
     {
         // Common API error message locations
-        $message = $body['message'] 
-            ?? $body['error']['message'] 
-            ?? $body['error'] 
-            ?? $body['errors'][0]['message'] 
-            ?? $body['detail']
-            ?? null;
+        $message = $body['message'] ?? ($body['error']['message'] ?? ($body['error'] ?? ($body['errors'][0]['message'] ?? ($body['detail'] ?? null))));
 
         if ($message && is_string($message)) {
             return "API Error ($statusCode): $message";
@@ -2282,15 +2345,18 @@ class IntegrationController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors(),
+                ],
+                422,
+            );
         }
 
         try {
-            $limit = $request->limit ?? $config->sync_limit ?? 10;
+            $limit = $request->limit ?? ($config->sync_limit ?? 10);
             $wholesalerId = $config->wholesaler_id;
 
             // Fetch from API
@@ -2298,17 +2364,17 @@ class IntegrationController extends Controller
             $result = $adapter->fetchTours(null);
 
             if (!$result->success) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Failed to fetch tours: ' . $result->errorMessage,
-                ], 500);
+                return response()->json(
+                    [
+                        'success' => false,
+                        'message' => 'Failed to fetch tours: ' . $result->errorMessage,
+                    ],
+                    500,
+                );
             }
 
             // Get mappings
-            $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)
-                ->where('is_active', true)
-                ->get()
-                ->groupBy('section_name');
+            $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)->where('is_active', true)->get()->groupBy('section_name');
 
             // Apply limit
             $tours = array_slice($result->tours, 0, $limit);
@@ -2329,7 +2395,6 @@ class IntegrationController extends Controller
                     'transformed_data' => $transformedTours,
                 ],
             ]);
-
         } catch (\Exception $e) {
             Log::error('Preview sync failed', [
                 'integration_id' => $id,
@@ -2337,10 +2402,13 @@ class IntegrationController extends Controller
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Preview failed: ' . $e->getMessage(),
-            ], 500);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Preview failed: ' . $e->getMessage(),
+                ],
+                500,
+            );
         }
     }
 
@@ -2359,44 +2427,54 @@ class IntegrationController extends Controller
         ];
 
         // Helper to extract value from nested path (e.g., "Country.Name" or "Periods[].Price")
-        $extractValue = function($data, $path) {
-            if (empty($path)) return null;
-            
+        $extractValue = function ($data, $path) {
+            if (empty($path)) {
+                return null;
+            }
+
             // Handle array notation like "Periods[]"
             if (strpos($path, '[]') !== false) {
                 // This is an array path - for single values, just use first item
                 $parts = explode('[].', $path);
                 $arrayKey = $parts[0];
                 $fieldPath = $parts[1] ?? null;
-                
-                if (!isset($data[$arrayKey]) || !is_array($data[$arrayKey])) return null;
-                if (empty($data[$arrayKey])) return null;
-                
+
+                if (!isset($data[$arrayKey]) || !is_array($data[$arrayKey])) {
+                    return null;
+                }
+                if (empty($data[$arrayKey])) {
+                    return null;
+                }
+
                 // Get from first item if fieldPath exists
                 if ($fieldPath && isset($data[$arrayKey][0])) {
                     return $data[$arrayKey][0][$fieldPath] ?? null;
                 }
                 return null;
             }
-            
+
             // Normal dot notation path
             $keys = explode('.', $path);
             $value = $data;
-            
+
             foreach ($keys as $key) {
-                if (!is_array($value) || !isset($value[$key])) return null;
+                if (!is_array($value) || !isset($value[$key])) {
+                    return null;
+                }
                 $value = $value[$key];
             }
-            
+
             return $value;
         };
 
         // Helper to apply transforms
-        $applyTransform = function($value, $mapping, $rawData) use ($extractValue) {
-            if (empty($mapping->transform_type)) return $value;
-            
+        $applyTransform = function ($value, $mapping, $rawData) use ($extractValue) {
+            if (empty($mapping->transform_type)) {
+                return $value;
+            }
+
             $config = $mapping->transform_config ?? [];
-            
+
             switch ($mapping->transform_type) {
                 case 'concat':
                     // Template-based concat like "{ProductName}-{Highlight}"
@@ -2404,17 +2482,21 @@ class IntegrationController extends Controller
                     if (isset($stringTransform['template'])) {
                         $template = $stringTransform['template'];
                         // Replace {FieldName} with actual values
-                        $result = preg_replace_callback('/\{(\w+)\}/', function($matches) use ($rawData) {
-                            return $rawData[$matches[1]] ?? '';
-                        }, $template);
+                        $result = preg_replace_callback(
+                            '/\{(\w+)\}/',
+                            function ($matches) use ($rawData) {
+                                return $rawData[$matches[1]] ?? '';
+                            },
+                            $template,
+                        );
                         return $result;
                     }
                     return $value;
-                    
+
                 case 'value_map':
                     $map = $config['map'] ?? [];
                     return $map[$value] ?? $value;
-                    
+
                 case 'date_format':
                     if ($value) {
                         try {
@@ -2425,16 +2507,18 @@ class IntegrationController extends Controller
                         }
                     }
                     return $value;
-                    
+
                 case 'formula':
                     // Formula: คำนวณจากหลาย fields เช่น '{Price} - {Price_End}'
                     $stringTransform = $config['string_transform'] ?? [];
                     $expression = $stringTransform['formulaExpression'] ?? null;
-                    if (!$expression) return $value;
+                    if (!$expression) {
+                        return $value;
+                    }
                     $skipZero = ($stringTransform['formulaSkipZero'] ?? true) !== false;
-                    
+
                     return $this->evaluateFormulaExpression($expression, $rawData, $skipZero);
-                    
+
                 default:
                     return $value;
             }
@@ -2442,23 +2526,25 @@ class IntegrationController extends Controller
 
         // Map single-value sections (tour, content, media)
         foreach (['tour', 'content', 'media'] as $section) {
-            if (!isset($mappings[$section])) continue;
-            
+            if (!isset($mappings[$section])) {
+                continue;
+            }
+
             foreach ($mappings[$section] as $mapping) {
                 $fieldName = $mapping->our_field;
                 $path = $mapping->their_field_path ?? $mapping->their_field;
-                
+
                 // Extract value from raw data
                 $value = $extractValue($rawTour, $path);
-                
+
                 // Apply transforms
                 $value = $applyTransform($value, $mapping, $rawTour);
-                
+
                 // Use default if null
                 if ($value === null && !empty($mapping->default_value)) {
                     $value = $mapping->default_value;
                 }
-                
+
                 $result[$section][$fieldName] = $value;
             }
         }
@@ -2471,21 +2557,21 @@ class IntegrationController extends Controller
                 foreach ($mappings['departure'] as $mapping) {
                     $fieldName = $mapping->our_field;
                     $path = $mapping->their_field_path ?? $mapping->their_field;
-                    
+
                     // Remove "Periods[]." prefix if exists
                     $cleanPath = preg_replace('/^Periods\[\]\\./', '', $path);
-                    
+
                     // Extract value from period item
                     $value = $period[$cleanPath] ?? null;
-                    
+
                     // Apply transforms
                     $value = $applyTransform($value, $mapping, $period);
-                    
+
                     // Use default if null
                     if ($value === null && !empty($mapping->default_value)) {
                         $value = $mapping->default_value;
                     }
-                    
+
                     $dep[$fieldName] = $value;
                 }
                 $result['departure'][] = $dep;
@@ -2500,21 +2586,21 @@ class IntegrationController extends Controller
                 foreach ($mappings['itinerary'] as $mapping) {
                     $fieldName = $mapping->our_field;
                     $path = $mapping->their_field_path ?? $mapping->their_field;
-                    
+
                     // Remove "Itinerary[]." prefix if exists
                     $cleanPath = preg_replace('/^Itinerary\[\]\\./', '', $path);
-                    
+
                     // Extract value from itinerary item
                     $value = $itin[$cleanPath] ?? null;
-                    
+
                     // Apply transforms
                     $value = $applyTransform($value, $mapping, $itin);
-                    
+
                     // Use default if null
                     if ($value === null && !empty($mapping->default_value)) {
                         $value = $mapping->default_value;
                     }
-                    
+
                     $it[$fieldName] = $value;
                 }
                 $result['itinerary'][] = $it;
@@ -2541,11 +2627,14 @@ class IntegrationController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors(),
+                ],
+                422,
+            );
         }
 
         try {
@@ -2554,12 +2643,7 @@ class IntegrationController extends Controller
             $limit = $request->limit ? (int) $request->limit : null;
 
             // Dispatch job to queue (background processing)
-            \App\Jobs\SyncToursJob::dispatch(
-                $config->wholesaler_id,
-                $transformedData,
-                $syncType,
-                $limit
-            );
+            \App\Jobs\SyncToursJob::dispatch($config->wholesaler_id, $transformedData, $syncType, $limit);
 
             return response()->json([
                 'success' => true,
@@ -2570,17 +2654,19 @@ class IntegrationController extends Controller
                     'limit' => $limit,
                 ],
             ]);
-
         } catch (\Exception $e) {
             Log::error('Failed to dispatch sync job', [
                 'integration_id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to start sync: ' . $e->getMessage(),
-            ], 500);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Failed to start sync: ' . $e->getMessage(),
+                ],
+                500,
+            );
         }
     }
 
@@ -2596,16 +2682,19 @@ class IntegrationController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors(),
+                ],
+                422,
+            );
         }
 
         try {
             $file = $request->file('image');
-            
+
             // Get image dimensions
             $imageInfo = getimagesize($file->getPathname());
             $height = $imageInfo[1] ?? null;
@@ -2613,21 +2702,19 @@ class IntegrationController extends Controller
             // Try Cloudflare first, fallback to local storage
             $cloudflare = app(\App\Services\CloudflareImagesService::class);
             $customId = 'integration-header-' . $id . '-' . time();
-            
+
             if ($cloudflare->isConfigured()) {
                 $result = $cloudflare->uploadFromFile($file, $customId, [
                     'type' => 'integration-header',
                     'integration_id' => $id,
                 ]);
-                
+
                 if ($result && !empty($result['variants'])) {
                     // Find 'public' variant, fallback to first variant
-                    $url = collect($result['variants'])->first(fn($v) => str_contains($v, '/public')) 
-                        ?? $result['variants'][0] 
-                        ?? null;
+                    $url = collect($result['variants'])->first(fn($v) => str_contains($v, '/public')) ?? ($result['variants'][0] ?? null);
                 }
             }
-            
+
             // Fallback to local storage
             if (empty($url)) {
                 $path = $file->store('integrations/headers', 'public');
@@ -2648,17 +2735,19 @@ class IntegrationController extends Controller
                     'height' => $height,
                 ],
             ]);
-
         } catch (\Exception $e) {
             Log::error('Failed to upload header image', [
                 'integration_id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to upload: ' . $e->getMessage(),
-            ], 500);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Failed to upload: ' . $e->getMessage(),
+                ],
+                500,
+            );
         }
     }
 
@@ -2674,16 +2763,19 @@ class IntegrationController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors(),
+                ],
+                422,
+            );
         }
 
         try {
             $file = $request->file('image');
-            
+
             // Get image dimensions
             $imageInfo = getimagesize($file->getPathname());
             $height = $imageInfo[1] ?? null;
@@ -2691,21 +2783,19 @@ class IntegrationController extends Controller
             // Try Cloudflare first, fallback to local storage
             $cloudflare = app(\App\Services\CloudflareImagesService::class);
             $customId = 'integration-footer-' . $id . '-' . time();
-            
+
             if ($cloudflare->isConfigured()) {
                 $result = $cloudflare->uploadFromFile($file, $customId, [
                     'type' => 'integration-footer',
                     'integration_id' => $id,
                 ]);
-                
+
                 if ($result && !empty($result['variants'])) {
                     // Find 'public' variant, fallback to first variant
-                    $url = collect($result['variants'])->first(fn($v) => str_contains($v, '/public')) 
-                        ?? $result['variants'][0] 
-                        ?? null;
+                    $url = collect($result['variants'])->first(fn($v) => str_contains($v, '/public')) ?? ($result['variants'][0] ?? null);
                 }
             }
-            
+
             // Fallback to local storage
             if (empty($url)) {
                 $path = $file->store('integrations/footers', 'public');
@@ -2726,17 +2816,19 @@ class IntegrationController extends Controller
                     'height' => $height,
                 ],
             ]);
-
         } catch (\Exception $e) {
             Log::error('Failed to upload footer image', [
                 'integration_id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to upload: ' . $e->getMessage(),
-            ], 500);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Failed to upload: ' . $e->getMessage(),
+                ],
+                500,
+            );
         }
     }
 
@@ -2857,52 +2949,46 @@ class IntegrationController extends Controller
         // Count pending jobs in queue (includes reserved/processing jobs)
         $pendingJobs = DB::table('jobs')->count();
         $failedJobs = DB::table('failed_jobs')->count();
-        
+
         // Check for stuck sync logs — heartbeat หยุดเกิน 5 นาที หรือ started เกิน 10 นาทีโดยไม่มี heartbeat
         $stuckSyncs = SyncLog::where('status', 'running')
             ->where(function ($q) {
                 $q->where(function ($q2) {
-                    $q2->whereNotNull('last_heartbeat_at')
-                        ->where('last_heartbeat_at', '<', now()->subMinutes(5));
-                })
-                ->orWhere(function ($q2) {
-                    $q2->whereNull('last_heartbeat_at')
-                        ->where('started_at', '<', now()->subMinutes(5));
+                    $q2->whereNotNull('last_heartbeat_at')->where('last_heartbeat_at', '<', now()->subMinutes(5));
+                })->orWhere(function ($q2) {
+                    $q2->whereNull('last_heartbeat_at')->where('started_at', '<', now()->subMinutes(5));
                 });
             })
             ->get(['id', 'wholesaler_id', 'started_at', 'sync_type']);
-        
+
         // Currently running syncs (not stuck)
         $runningSyncs = SyncLog::where('status', 'running')
             ->where(function ($q) {
                 $q->where(function ($q2) {
-                    $q2->whereNotNull('last_heartbeat_at')
-                        ->where('last_heartbeat_at', '>=', now()->subMinutes(5));
-                })
-                ->orWhere(function ($q2) {
-                    $q2->whereNull('last_heartbeat_at')
-                        ->where('started_at', '>=', now()->subMinutes(5));
+                    $q2->whereNotNull('last_heartbeat_at')->where('last_heartbeat_at', '>=', now()->subMinutes(5));
+                })->orWhere(function ($q2) {
+                    $q2->whereNull('last_heartbeat_at')->where('started_at', '>=', now()->subMinutes(5));
                 });
             })
             ->with('wholesaler:id,name')
             ->get(['id', 'wholesaler_id', 'started_at', 'sync_type', 'total_items', 'processed_items', 'progress_percent', 'current_item_code']);
-        
+
         // Queue worker status — ตรวจจากหลายแหล่ง
         // 1. มี jobs ที่กำลัง process อยู่ (reserved_at != null)
         $processingJobs = DB::table('jobs')->whereNotNull('reserved_at')->count();
-        
+
         // 2. มี SyncLog จบภายใน 5 นาที
         $lastProcessedJob = SyncLog::whereIn('status', ['completed', 'failed'])
             ->latest('completed_at')
             ->first();
         $recentlyCompleted = $lastProcessedJob && $lastProcessedJob->completed_at > now()->subMinutes(5);
-        
+
         // 3. มี running sync ที่ heartbeat ยังอยู่
         $activeRunningSync = $runningSyncs->isNotEmpty();
-        
+
         // Worker active ถ้า: กำลัง process jobs อยู่ / หรือ เพิ่งจบ job / หรือ มี running sync
         $queueWorkerActive = $processingJobs > 0 || $recentlyCompleted || $activeRunningSync;
-        
+
         return response()->json([
             'success' => true,
             'data' => [
@@ -2932,27 +3018,26 @@ class IntegrationController extends Controller
     public function getSyncProgress(int $syncLogId): JsonResponse
     {
         $syncLog = SyncLog::with('wholesaler')->find($syncLogId);
-        
+
         if (!$syncLog) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Sync log not found',
-            ], 404);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Sync log not found',
+                ],
+                404,
+            );
         }
 
         // Detect if sync is stuck
         $isStuck = false;
         if ($syncLog->status === 'running') {
-            $isStuck = $syncLog->last_heartbeat_at 
-                ? $syncLog->last_heartbeat_at->lt(now()->subMinutes($syncLog->heartbeat_timeout_minutes ?? 5))
-                : ($syncLog->started_at ? $syncLog->started_at->lt(now()->subMinutes(5)) : false);
-            
+            $isStuck = $syncLog->last_heartbeat_at ? $syncLog->last_heartbeat_at->lt(now()->subMinutes($syncLog->heartbeat_timeout_minutes ?? 5)) : ($syncLog->started_at ? $syncLog->started_at->lt(now()->subMinutes(5)) : false);
+
             // AUTO-FIX: ถ้า heartbeat หยุดเกิน 10 นาที → auto-mark as failed + release lock
             // ไม่ต้องรอ scheduler หรือกด fixStuckSyncs เอง
-            $isHardStuck = $syncLog->last_heartbeat_at
-                ? $syncLog->last_heartbeat_at->lt(now()->subMinutes(10))
-                : ($syncLog->started_at ? $syncLog->started_at->lt(now()->subMinutes(10)) : false);
-            
+            $isHardStuck = $syncLog->last_heartbeat_at ? $syncLog->last_heartbeat_at->lt(now()->subMinutes(10)) : ($syncLog->started_at ? $syncLog->started_at->lt(now()->subMinutes(10)) : false);
+
             if ($isHardStuck) {
                 $syncLog->update([
                     'status' => 'failed',
@@ -2960,12 +3045,12 @@ class IntegrationController extends Controller
                     'error_summary' => ['message' => 'Auto-fixed: worker heartbeat stopped for 10+ minutes'],
                 ]);
                 Cache::lock("sync_lock:wholesaler:{$syncLog->wholesaler_id}")->forceRelease();
-                
+
                 Log::warning('getSyncProgress: Auto-fixed stuck sync', [
                     'sync_log_id' => $syncLog->id,
                     'last_heartbeat' => $syncLog->last_heartbeat_at,
                 ]);
-                
+
                 $syncLog->refresh();
                 $isStuck = false; // No longer stuck, it's failed now
             }
@@ -2995,11 +3080,7 @@ class IntegrationController extends Controller
                 'is_stuck' => $isStuck,
                 'started_at' => $syncLog->started_at,
                 'completed_at' => $syncLog->completed_at,
-                'duration_seconds' => $syncLog->started_at 
-                    ? ($syncLog->completed_at 
-                        ? $syncLog->completed_at->diffInSeconds($syncLog->started_at) 
-                        : now()->diffInSeconds($syncLog->started_at))
-                    : 0,
+                'duration_seconds' => $syncLog->started_at ? ($syncLog->completed_at ? $syncLog->completed_at->diffInSeconds($syncLog->started_at) : now()->diffInSeconds($syncLog->started_at)) : 0,
                 'tours_created' => $syncLog->tours_created ?? 0,
                 'tours_updated' => $syncLog->tours_updated ?? 0,
                 'tours_failed' => $syncLog->tours_failed ?? 0,
@@ -3014,19 +3095,25 @@ class IntegrationController extends Controller
     public function cancelSync(int $syncLogId): JsonResponse
     {
         $syncLog = SyncLog::find($syncLogId);
-        
+
         if (!$syncLog) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Sync log not found',
-            ], 404);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Sync log not found',
+                ],
+                404,
+            );
         }
 
         if ($syncLog->status !== 'running') {
-            return response()->json([
-                'success' => false,
-                'message' => "Cannot cancel sync with status: {$syncLog->status}",
-            ], 400);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => "Cannot cancel sync with status: {$syncLog->status}",
+                ],
+                400,
+            );
         }
 
         // Request cancellation (job will check this flag)
@@ -3054,19 +3141,25 @@ class IntegrationController extends Controller
     public function forceCancelSync(int $syncLogId): JsonResponse
     {
         $syncLog = SyncLog::find($syncLogId);
-        
+
         if (!$syncLog) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Sync log not found',
-            ], 404);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Sync log not found',
+                ],
+                404,
+            );
         }
 
         if (!in_array($syncLog->status, ['running', 'pending'])) {
-            return response()->json([
-                'success' => false,
-                'message' => "Cannot cancel sync with status: {$syncLog->status}",
-            ], 400);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => "Cannot cancel sync with status: {$syncLog->status}",
+                ],
+                400,
+            );
         }
 
         // Force cancel immediately
@@ -3098,18 +3191,13 @@ class IntegrationController extends Controller
      */
     public function getRunningSyncs(): JsonResponse
     {
-        $runningSyncs = SyncLog::with('wholesaler')
-            ->where('status', 'running')
-            ->orderBy('started_at', 'desc')
-            ->get();
-        
+        $runningSyncs = SyncLog::with('wholesaler')->where('status', 'running')->orderBy('started_at', 'desc')->get();
+
         // AUTO-FIX: cleanup syncs ที่ค้างเกิน 10 นาที (heartbeat หยุด)
         $autoFixed = 0;
         $runningSyncs = $runningSyncs->filter(function ($sync) use (&$autoFixed) {
-            $isHardStuck = $sync->last_heartbeat_at
-                ? $sync->last_heartbeat_at->lt(now()->subMinutes(10))
-                : ($sync->started_at ? $sync->started_at->lt(now()->subMinutes(10)) : false);
-            
+            $isHardStuck = $sync->last_heartbeat_at ? $sync->last_heartbeat_at->lt(now()->subMinutes(10)) : ($sync->started_at ? $sync->started_at->lt(now()->subMinutes(10)) : false);
+
             if ($isHardStuck) {
                 $sync->update([
                     'status' => 'failed',
@@ -3126,26 +3214,24 @@ class IntegrationController extends Controller
             }
             return true;
         });
-        
+
         $mapped = $runningSyncs->map(function ($sync) {
-                return [
-                    'id' => $sync->id,
-                    'wholesaler_id' => $sync->wholesaler_id,
-                    'wholesaler_name' => $sync->wholesaler?->name,
-                    'sync_type' => $sync->sync_type,
-                    'status' => $sync->status,
-                    'progress_percent' => $sync->progress_percent ?? 0,
-                    'processed_items' => $sync->processed_items ?? 0,
-                    'total_items' => $sync->total_items ?? 0,
-                    'current_item_code' => $sync->current_item_code,
-                    'started_at' => $sync->started_at,
-                    'last_heartbeat_at' => $sync->last_heartbeat_at,
-                    'is_stuck' => $sync->last_heartbeat_at 
-                        ? $sync->last_heartbeat_at->lt(now()->subMinutes(5))
-                        : $sync->started_at->lt(now()->subMinutes(5)),
-                    'cancel_requested' => (bool) $sync->cancel_requested,
-                ];
-            });
+            return [
+                'id' => $sync->id,
+                'wholesaler_id' => $sync->wholesaler_id,
+                'wholesaler_name' => $sync->wholesaler?->name,
+                'sync_type' => $sync->sync_type,
+                'status' => $sync->status,
+                'progress_percent' => $sync->progress_percent ?? 0,
+                'processed_items' => $sync->processed_items ?? 0,
+                'total_items' => $sync->total_items ?? 0,
+                'current_item_code' => $sync->current_item_code,
+                'started_at' => $sync->started_at,
+                'last_heartbeat_at' => $sync->last_heartbeat_at,
+                'is_stuck' => $sync->last_heartbeat_at ? $sync->last_heartbeat_at->lt(now()->subMinutes(5)) : $sync->started_at->lt(now()->subMinutes(5)),
+                'cancel_requested' => (bool) $sync->cancel_requested,
+            ];
+        });
 
         return response()->json([
             'success' => true,
@@ -3167,19 +3253,17 @@ class IntegrationController extends Controller
             ->where(function ($q) {
                 // Heartbeat หยุดเกิน 5 นาที
                 $q->where(function ($q2) {
-                    $q2->whereNotNull('last_heartbeat_at')
-                        ->where('last_heartbeat_at', '<', now()->subMinutes(5));
+                    $q2->whereNotNull('last_heartbeat_at')->where('last_heartbeat_at', '<', now()->subMinutes(5));
                 })
-                // หรือไม่เคย heartbeat และ started เกิน 10 นาที
-                ->orWhere(function ($q2) {
-                    $q2->whereNull('last_heartbeat_at')
-                        ->where('started_at', '<', now()->subMinutes(10));
-                })
-                // หรือ started เกิน 30 นาที (hard limit)
-                ->orWhere('started_at', '<', now()->subMinutes(30));
+                    // หรือไม่เคย heartbeat และ started เกิน 10 นาที
+                    ->orWhere(function ($q2) {
+                        $q2->whereNull('last_heartbeat_at')->where('started_at', '<', now()->subMinutes(10));
+                    })
+                    // หรือ started เกิน 30 นาที (hard limit)
+                    ->orWhere('started_at', '<', now()->subMinutes(30));
             })
             ->get();
-        
+
         $fixed = 0;
         $releasedLocks = [];
         foreach ($stuckSyncs as $sync) {
@@ -3188,18 +3272,18 @@ class IntegrationController extends Controller
                 'completed_at' => now(),
                 'error_summary' => ['message' => 'Fixed by fixStuckSyncs: heartbeat/timeout exceeded'],
             ]);
-            
+
             // FIX: Clear cache lock ด้วย (สาเหตุหลักที่ sync ค้าง!)
             $lockKey = "sync_lock:wholesaler:{$sync->wholesaler_id}";
             Cache::lock($lockKey)->forceRelease();
             $releasedLocks[] = $lockKey;
-            
+
             $fixed++;
         }
-        
+
         return response()->json([
             'success' => true,
-            'message' => "Fixed {$fixed} stuck sync jobs" . ($fixed > 0 ? " and released {$fixed} cache locks" : ""),
+            'message' => "Fixed {$fixed} stuck sync jobs" . ($fixed > 0 ? " and released {$fixed} cache locks" : ''),
             'data' => [
                 'fixed_count' => $fixed,
                 'released_locks' => $releasedLocks,
@@ -3214,7 +3298,7 @@ class IntegrationController extends Controller
     {
         $count = DB::table('failed_jobs')->count();
         DB::table('failed_jobs')->truncate();
-        
+
         return response()->json([
             'success' => true,
             'message' => "Cleared {$count} failed jobs",
@@ -3230,20 +3314,17 @@ class IntegrationController extends Controller
     public function getFailedJobs(Request $request): JsonResponse
     {
         $limit = $request->integer('limit', 20);
-        
-        $failedJobs = DB::table('failed_jobs')
-            ->orderBy('failed_at', 'desc')
-            ->limit($limit)
-            ->get();
+
+        $failedJobs = DB::table('failed_jobs')->orderBy('failed_at', 'desc')->limit($limit)->get();
 
         $jobs = $failedJobs->map(function ($job) {
             $payload = json_decode($job->payload, true);
             $exception = $job->exception;
-            
+
             // Extract job class name
             $jobClass = $payload['displayName'] ?? 'Unknown Job';
             $shortClass = class_basename($jobClass);
-            
+
             // Extract error message (first line of exception)
             $errorMessage = '';
             if ($exception) {
@@ -3268,7 +3349,7 @@ class IntegrationController extends Controller
                     }
                 }
             }
-            
+
             return [
                 'id' => $job->id,
                 'uuid' => $job->uuid,
@@ -3281,7 +3362,7 @@ class IntegrationController extends Controller
                 'failed_at' => $job->failed_at,
             ];
         });
-        
+
         return response()->json([
             'success' => true,
             'data' => $jobs,
@@ -3291,34 +3372,41 @@ class IntegrationController extends Controller
 
     /**
      * Sync selected tours from search results (Mass Sync)
-     * 
+     *
      * This allows users to sync specific tours from the search page
      * without waiting for scheduled sync.
-     * 
+     *
      * NEW: Uses SyncToursJob directly for 100% same logic as scheduled sync.
-     * 
+     *
      * @param int $id Integration ID (WholesalerApiConfig primary key)
      */
     public function syncSelectedTours(int $id, Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'tours' => 'required|array|min:1|max:5',
-            'tours.*._raw' => 'required|array',
-            // Support both _wholesaler_id and _integration_id
-            'tours.*._wholesaler_id' => 'required_without:tours.*._integration_id|integer',
-            'tours.*._integration_id' => 'required_without:tours.*._wholesaler_id|integer',
-        ], [
-            'tours.required' => 'กรุณาเลือกทัวร์ที่ต้องการ sync',
-            'tours.min' => 'กรุณาเลือกอย่างน้อย 1 ทัวร์',
-            'tours.max' => 'สามารถ sync ได้สูงสุด 5 ทัวร์ต่อครั้ง',
-        ]);
+        $validator = Validator::make(
+            $request->all(),
+            [
+                'tours' => 'required|array|min:1|max:5',
+                'tours.*._raw' => 'required|array',
+                // Support both _wholesaler_id and _integration_id
+                'tours.*._wholesaler_id' => 'required_without:tours.*._integration_id|integer',
+                'tours.*._integration_id' => 'required_without:tours.*._wholesaler_id|integer',
+            ],
+            [
+                'tours.required' => 'กรุณาเลือกทัวร์ที่ต้องการ sync',
+                'tours.min' => 'กรุณาเลือกอย่างน้อย 1 ทัวร์',
+                'tours.max' => 'สามารถ sync ได้สูงสุด 5 ทัวร์ต่อครั้ง',
+            ],
+        );
 
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => $validator->errors()->first(),
-                'errors' => $validator->errors(),
-            ], 422);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => $validator->errors()->first(),
+                    'errors' => $validator->errors(),
+                ],
+                422,
+            );
         }
 
         // Use integration ID (primary key) instead of wholesaler_id
@@ -3326,10 +3414,7 @@ class IntegrationController extends Controller
         $wholesalerId = $config->wholesaler_id;
 
         // Load field mappings (same as SyncToursJob)
-        $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)
-            ->where('is_active', true)
-            ->get()
-            ->groupBy('section_name');
+        $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)->where('is_active', true)->get()->groupBy('section_name');
 
         // Get aggregation_config for nested data structure support
         $dataStructure = $config->aggregation_config ?? [];
@@ -3343,7 +3428,7 @@ class IntegrationController extends Controller
         // because the list endpoint doesn't include periods/itinerary
         $isTwoPhase = $config->sync_mode === 'two_phase';
         $adapter = null;
-        
+
         if ($isTwoPhase) {
             // Create adapter to fetch tour details
             $adapter = \App\Services\WholesalerAdapters\AdapterFactory::create($wholesalerId);
@@ -3351,14 +3436,9 @@ class IntegrationController extends Controller
 
         foreach ($request->tours as $tourData) {
             $raw = $tourData['_raw'] ?? [];
-            
+
             // Determine external_id (same logic as SyncToursJob)
-            $externalId = $tourData['external_id'] 
-                ?? $raw['ProductId'] 
-                ?? $raw['tour_id']
-                ?? $raw['id'] 
-                ?? $raw['code'] 
-                ?? null;
+            $externalId = $tourData['external_id'] ?? ($raw['ProductId'] ?? ($raw['tour_id'] ?? ($raw['id'] ?? ($raw['code'] ?? null))));
 
             if (!$externalId) {
                 continue;
@@ -3396,7 +3476,7 @@ class IntegrationController extends Controller
             }
 
             // For detail response, adjust dataStructure paths
-            // Detail response is flat (tour_period[], tour_daily[]) 
+            // Detail response is flat (tour_period[], tour_daily[])
             // vs List response is nested (periods[].tour_period[])
             $effectiveDataStructure = $dataStructure;
             if ($useDetailDataStructure) {
@@ -3405,32 +3485,35 @@ class IntegrationController extends Controller
                         'departures' => ['path' => 'tour_period[]'],
                         'itineraries' => ['path' => 'tour_daily[]'],
                         'cities' => ['path' => 'tour_city[]'],
-                    ]
+                    ],
                 ];
             }
 
             // Use SyncToursJob's transform logic via the job instance
             // Create a temporary job to use its protected methods
             $job = new \App\Jobs\SyncToursJob($wholesalerId);
-            
+
             // Use reflection to call protected transformTourData method
             $reflection = new \ReflectionClass($job);
             $method = $reflection->getMethod('transformTourData');
             $method->setAccessible(true);
-            
+
             $transformed = $method->invoke($job, $raw, $mappings, $effectiveDataStructure);
-            
+
             // Add external_id to tour section
             $transformed['tour']['external_id'] = $externalId;
-            
+
             $transformedTours[] = $transformed;
         }
 
         if (empty($transformedTours)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'ไม่พบทัวร์ที่มี external_id ที่ถูกต้อง',
-            ], 422);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'ไม่พบทัวร์ที่มี external_id ที่ถูกต้อง',
+                ],
+                422,
+            );
         }
 
         // Dispatch SyncToursJob synchronously (same logic as scheduled sync)
@@ -3440,9 +3523,9 @@ class IntegrationController extends Controller
                 $wholesalerId,
                 $transformedTours,
                 'manual', // sync_type
-                null // no limit
+                null, // no limit
             );
-            
+
             // Run synchronously (not queued) - dispatchSync equivalent
             $job->handle();
 
@@ -3456,16 +3539,18 @@ class IntegrationController extends Controller
                 'success' => $syncedTours->count(),
                 'failed' => count($transformedTours) - $syncedTours->count(),
                 'skipped' => 0,
-                'details' => $syncedTours->map(function ($tour) {
-                    return [
-                        'external_id' => $tour->external_id,
-                        'tour_id' => $tour->id,
-                        'tour_code' => $tour->tour_code,
-                        'title' => $tour->title,
-                        'status' => 'success',
-                        'is_new' => $tour->created_at->eq($tour->updated_at),
-                    ];
-                })->toArray(),
+                'details' => $syncedTours
+                    ->map(function ($tour) {
+                        return [
+                            'external_id' => $tour->external_id,
+                            'tour_id' => $tour->id,
+                            'tour_code' => $tour->tour_code,
+                            'title' => $tour->title,
+                            'status' => 'success',
+                            'is_new' => $tour->created_at->eq($tour->updated_at),
+                        ];
+                    })
+                    ->toArray(),
             ];
 
             return response()->json([
@@ -3473,7 +3558,6 @@ class IntegrationController extends Controller
                 'message' => "Sync สำเร็จ {$results['success']}/{$results['total']} ทัวร์",
                 'data' => $results,
             ]);
-
         } catch (\Exception $e) {
             Log::error('Mass Sync via SyncToursJob failed', [
                 'wholesaler_id' => $wholesalerId,
@@ -3481,10 +3565,13 @@ class IntegrationController extends Controller
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Sync ล้มเหลว: ' . $e->getMessage(),
-            ], 500);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Sync ล้มเหลว: ' . $e->getMessage(),
+                ],
+                500,
+            );
         }
     }
 
@@ -3503,9 +3590,11 @@ class IntegrationController extends Controller
         ];
 
         // Helper to extract value from nested path
-        $extractValue = function($data, $path) use (&$extractValue) {
-            if (empty($path)) return null;
-            
+        $extractValue = function ($data, $path) use (&$extractValue) {
+            if (empty($path)) {
+                return null;
+            }
+
             // Handle fallback paths with | separator (e.g., "countries[].code|countries[].name")
             if (strpos($path, '|') !== false) {
                 $paths = explode('|', $path);
@@ -3517,54 +3606,64 @@ class IntegrationController extends Controller
                 }
                 return null;
             }
-            
+
             // Handle array notation like "Periods[]" or "countries[].code"
             if (strpos($path, '[]') !== false) {
                 $parts = explode('[].', $path);
                 $arrayKey = $parts[0];
                 $fieldPath = $parts[1] ?? null;
-                
-                if (!isset($data[$arrayKey]) || !is_array($data[$arrayKey])) return null;
-                if (empty($data[$arrayKey])) return null;
-                
+
+                if (!isset($data[$arrayKey]) || !is_array($data[$arrayKey])) {
+                    return null;
+                }
+                if (empty($data[$arrayKey])) {
+                    return null;
+                }
+
                 // Get first element from array
                 $firstItem = $data[$arrayKey][0] ?? null;
-                if (!$firstItem) return null;
-                
+                if (!$firstItem) {
+                    return null;
+                }
+
                 if ($fieldPath) {
                     // Recursively get nested field from first item
                     return $extractValue($firstItem, $fieldPath);
                 }
                 return $firstItem;
             }
-            
+
             // Normal dot notation path
             $keys = explode('.', $path);
             $value = $data;
-            
+
             foreach ($keys as $key) {
-                if (!is_array($value) || !isset($value[$key])) return null;
+                if (!is_array($value) || !isset($value[$key])) {
+                    return null;
+                }
                 $value = $value[$key];
             }
-            
+
             return $value;
         };
 
         // Helper to apply transforms
-        $applyTransform = function($value, $mapping, $rawData) {
+        $applyTransform = function ($value, $mapping, $rawData) {
             if (empty($mapping->transform_type) || $mapping->transform_type === 'direct') {
                 return $value;
             }
-            
+
             $config = $mapping->transform_config ?? [];
-            
+
             switch ($mapping->transform_type) {
                 case 'lookup':
-                    if ($value === null || $value === '') return null;
-                    
+                    if ($value === null || $value === '') {
+                        return null;
+                    }
+
                     $lookupTable = $config['lookup_table'] ?? null;
                     $lookupBy = $config['lookup_by'] ?? 'id';
-                    
+
                     if (!$lookupTable) {
                         $ourField = $mapping->our_field;
                         if (str_ends_with($ourField, '_id')) {
@@ -3576,37 +3675,40 @@ class IntegrationController extends Controller
                             $lookupTable = str($baseName)->plural()->toString();
                         }
                     }
-                    
-                    if (!$lookupTable) return $value;
-                    
+
+                    if (!$lookupTable) {
+                        return $value;
+                    }
+
                     $modelClass = 'App\\Models\\' . str($lookupTable)->singular()->studly()->toString();
-                    if (!class_exists($modelClass)) return $value;
-                    
+                    if (!class_exists($modelClass)) {
+                        return $value;
+                    }
+
                     // Try exact match first
                     $record = $modelClass::where($lookupBy, $value)->first();
-                    
+
                     // If not found, try fuzzy matching for transport and country
                     if (!$record && in_array($lookupTable, ['transports', 'countries'])) {
                         $searchValue = trim((string) $value);
-                        
+
                         // For transports - first try to extract code from parentheses like "CHINA SOUTHERN AIRLINE (CZ)"
                         if ($lookupTable === 'transports' && preg_match('/\(([A-Z0-9]{2,3})\)/', $searchValue, $matches)) {
                             $code = $matches[1];
-                            $record = $modelClass::where('code', $code)
-                                ->orWhere('code1', $code)
-                                ->first();
+                            $record = $modelClass::where('code', $code)->orWhere('code1', $code)->first();
                         }
-                        
+
                         // If still not found, try LIKE match on name (without parentheses part)
                         if (!$record) {
                             // Remove parentheses and content for cleaner LIKE match
                             $cleanName = preg_replace('/\s*\([^)]+\)\s*/', '', $searchValue);
                             $cleanName = trim($cleanName);
-                            
+
                             if (!empty($cleanName)) {
                                 // Use correct column name for each table
                                 if ($lookupTable === 'countries') {
-                                    $record = $modelClass::where('name_en', 'LIKE', '%' . $cleanName . '%')
+                                    $record = $modelClass
+                                        ::where('name_en', 'LIKE', '%' . $cleanName . '%')
                                         ->orWhere('name_th', 'LIKE', '%' . $cleanName . '%')
                                         ->first();
                                 } else {
@@ -3614,10 +3716,11 @@ class IntegrationController extends Controller
                                 }
                             }
                         }
-                        
+
                         // For countries, also try ISO codes
                         if (!$record && $lookupTable === 'countries') {
-                            $record = $modelClass::where('iso2', strtoupper($searchValue))
+                            $record = $modelClass
+                                ::where('iso2', strtoupper($searchValue))
                                 ->orWhere('iso3', strtoupper($searchValue))
                                 ->orWhere('name_en', 'LIKE', '%' . $searchValue . '%')
                                 ->orWhere('name_th', 'LIKE', '%' . $searchValue . '%')
@@ -3625,37 +3728,47 @@ class IntegrationController extends Controller
                         }
                     }
                     return $record?->id;
-                    
+
                 case 'value_map':
                     $map = $config['map'] ?? null;
                     if ($map === null && isset($config['value_map'])) {
                         $map = [];
                         foreach ($config['value_map'] as $item) {
                             $fromVal = $item['from'] ?? null;
-                            if ($fromVal === '__EMPTY__') $fromVal = '';
+                            if ($fromVal === '__EMPTY__') {
+                                $fromVal = '';
+                            }
                             if ($fromVal !== null) {
                                 $map[$fromVal] = $item['to'] ?? null;
                             }
                         }
                     }
-                    if ($map === null) return $value;
-                    
-                    $lookupKey = ($value === '' || $value === null) ? '' : $value;
+                    if ($map === null) {
+                        return $value;
+                    }
+
+                    $lookupKey = $value === '' || $value === null ? '' : $value;
                     $mappedValue = $map[$lookupKey] ?? ($config['default'] ?? null);
-                    
-                    if ($mappedValue === 'true') return 1;
-                    if ($mappedValue === 'false') return 0;
+
+                    if ($mappedValue === 'true') {
+                        return 1;
+                    }
+                    if ($mappedValue === 'false') {
+                        return 0;
+                    }
                     return $mappedValue;
-                    
+
                 case 'formula':
                     // Formula: คำนวณจากหลาย fields
                     $stringTransform = $config['string_transform'] ?? [];
                     $expression = $stringTransform['formulaExpression'] ?? null;
-                    if (!$expression) return $value;
+                    if (!$expression) {
+                        return $value;
+                    }
                     $skipZero = ($stringTransform['formulaSkipZero'] ?? true) !== false;
-                    
+
                     return $this->evaluateFormulaExpression($expression, $rawData, $skipZero);
-                    
+
                 default:
                     return $value;
             }
@@ -3663,53 +3776,57 @@ class IntegrationController extends Controller
 
         // Map single-value sections (tour, content, media, seo)
         foreach (['tour', 'content', 'media', 'seo'] as $section) {
-            if (!isset($mappings[$section])) continue;
-            
+            if (!isset($mappings[$section])) {
+                continue;
+            }
+
             foreach ($mappings[$section] as $mapping) {
                 $fieldName = $mapping->our_field;
                 $path = $mapping->their_field_path ?? $mapping->their_field;
 
                 $value = $extractValue($rawTour, $path);
                 $value = $applyTransform($value, $mapping, $rawTour);
-                
+
                 if ($value === null && !empty($mapping->default_value)) {
                     $value = $mapping->default_value;
                 }
-                
+
                 $result[$section][$fieldName] = $value;
             }
         }
 
         // Map departures - support nested paths from aggregation_config (same as SyncToursJob)
         $departuresPath = $dataStructure['data_structure']['departures']['path'] ?? null;
-        
+
         if ($departuresPath) {
             // Use custom nested path (e.g., "periods[].tour_period[]" for GO365)
             $periods = $this->flattenNestedPathForSync($rawTour, $departuresPath);
         } else {
             // Default: use standard periods/schedules/departures array
-            $periods = $rawTour['Periods'] ?? $rawTour['periods'] ?? $rawTour['schedules'] ?? $rawTour['departures'] ?? [];
+            $periods = $rawTour['Periods'] ?? ($rawTour['periods'] ?? ($rawTour['schedules'] ?? ($rawTour['departures'] ?? [])));
         }
-        
+
         if (isset($mappings['departure']) && !empty($periods) && is_array($periods)) {
             foreach ($periods as $period) {
-                if (!is_array($period)) continue; // Skip if not an array
+                if (!is_array($period)) {
+                    continue;
+                } // Skip if not an array
                 $dep = [];
                 foreach ($mappings['departure'] as $mapping) {
                     $fieldName = $mapping->our_field;
                     $path = $mapping->their_field_path ?? $mapping->their_field;
-                    
+
                     // Remove all known array prefixes to get the final field key
                     $cleanPath = $this->cleanNestedPathForSync($path, $departuresPath);
-                    
+
                     // Extract value - support nested fields within the item
                     $value = $this->extractNestedValueForSync($period, $cleanPath);
                     $value = $applyTransform($value, $mapping, $period);
-                    
+
                     if ($value === null && !empty($mapping->default_value)) {
                         $value = $mapping->default_value;
                     }
-                    
+
                     $dep[$fieldName] = $value;
                 }
                 $result['departure'][] = $dep;
@@ -3718,44 +3835,46 @@ class IntegrationController extends Controller
 
         // Map itineraries - support nested paths from aggregation_config (same as SyncToursJob)
         $itinerariesPath = $dataStructure['data_structure']['itineraries']['path'] ?? null;
-        
+
         if ($itinerariesPath) {
             // Use custom nested path (e.g., "periods[].tour_daily[].day_list[]" for GO365)
             $itineraries = $this->flattenNestedPathForSync($rawTour, $itinerariesPath);
         } else {
             // Default: use standard itinerary arrays
-            $itineraries = $rawTour['Itinerary'] ?? $rawTour['itinerary'] ?? $rawTour['itineraries'] ?? $rawTour['days'] ?? $rawTour['programs'] ?? $rawTour['tour_daily'] ?? [];
+            $itineraries = $rawTour['Itinerary'] ?? ($rawTour['itinerary'] ?? ($rawTour['itineraries'] ?? ($rawTour['days'] ?? ($rawTour['programs'] ?? ($rawTour['tour_daily'] ?? [])))));
         }
-        
+
         if (isset($mappings['itinerary']) && !empty($itineraries) && is_array($itineraries)) {
             $dayIndex = 1;
             foreach ($itineraries as $itin) {
-                if (!is_array($itin)) continue; // Skip if not an array
+                if (!is_array($itin)) {
+                    continue;
+                } // Skip if not an array
                 $it = [];
                 foreach ($mappings['itinerary'] as $mapping) {
                     $fieldName = $mapping->our_field;
                     $path = $mapping->their_field_path ?? $mapping->their_field;
-                    
+
                     // Remove all known array prefixes to get the final field key
                     $cleanPath = $this->cleanNestedPathForSync($path, $itinerariesPath);
-                    
+
                     // Extract value - support nested fields within the item
                     $value = $this->extractNestedValueForSync($itin, $cleanPath);
                     $value = $applyTransform($value, $mapping, $itin);
-                    
+
                     if ($value === null && !empty($mapping->default_value)) {
                         $value = $mapping->default_value;
                     }
-                    
+
                     $it[$fieldName] = $value;
                 }
-                
+
                 // Auto-generate day_number if not mapped
                 if (empty($it['day_number'])) {
                     $it['day_number'] = $dayIndex;
                 }
                 $dayIndex++;
-                
+
                 $result['itinerary'][] = $it;
             }
         }
@@ -3770,12 +3889,12 @@ class IntegrationController extends Controller
     protected function flattenNestedPathForSync(array $data, string $path): array
     {
         $result = [];
-        
+
         // Split path into segments (e.g., "periods[].tour_period[]" -> ["periods[]", "tour_period[]"])
         $segments = preg_split('/\[\]\.?/', $path, -1, PREG_SPLIT_NO_EMPTY);
-        
+
         // Recursive helper to traverse nested arrays
-        $traverse = function($currentData, $remainingSegments) use (&$traverse, &$result) {
+        $traverse = function ($currentData, $remainingSegments) use (&$traverse, &$result) {
             if (empty($remainingSegments)) {
                 // We've reached the end, add to result
                 if (is_array($currentData)) {
@@ -3783,15 +3902,15 @@ class IntegrationController extends Controller
                 }
                 return;
             }
-            
+
             $segment = array_shift($remainingSegments);
-            
+
             if (!is_array($currentData) || !isset($currentData[$segment])) {
                 return;
             }
-            
+
             $nextData = $currentData[$segment];
-            
+
             if (is_array($nextData)) {
                 // Check if it's an indexed array (list of items) or associative
                 if (array_keys($nextData) === range(0, count($nextData) - 1)) {
@@ -3805,9 +3924,9 @@ class IntegrationController extends Controller
                 }
             }
         };
-        
+
         $traverse($data, $segments);
-        
+
         return $result;
     }
 
@@ -3821,25 +3940,25 @@ class IntegrationController extends Controller
             // Just remove common prefixes if no base path
             return preg_replace('/^(Periods|periods|schedules|departures|Itinerary|itinerary|itineraries|days|programs|tour_daily|tour_period)\[\]\\.?/', '', $fieldPath);
         }
-        
+
         // Remove the base path prefix from field path
         // e.g., base = "periods[].tour_period[]", field = "periods[].tour_period[].period_date"
         // result = "period_date"
-        
+
         // Escape special regex characters in base path
         $escapedBase = preg_quote($basePath, '/');
         // Replace \[\] with actual regex for []
         $escapedBase = str_replace('\[\]', '\\[\\]', $escapedBase);
-        
+
         // Add optional dot after the base path
         $pattern = '/^' . $escapedBase . '\\.?/';
-        
+
         $cleaned = preg_replace($pattern, '', $fieldPath);
-        
+
         // Also handle case where field path uses different prefix format
         // Remove any remaining array notation prefix
         $cleaned = preg_replace('/^[a-zA-Z_]+\[\]\\.?/', '', $cleaned);
-        
+
         return $cleaned ?: $fieldPath;
     }
 
@@ -3852,21 +3971,21 @@ class IntegrationController extends Controller
         if (empty($path)) {
             return null;
         }
-        
+
         // Handle simple direct field access
         if (isset($data[$path])) {
             return $data[$path];
         }
-        
+
         // Handle dot notation
         $keys = explode('.', $path);
         $value = $data;
-        
+
         foreach ($keys as $key) {
             if (!is_array($value)) {
                 return null;
             }
-            
+
             // Handle array notation like "field[]"
             if (str_ends_with($key, '[]')) {
                 $arrayKey = substr($key, 0, -2);
@@ -3882,7 +4001,7 @@ class IntegrationController extends Controller
                 $value = $value[$key];
             }
         }
-        
+
         return $value;
     }
 
@@ -3898,15 +4017,17 @@ class IntegrationController extends Controller
             'skip_past_periods' => true,
             'past_period_threshold_days' => 0,
         ]);
-        
+
         $skipPastPeriods = $syncSettings['skip_past_periods'] ?? true;
         $thresholdDays = $syncSettings['past_period_threshold_days'] ?? 0;
         $thresholdDate = now()->subDays($thresholdDays)->toDateString();
 
         foreach ($departures as $dep) {
-            $departureDate = $dep['departure_date'] ?? $dep['start_date'] ?? null;
-            if (!$departureDate) continue;
-            
+            $departureDate = $dep['departure_date'] ?? ($dep['start_date'] ?? null);
+            if (!$departureDate) {
+                continue;
+            }
+
             // Skip past periods if enabled
             if ($skipPastPeriods && $departureDate < $thresholdDate) {
                 $result['skipped_past']++;
@@ -3936,29 +4057,31 @@ class IntegrationController extends Controller
             // Fill period fields from transformed data (same as SyncToursJob - no hardcode)
             $fillableFields = $period->getFillable();
             $periodFields = [];
-            
+
             // Map departure_date to start_date if needed
             if (isset($dep['departure_date']) && !isset($dep['start_date'])) {
                 $dep['start_date'] = $dep['departure_date'];
             }
-            
+
             foreach ($dep as $field => $value) {
-                if ($value === null) continue;
+                if ($value === null) {
+                    continue;
+                }
                 if (in_array($field, $fillableFields) || empty($fillableFields)) {
                     $periodFields[$field] = $value;
                 }
             }
-            
+
             // Auto-generate period_code if not provided
             if (empty($periodFields['period_code']) && empty($period->period_code) && $departureDate) {
                 $periodFields['period_code'] = 'P' . date('ymd', strtotime($departureDate));
             }
-            
+
             // Map status if provided
             if (isset($dep['status'])) {
                 $periodFields['status'] = $this->mapPeriodStatus($dep['status']);
             }
-            
+
             // Sanitize: available/capacity cannot be negative
             if (isset($periodFields['available']) && $periodFields['available'] < 0) {
                 $periodFields['available'] = 0;
@@ -3987,23 +4110,25 @@ class IntegrationController extends Controller
     protected function processOfferForSync(\App\Models\Period $period, array $depData): void
     {
         $offer = \App\Models\Offer::firstOrNew(['period_id' => $period->id]);
-        
+
         // Fill offer fields from transformed data (no hardcode - same as SyncToursJob)
         $fillableFields = $offer->getFillable();
         $offerFields = [];
-        
+
         foreach ($depData as $field => $value) {
-            if ($value === null) continue;
+            if ($value === null) {
+                continue;
+            }
             if (in_array($field, $fillableFields) || empty($fillableFields)) {
                 $offerFields[$field] = $value;
             }
         }
-        
+
         // Default currency if not provided
         if (empty($offerFields['currency']) && empty($offer->currency)) {
             $offerFields['currency'] = 'THB';
         }
-        
+
         $offer->fill($offerFields);
         $offer->save();
     }
@@ -4039,12 +4164,14 @@ class IntegrationController extends Controller
         // Fill itinerary fields from transformed data (no hardcode - same as SyncToursJob)
         $fillableFields = $itinerary->getFillable();
         $itinFields = [];
-        
+
         // Fields that should skip when empty (numeric fields)
         $numericFields = ['hotel_star', 'day_number', 'sort_order'];
-        
+
         foreach ($itinData as $field => $value) {
-            if ($value === null) continue;
+            if ($value === null) {
+                continue;
+            }
             if ($value === '' && in_array($field, $numericFields)) {
                 continue;
             }
@@ -4052,20 +4179,20 @@ class IntegrationController extends Controller
                 $itinFields[$field] = $value;
             }
         }
-        
+
         // Set data_source
         $itinFields['data_source'] = 'api';
-        
+
         // Auto-set sort_order from day_number if not provided
         if (empty($itinFields['sort_order']) && !empty($itinFields['day_number'])) {
             $itinFields['sort_order'] = $itinFields['day_number'];
         }
-        
+
         // Ensure description has a value (required field, NOT NULL)
         if (empty($itinFields['description']) && empty($itinerary->description)) {
             $itinFields['description'] = $itinFields['title'] ?? 'Day ' . ($itinFields['day_number'] ?? '');
         }
-        
+
         $itinerary->fill($itinFields);
         $itinerary->save();
     }
@@ -4101,19 +4228,13 @@ class IntegrationController extends Controller
     {
         // Resolve country
         if (isset($data['primary_country_id']) && !is_numeric($data['primary_country_id'])) {
-            $country = \App\Models\Country::where('iso2', $data['primary_country_id'])
-                ->orWhere('iso3', $data['primary_country_id'])
-                ->orWhere('name', $data['primary_country_id'])
-                ->orWhere('name_th', $data['primary_country_id'])
-                ->first();
+            $country = \App\Models\Country::where('iso2', $data['primary_country_id'])->orWhere('iso3', $data['primary_country_id'])->orWhere('name', $data['primary_country_id'])->orWhere('name_th', $data['primary_country_id'])->first();
             $data['primary_country_id'] = $country?->id;
         }
 
         // Resolve transport
         if (isset($data['transport_id']) && !is_numeric($data['transport_id'])) {
-            $transport = \App\Models\Transport::where('code', $data['transport_id'])
-                ->orWhere('name', $data['transport_id'])
-                ->first();
+            $transport = \App\Models\Transport::where('code', $data['transport_id'])->orWhere('name', $data['transport_id'])->first();
             $data['transport_id'] = $transport?->id;
         }
 
@@ -4129,7 +4250,9 @@ class IntegrationController extends Controller
         $filtered = [];
 
         foreach ($data as $key => $value) {
-            if ($value === null) continue;
+            if ($value === null) {
+                continue;
+            }
             if ($value === '' && in_array($key, ['hotel_star', 'duration_days', 'duration_nights', 'primary_country_id', 'transport_id'])) {
                 continue;
             }
@@ -4145,14 +4268,10 @@ class IntegrationController extends Controller
      * Fetch and sync periods from separate API endpoint (Two-Phase Sync)
      * Based on SyncPeriodsJob logic
      */
-    protected function fetchAndSyncPeriodsFromApi(
-        \App\Models\Tour $tour, 
-        $adapter, 
-        array $endpoints, 
-        int $wholesalerId
-    ): array {
+    protected function fetchAndSyncPeriodsFromApi(\App\Models\Tour $tour, $adapter, array $endpoints, int $wholesalerId): array
+    {
         $result = ['created' => 0, 'updated' => 0, 'skipped' => 0];
-        
+
         $periodsEndpoint = $endpoints['periods'] ?? null;
         if (!$periodsEndpoint) {
             Log::warning('Two-Phase Sync: No periods endpoint configured', [
@@ -4163,11 +4282,7 @@ class IntegrationController extends Controller
         }
 
         // Build URL - replace placeholders
-        $url = str_replace(
-            ['{external_id}', '{tour_code}', '{wholesaler_tour_code}'],
-            [$tour->external_id ?? '', $tour->tour_code ?? '', $tour->wholesaler_tour_code ?? ''],
-            $periodsEndpoint
-        );
+        $url = str_replace(['{external_id}', '{tour_code}', '{wholesaler_tour_code}'], [$tour->external_id ?? '', $tour->tour_code ?? '', $tour->wholesaler_tour_code ?? ''], $periodsEndpoint);
 
         try {
             // Fetch periods from API
@@ -4189,11 +4304,8 @@ class IntegrationController extends Controller
             ]);
 
             // Get field mappings for periods (departure section)
-            $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)
-                ->where('section_name', 'departure')
-                ->where('is_active', true)
-                ->get();
-            
+            $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)->where('section_name', 'departure')->where('is_active', true)->get();
+
             Log::debug('Two-Phase Sync: Got departure mappings', [
                 'tour_id' => $tour->id,
                 'mappings_count' => $mappings->count(),
@@ -4214,8 +4326,8 @@ class IntegrationController extends Controller
                     // Transform period data using mappings
                     $periodData = [];
                     foreach ($mappings as $mapping) {
-                        $fieldPath = $mapping->their_field_path ?? $mapping->their_field ?? null;
-                        
+                        $fieldPath = $mapping->their_field_path ?? ($mapping->their_field ?? null);
+
                         // Handle formula transform - doesn't need fieldPath
                         if ($mapping->transform_type === 'formula') {
                             $stringTransform = ($mapping->transform_config ?? [])['string_transform'] ?? [];
@@ -4226,16 +4338,16 @@ class IntegrationController extends Controller
                             }
                             continue;
                         }
-                        
+
                         if (empty($fieldPath)) {
                             continue;
                         }
-                        
+
                         // Strip array prefix like "periods[]." or "Periods[]." since we're already iterating over the array
                         $cleanPath = preg_replace('/^[Pp]eriods\[\]\./', '', $fieldPath);
                         $cleanPath = preg_replace('/^[Ss]chedules\[\]\./', '', $cleanPath);
                         $cleanPath = preg_replace('/^[Dd]epartures\[\]\./', '', $cleanPath);
-                        
+
                         $value = $this->extractValueFromPath($rawPeriod, $cleanPath);
                         if ($value !== null) {
                             $value = $this->applyTransformForSync($value, $mapping->transform_type, $mapping->transform_config);
@@ -4261,16 +4373,15 @@ class IntegrationController extends Controller
                     }
 
                     // Generate period code if not provided
-                    $periodCode = $periodData['period_code'] ?? $periodData['external_id'] ?? null;
+                    $periodCode = $periodData['period_code'] ?? ($periodData['external_id'] ?? null);
                     if (!$periodCode) {
                         $periodCode = $tour->tour_code . '-' . date('Ymd', strtotime($periodData['start_date']));
                     }
 
                     // Find or create period
                     $period = \App\Models\Period::where('tour_id', $tour->id)
-                        ->where(function($q) use ($periodCode, $periodData) {
-                            $q->where('period_code', $periodCode)
-                              ->orWhere('start_date', $periodData['start_date']);
+                        ->where(function ($q) use ($periodCode, $periodData) {
+                            $q->where('period_code', $periodCode)->orWhere('start_date', $periodData['start_date']);
                         })
                         ->first();
 
@@ -4302,7 +4413,6 @@ class IntegrationController extends Controller
                     }
 
                     $isNew ? $result['created']++ : $result['updated']++;
-
                 } catch (\Exception $e) {
                     Log::error('Two-Phase Sync: Error processing period', [
                         'tour_id' => $tour->id,
@@ -4311,7 +4421,6 @@ class IntegrationController extends Controller
                     $result['skipped']++;
                 }
             }
-
         } catch (\Exception $e) {
             Log::error('Two-Phase Sync: Exception fetching periods', [
                 'tour_id' => $tour->id,
@@ -4326,12 +4435,8 @@ class IntegrationController extends Controller
     /**
      * Fetch and sync itineraries from separate API endpoint (Two-Phase Sync)
      */
-    protected function fetchAndSyncItinerariesFromApi(
-        \App\Models\Tour $tour, 
-        $adapter, 
-        array $endpoints, 
-        int $wholesalerId
-    ): void {
+    protected function fetchAndSyncItinerariesFromApi(\App\Models\Tour $tour, $adapter, array $endpoints, int $wholesalerId): void
+    {
         $itinerariesEndpoint = $endpoints['itineraries'] ?? null;
         if (!$itinerariesEndpoint) {
             Log::debug('Two-Phase Sync: No itineraries endpoint configured', [
@@ -4342,11 +4447,7 @@ class IntegrationController extends Controller
         }
 
         // Build URL - replace placeholders
-        $url = str_replace(
-            ['{external_id}', '{tour_code}', '{wholesaler_tour_code}'],
-            [$tour->external_id ?? '', $tour->tour_code ?? '', $tour->wholesaler_tour_code ?? ''],
-            $itinerariesEndpoint
-        );
+        $url = str_replace(['{external_id}', '{tour_code}', '{wholesaler_tour_code}'], [$tour->external_id ?? '', $tour->tour_code ?? '', $tour->wholesaler_tour_code ?? ''], $itinerariesEndpoint);
 
         try {
             // Fetch itineraries from API
@@ -4369,10 +4470,7 @@ class IntegrationController extends Controller
             }
 
             // Get field mappings for itineraries
-            $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)
-                ->where('section_name', 'itinerary')
-                ->where('is_active', true)
-                ->get();
+            $mappings = WholesalerFieldMapping::where('wholesaler_id', $wholesalerId)->where('section_name', 'itinerary')->where('is_active', true)->get();
 
             // Process each itinerary
             foreach ($fetchResult->itineraries ?? [] as $rawItinerary) {
@@ -4380,8 +4478,8 @@ class IntegrationController extends Controller
                     // Transform itinerary data using mappings
                     $itinData = [];
                     foreach ($mappings as $mapping) {
-                        $fieldPath = $mapping->their_field_path ?? $mapping->their_field ?? null;
-                        
+                        $fieldPath = $mapping->their_field_path ?? ($mapping->their_field ?? null);
+
                         // Handle formula transform
                         if ($mapping->transform_type === 'formula') {
                             $stringTransform = ($mapping->transform_config ?? [])['string_transform'] ?? [];
@@ -4392,24 +4490,24 @@ class IntegrationController extends Controller
                             }
                             continue;
                         }
-                        
+
                         if (empty($fieldPath)) {
                             continue;
                         }
-                        
+
                         // Strip array prefix like "itinerary[]." or "Itinerary[]." since we're already iterating over the array
                         $cleanPath = preg_replace('/^[Ii]tinerary\[\]\./', '', $fieldPath);
                         $cleanPath = preg_replace('/^[Ii]tineraries\[\]\./', '', $cleanPath);
                         $cleanPath = preg_replace('/^[Dd]ays\[\]\./', '', $cleanPath);
                         $cleanPath = preg_replace('/^[Pp]rograms\[\]\./', '', $cleanPath);
-                        
+
                         $value = $this->extractValueFromPath($rawItinerary, $cleanPath);
                         if ($value !== null) {
                             $value = $this->applyTransformForSync($value, $mapping->transform_type, $mapping->transform_config);
                         }
                         $itinData[$mapping->our_field] = $value;
                     }
-                    
+
                     Log::debug('Two-Phase Sync: Transformed itinerary', [
                         'tour_id' => $tour->id,
                         'raw_keys' => array_keys($rawItinerary),
@@ -4418,7 +4516,6 @@ class IntegrationController extends Controller
 
                     // Process itinerary (create/update)
                     $this->processItineraryForSync($tour, $itinData);
-
                 } catch (\Exception $e) {
                     Log::error('Two-Phase Sync: Error processing itinerary', [
                         'tour_id' => $tour->id,
@@ -4426,7 +4523,6 @@ class IntegrationController extends Controller
                     ]);
                 }
             }
-
         } catch (\Exception $e) {
             Log::error('Two-Phase Sync: Exception fetching itineraries', [
                 'tour_id' => $tour->id,
@@ -4444,7 +4540,7 @@ class IntegrationController extends Controller
         if (empty($path)) {
             return null;
         }
-        
+
         $parts = explode('.', $path);
         $value = $data;
 
@@ -4490,7 +4586,7 @@ class IntegrationController extends Controller
     /**
      * Evaluate a formula expression like '{Price} - {Price_End}'
      * Replaces {FieldName} with actual values from data, then evaluates the math expression safely.
-     * 
+     *
      * @param string $expression e.g. '{Price} - {Price_End}', '{Price} * 1.07'
      * @param array $data Raw data containing the field values
      * @return float|null Calculated result or null if evaluation fails
@@ -4499,22 +4595,26 @@ class IntegrationController extends Controller
     {
         try {
             $expr = $expression;
-            
+
             // Replace {FieldName} or {nested.field} with numeric values
-            $expr = preg_replace_callback('/\{([^}]+)\}/', function ($matches) use ($data, $skipZero) {
-                $fieldPath = $matches[1];
-                $value = $this->extractValueFromPath($data, $fieldPath);
-                if ($value === null || !is_numeric($value)) {
-                    throw new \RuntimeException("Non-numeric value for field: {$fieldPath}");
-                }
-                $numericValue = (float) $value;
-                // Skip if value is 0 and skipZero is enabled
-                if ($skipZero && $numericValue == 0) {
-                    throw new \RuntimeException("Field {$fieldPath} is 0, skipping formula (skipZero enabled)");
-                }
-                return (string) $numericValue;
-            }, $expr);
-            
+            $expr = preg_replace_callback(
+                '/\{([^}]+)\}/',
+                function ($matches) use ($data, $skipZero) {
+                    $fieldPath = $matches[1];
+                    $value = $this->extractValueFromPath($data, $fieldPath);
+                    if ($value === null || !is_numeric($value)) {
+                        throw new \RuntimeException("Non-numeric value for field: {$fieldPath}");
+                    }
+                    $numericValue = (float) $value;
+                    // Skip if value is 0 and skipZero is enabled
+                    if ($skipZero && $numericValue == 0) {
+                        throw new \RuntimeException("Field {$fieldPath} is 0, skipping formula (skipZero enabled)");
+                    }
+                    return (string) $numericValue;
+                },
+                $expr,
+            );
+
             // Security: only allow numbers, operators, parentheses, spaces, decimal points
             if (!preg_match('/^[\d\s+\-*\/().]+$/', trim($expr))) {
                 Log::warning('evaluateFormulaExpression: Invalid expression after substitution', [
@@ -4523,14 +4623,14 @@ class IntegrationController extends Controller
                 ]);
                 return null;
             }
-            
+
             // Evaluate the expression
             $result = eval("return ({$expr});");
-            
+
             if (!is_numeric($result) || !is_finite((float) $result)) {
                 return null;
             }
-            
+
             return round((float) $result, 2);
         } catch (\Exception $e) {
             Log::debug('evaluateFormulaExpression: Failed', [
@@ -4548,12 +4648,14 @@ class IntegrationController extends Controller
     {
         $maxJobs = $request->input('max', 5);
         $processed = 0;
-        
+
         // Process jobs synchronously
         while ($processed < $maxJobs) {
             $job = DB::table('jobs')->orderBy('id')->first();
-            if (!$job) break;
-            
+            if (!$job) {
+                break;
+            }
+
             try {
                 \Artisan::call('queue:work', [
                     '--once' => true,
@@ -4565,7 +4667,7 @@ class IntegrationController extends Controller
                 break;
             }
         }
-        
+
         return response()->json([
             'success' => true,
             'message' => "Processed {$processed} jobs",
@@ -4626,11 +4728,14 @@ class IntegrationController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors(),
+                ],
+                422,
+            );
         }
 
         $validated = $validator->validated();
@@ -4668,10 +4773,13 @@ class IntegrationController extends Controller
 
         // Check if auto-close is enabled
         if (!$config->auto_close_expired_periods && !$config->auto_close_expired_tours) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Auto-close is not enabled for this integration. Please enable auto_close_expired_periods or auto_close_expired_tours first.',
-            ], 400);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Auto-close is not enabled for this integration. Please enable auto_close_expired_periods or auto_close_expired_tours first.',
+                ],
+                400,
+            );
         }
 
         try {
@@ -4681,19 +4789,16 @@ class IntegrationController extends Controller
 
             // Get counts of what was closed
             $today = now()->toDateString();
-            $thresholdDate = now()->subDays($config->past_period_threshold_days ?? 0)->toDateString();
+            $thresholdDate = now()
+                ->subDays($config->past_period_threshold_days ?? 0)
+                ->toDateString();
 
             // Count closed periods (recently updated to closed status)
             $tourIds = \App\Models\Tour::where('wholesaler_id', $config->wholesaler_id)->pluck('id');
-            $closedPeriodsCount = \App\Models\Period::whereIn('tour_id', $tourIds)
-                ->where('status', 'closed')
-                ->where('start_date', '<', $thresholdDate)
-                ->count();
+            $closedPeriodsCount = \App\Models\Period::whereIn('tour_id', $tourIds)->where('status', 'closed')->where('start_date', '<', $thresholdDate)->count();
 
             // Count closed tours (tours with no upcoming periods)
-            $closedToursCount = \App\Models\Tour::where('wholesaler_id', $config->wholesaler_id)
-                ->where('status', 'closed')
-                ->count();
+            $closedToursCount = \App\Models\Tour::where('wholesaler_id', $config->wholesaler_id)->where('status', 'closed')->count();
 
             return response()->json([
                 'success' => true,
@@ -4710,10 +4815,13 @@ class IntegrationController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Auto-close failed: ' . $e->getMessage(),
-            ], 500);
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'Auto-close failed: ' . $e->getMessage(),
+                ],
+                500,
+            );
         }
     }
 }

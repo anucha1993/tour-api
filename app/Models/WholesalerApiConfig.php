@@ -204,7 +204,7 @@ class WholesalerApiConfig extends Model
             if ($lastSync->status === 'failed') {
                 return 'down';
             }
-            if (in_array($lastSync->status, ['running', 'pending'])) {
+            if (in_array($lastSync->status, ['running', 'pending', 'partial'])) {
                 return 'degraded';
             }
         }

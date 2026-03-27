@@ -370,8 +370,8 @@ class HeadcodeTtnJapanAdapter extends \App\Services\WholesalerAdapters\HeadcodeB
             $normalized[] = [
                 'tour' => [
                     'external_id'          => (string) $pId,
-                    'wholesaler_tour_code' => (string) ($tour['P_CODE'] ?? $pId),
-                    'title'                => $tour['P_NAME']  ?? null,
+                    'wholesaler_tour_code' => (string) ($tour['P_CODE'] ?? $pId), 
+                    'title'                => $tour['P_NAME']  ?? null, 
                     'description'          => $description ?: null,
                     'primary_country_id'   => $japanCountryId,
                     'transport_id'         => $transportId,

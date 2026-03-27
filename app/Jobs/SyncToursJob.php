@@ -299,6 +299,14 @@ class SyncToursJob implements ShouldQueue
                 'stats' => $stats,
             ]);
 
+            // Update health check status based on sync result
+            $this->safeDbOperation(function() use ($config, $finalStatus) {
+                $config->update([
+                    'last_health_check_at' => now(),
+                    'last_health_check_status' => in_array($finalStatus, ['completed', 'partial']),
+                ]);
+            }, 'health status update');
+
         } catch (\Exception $e) {
             Log::error('SyncToursJob: Failed', [
                 'wholesaler_id' => $this->wholesalerId,

@@ -42,6 +42,29 @@ use Illuminate\Support\Facades\DB;
  */
 abstract class HeadcodeBaseAdapter extends BaseAdapter
 {
+    /**
+     * Health check for headcode adapters.
+     * Instead of calling a /health endpoint (there isn't one),
+     * verify the adapter file is loadable and report based on sync history.
+     */
+    public function healthCheck(): bool
+    {
+        $healthy = true;
+
+        // Check adapter file exists
+        $file = $this->config->headcode_file ?? '';
+        if ($file && !file_exists(storage_path("headcode/{$file}.php"))) {
+            $healthy = false;
+        }
+
+        $this->config->update([
+            'last_health_check_at' => now(),
+            'last_health_check_status' => $healthy,
+        ]);
+
+        return $healthy;
+    }
+
     // ───────────────────────────────────────────────────────────
     // SIMPLE HTTP HELPERS
     // ───────────────────────────────────────────────────────────

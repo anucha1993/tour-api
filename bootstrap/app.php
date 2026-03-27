@@ -7,6 +7,43 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
 use Illuminate\Console\Scheduling\Schedule;
 
+// Helper: check if schedule string is due now
+// Supports both time-list format ("03:55" or "09:00,21:00") and cron expressions ("55 3 * * *")
+function isScheduleDue(string $schedule): bool
+{
+    $schedule = trim($schedule);
+    
+    // Time-list format: "HH:MM" or "HH:MM,HH:MM,..."
+    if (preg_match('/^\d{1,2}:\d{2}(\s*,\s*\d{1,2}:\d{2})*$/', $schedule)) {
+        $nowH = (int) date('G'); // 0-23
+        $nowM = (int) date('i'); // 0-59
+        $times = array_map('trim', explode(',', $schedule));
+        foreach ($times as $time) {
+            [$h, $m] = explode(':', $time);
+            if ((int) $h === $nowH && (int) $m === $nowM) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    // Cron expression format
+    try {
+        $cron = new \Cron\CronExpression($schedule);
+        return $cron->isDue();
+    } catch (\Throwable $e) {
+        try {
+            \Illuminate\Support\Facades\Log::warning('Invalid schedule format', [
+                'schedule' => $schedule,
+                'error' => $e->getMessage(),
+            ]);
+        } catch (\Throwable $ignored) {
+            // Facade not ready
+        }
+        return false;
+    }
+}
+
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
@@ -22,11 +59,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 ->get();
             
             foreach ($configs as $config) {
-                // Check if this config should run now based on its cron schedule
-                $cron = new \Cron\CronExpression($config->sync_schedule);
-                
-                // Check if cron should have run in the last minute
-                if ($cron->isDue()) {
+                if (isScheduleDue($config->sync_schedule)) {
                     // Check if there's already a running sync for this wholesaler
                     $hasRunningSync = \App\Models\SyncLog::where('wholesaler_id', $config->wholesaler_id)
                         ->where('status', 'running')
@@ -65,9 +98,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 ->get();
             
             foreach ($configs as $config) {
-                $cron = new \Cron\CronExpression($config->full_sync_schedule);
-                
-                if ($cron->isDue()) {
+                if (isScheduleDue($config->full_sync_schedule)) {
                     // Check if there's already a running sync for this wholesaler
                     $hasRunningSync = \App\Models\SyncLog::where('wholesaler_id', $config->wholesaler_id)
                         ->where('status', 'running')
