@@ -49,17 +49,32 @@ class SyncPeriodsJob implements ShouldQueue
     protected array $cityLookupCache = [];
 
     /**
+     * Whether the tour was newly created in this sync.
+     * When true, SyncPeriodsJob will delete the tour if it has 0 active future periods.
+     */
+    protected bool $isNewTour = false;
+
+    /**
+     * When true, skip DB::purge() to preserve parent transaction.
+     * Set by SyncToursJob when running inline (not via queue).
+     */
+    public bool $runningInline = false;
+
+    /**
      * Create a new job instance.
      * 
      * @param int $tourId Tour ID
      * @param string $externalId External ID from API
      * @param int $integrationId Integration ID (WholesalerApiConfig primary key, NOT wholesaler_id)
+     * @param int|null $syncLogId Sync log ID (optional, for queue dispatch compatibility)
+     * @param bool $isNewTour Whether the tour was newly created in this sync
      */
-    public function __construct(int $tourId, string $externalId, int $integrationId)
+    public function __construct(int $tourId, string $externalId, int $integrationId, ?int $syncLogId = null, bool $isNewTour = false)
     {
         $this->tourId = $tourId;
         $this->externalId = $externalId;
         $this->integrationId = $integrationId;
+        $this->isNewTour = $isNewTour;
         $this->onQueue('periods');
     }
 
@@ -70,10 +85,13 @@ class SyncPeriodsJob implements ShouldQueue
     {
         // FIX: ใช้ DB::purge() เพื่อ reset connection แบบไม่สร้าง connection ใหม่ทับเก่า
         // DB::reconnect() โดยไม่ disconnect ก่อน → connection leak → max_user_connections
-        try {
-            DB::purge();
-        } catch (\Exception $e) {
-            // Ignore — connection will be re-established on first query
+        // Skip purge when running inline — parent transaction must stay intact
+        if (!$this->runningInline) {
+            try {
+                DB::purge();
+            } catch (\Exception $e) {
+                // Ignore — connection will be re-established on first query
+            }
         }
 
         Log::info('SyncPeriodsJob: Starting', [
@@ -203,6 +221,42 @@ class SyncPeriodsJob implements ShouldQueue
                 'transport' => $transportStats,
             ]);
 
+            // Cleanup: If tour has 0 active future periods after sync,
+            // newly created tours get deleted, existing tours get set to 'draft'
+            $activeFuturePeriods = Period::where('tour_id', $tour->id)
+                ->where('start_date', '>=', now()->toDateString())
+                ->whereIn('status', [Period::STATUS_OPEN, 'waitlist', 'sold_out'])
+                ->count();
+
+            if ($activeFuturePeriods === 0) {
+                if ($this->isNewTour) {
+                    // New tour: delete completely — should never have been created
+                    $periodIds = Period::where('tour_id', $tour->id)->pluck('id');
+                    Offer::whereIn('period_id', $periodIds)->delete();
+                    Period::where('tour_id', $tour->id)->delete();
+                    TourItinerary::where('tour_id', $tour->id)->delete();
+                    $tour->delete();
+
+                    Log::info('SyncPeriodsJob: Deleted new tour with no active future periods', [
+                        'tour_id' => $this->tourId,
+                        'external_id' => $this->externalId,
+                        'total_periods_synced' => $stats['created'] + $stats['updated'],
+                        'skipped' => $stats['skipped'],
+                    ]);
+                } else {
+                    // Existing tour: set to draft so it doesn't show on frontend
+                    if ($tour->status !== 'draft') {
+                        $tour->update(['status' => 'draft']);
+                        Log::info('SyncPeriodsJob: Set existing tour to draft (no active future periods)', [
+                            'tour_id' => $this->tourId,
+                            'external_id' => $this->externalId,
+                            'previous_status' => $tour->getOriginal('status'),
+                            'skipped' => $stats['skipped'],
+                        ]);
+                    }
+                }
+            }
+
         } catch (\Exception $e) {
             Log::error('SyncPeriodsJob: Failed', [
                 'tour_id' => $this->tourId,
@@ -228,10 +282,13 @@ class SyncPeriodsJob implements ShouldQueue
             throw $e;
         } finally {
             // FIX: คืน connection กลับเมื่อ job เสร็จ ป้องกัน max_user_connections
-            try {
-                DB::disconnect();
-            } catch (\Exception $e) {
-                // Ignore disconnect errors
+            // Skip when running inline — parent transaction needs the connection
+            if (!$this->runningInline) {
+                try {
+                    DB::disconnect();
+                } catch (\Exception $e) {
+                    // Ignore disconnect errors
+                }
             }
         }
     }

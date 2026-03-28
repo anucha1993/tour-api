@@ -69,8 +69,9 @@ class WholesalerApiConfig extends Model
         'notifications_enabled',
         'notification_emails',
         'notification_types',
-        // City Extraction
+        // City & Country Extraction
         'extract_cities_from_name',
+        'extract_countries_from_name',
         // Headcode Integration
         'integration_type',
         'headcode_file',
@@ -91,6 +92,7 @@ class WholesalerApiConfig extends Model
         'notification_emails' => 'array',
         'notification_types' => 'array',
         'extract_cities_from_name' => 'boolean',
+        'extract_countries_from_name' => 'boolean',
         // Smart Sync Settings
         'respect_manual_overrides' => 'boolean',
         'always_sync_fields' => 'array',

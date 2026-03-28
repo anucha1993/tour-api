@@ -15,6 +15,7 @@ use App\Models\TourItinerary;
 use App\Models\WholesalerApiConfig;
 use App\Models\WholesalerFieldMapping;
 use App\Services\CityExtractorService;
+use App\Services\CountryExtractorService;
 use App\Services\CloudflareImagesService;
 use App\Services\NotificationService;
 use App\Services\PdfBrandingService;
@@ -1272,20 +1273,27 @@ class SyncToursJob implements ShouldQueue
 
                     $result = $this->processSingleTour($tourData, $config, $pdfBranding, $wholesalerCode, $syncLog);
                     
-                    // If newly created tour ended up with 0 active periods
-                    // (all periods were past dates or no periods at all), rollback and skip.
-                    // This applies to both bulk mode and single-phase mode.
+                    // If newly created tour ended up with 0 active periods, rollback and skip.
+                    // Cases covered:
+                    // 1. API returned periods but all were past/skipped (hasDepartures=true, periodsCreated=0)
+                    // 2. API returned 0 periods for this tour (hasDepartures=false) — single-phase only
+                    // 3. two_phase inline mode processed but got 0 active periods
+                    // Excluded: two_phase with queue dispatch (periods fetched later by SyncPeriodsJob)
                     $periodsReceived = $result['periods_received'] ?? 0;
                     $periodsCreated = $result['periods_created'] ?? 0;
                     $periodsUpdated = $result['periods_updated'] ?? 0;
-                    $hasDepartures = !empty($tourData['departure']);
+                    $hasDepartures = !empty($tourData['departure']) || !empty($result['two_phase_inline']);
+                    $syncMode = $config->sync_mode ?? 'single';
+                    $isTwoPhaseQueued = $syncMode === 'two_phase' && empty($result['two_phase_inline']);
                     
-                    if ($result['action'] === 'created' && $hasDepartures
-                        && $periodsCreated === 0 && $periodsUpdated === 0) {
+                    if ($result['action'] === 'created' && $periodsCreated === 0 && $periodsUpdated === 0
+                        && !$isTwoPhaseQueued) {
                         DB::rollBack();
-                        Log::debug('SyncToursJob: Rollback new tour with no active periods (all past/skipped)', [
+                        Log::debug('SyncToursJob: Rollback new tour with no active periods', [
                             'tour_code' => $currentTourCode,
                             'periods_received' => $periodsReceived,
+                            'has_departures' => $hasDepartures,
+                            'reason' => $hasDepartures ? 'all_past_or_skipped' : 'api_returned_zero_periods',
                         ]);
                         $stats['skipped']++;
                         continue;
@@ -1840,6 +1848,15 @@ class SyncToursJob implements ShouldQueue
             $tourFields['tour_code'] = $this->generateTourCode($config->wholesaler_id);
         }
         
+        // Parse Thai duration text like "10 วัน 8 คืน" → duration_days=10, duration_nights=8
+        if (!empty($tourFields['duration_days']) && is_string($tourFields['duration_days']) && !is_numeric($tourFields['duration_days'])) {
+            $durationText = $tourFields['duration_days'];
+            $tourFields['duration_days'] = preg_match('/(\d+)\s*วัน/', $durationText, $dm) ? (int) $dm[1] : 0;
+            if (preg_match('/(\d+)\s*คืน/', $durationText, $nm)) {
+                $tourFields['duration_nights'] = (int) $nm[1];
+            }
+        }
+        
         // Auto-calculate duration_nights from duration_days if not provided
         if (empty($tourFields['duration_nights']) && !empty($tourFields['duration_days'])) {
             $tourFields['duration_nights'] = max(0, (int)$tourFields['duration_days'] - 1);
@@ -1926,8 +1943,41 @@ class SyncToursJob implements ShouldQueue
             }
         }
         
-        // Extract cities from tour title if enabled
+        // Extract countries from tour title if enabled
         $tourTitle = $tour->title ?? $tour->name ?? null;
+        if ($config->extract_countries_from_name && !empty($tourTitle)) {
+            $extractedCountries = CountryExtractorService::extract($tourTitle);
+
+            if ($extractedCountries->isNotEmpty()) {
+                // Set primary_country_id from first extracted country if not already set
+                if (empty($tour->primary_country_id)) {
+                    $tour->update(['primary_country_id' => $extractedCountries->first()->id]);
+                }
+
+                // Sync to tour_countries pivot (keep existing, add new)
+                $existingCountryIds = $tour->countries()->pluck('countries.id')->toArray();
+                $sortOrder = $tour->countries()->max('tour_countries.sort_order') ?? 0;
+
+                foreach ($extractedCountries as $country) {
+                    if (!in_array($country->id, $existingCountryIds)) {
+                        $sortOrder++;
+                        $isPrimary = empty($tour->primary_country_id) || $tour->primary_country_id === $country->id;
+                        $tour->countries()->attach($country->id, [
+                            'is_primary' => $isPrimary,
+                            'sort_order' => $sortOrder,
+                        ]);
+                    }
+                }
+
+                Log::info('SyncToursJob: Extracted countries from tour name', [
+                    'tour_id' => $tour->id,
+                    'tour_title' => $tourTitle,
+                    'countries_found' => $extractedCountries->pluck('name_th')->toArray(),
+                ]);
+            }
+        }
+
+        // Extract cities from tour title if enabled
         if ($config->extract_cities_from_name && !empty($tourTitle)) {
             $extractedCities = CityExtractorService::extract($tourTitle);
             
@@ -2018,8 +2068,10 @@ class SyncToursJob implements ShouldQueue
             if ($externalId) {
                 if ($this->processPeriodsInline) {
                     // Run inline (synchronously) — no queue worker needed
+                    $isNewTour = $result['action'] === 'created';
                     try {
-                        $periodsJob = new SyncPeriodsJob($tour->id, $externalId, $config->id);
+                        $periodsJob = new SyncPeriodsJob($tour->id, $externalId, $config->id, null, $isNewTour);
+                        $periodsJob->runningInline = true;
                         $periodsJob->handle();
                         Log::info('SyncToursJob: Processed SyncPeriodsJob inline', [
                             'tour_id' => $tour->id,
@@ -2032,25 +2084,57 @@ class SyncToursJob implements ShouldQueue
                             'error' => $e->getMessage(),
                         ]);
                     }
+
+                    // After inline SyncPeriodsJob, check if tour was deleted (no active future periods)
+                    // SyncPeriodsJob handles cleanup via DB::purge() separate connection,
+                    // so we must check if tour still exists
+                    $tourStillExists = Tour::where('id', $tour->id)->exists();
+
+                    if (!$tourStillExists) {
+                        // Tour was deleted by SyncPeriodsJob (all periods past/skipped)
+                        $result['action'] = 'skipped';
+                        $result['periods_received'] = 0;
+                        $result['periods_created'] = 0;
+                        $result['periods_updated'] = 0;
+                        $result['two_phase_inline'] = false;
+                    } else {
+                        // Query actual period counts from DB
+                        $activePeriodCount = Period::where('tour_id', $tour->id)
+                            ->where('start_date', '>=', now()->toDateString())
+                            ->whereIn('status', [Period::STATUS_OPEN, 'waitlist', 'sold_out'])
+                            ->count();
+                        $totalPeriodCount = Period::where('tour_id', $tour->id)->count();
+
+                        $result['periods_received'] = $totalPeriodCount;
+                        $result['periods_created'] = $activePeriodCount;
+                        $result['periods_updated'] = 0;
+                        // Mark as having departures so rollback check can trigger for two_phase
+                        $result['two_phase_inline'] = true;
+                    }
                 } else {
-                    // Dispatch to queue
+                    // Dispatch to queue — SyncPeriodsJob will handle cleanup itself
                     SyncPeriodsJob::dispatch(
                         $tour->id,
                         $externalId,
                         $config->id,
-                        $syncLog->id
+                        $syncLog->id,
+                        $result['action'] === 'created' // isNewTour flag
                     )->onQueue('periods');
                     
                     Log::info('SyncToursJob: Dispatched SyncPeriodsJob to queue', [
                         'tour_id' => $tour->id,
                         'external_id' => $externalId,
                     ]);
+
+                    $result['periods_received'] = 0;
+                    $result['periods_created'] = 0;
+                    $result['periods_updated'] = 0;
                 }
+            } else {
+                $result['periods_received'] = 0;
+                $result['periods_created'] = 0;
+                $result['periods_updated'] = 0;
             }
-            
-            $result['periods_received'] = 0;
-            $result['periods_created'] = 0;
-            $result['periods_updated'] = 0;
             } // end else (non-bulk per-tour dispatch)
         } else {
             // Single-Phase (default): process periods from same API response
@@ -2207,8 +2291,16 @@ class SyncToursJob implements ShouldQueue
         $fillableFields = $period->getFillable();
         $periodFields = [];
         
+        // Numeric period fields that must be cast to integer (API may return strings like "26+1" or "ปิดกรุ๊ป")
+        $numericPeriodFields = ['capacity', 'available', 'booked', 'price_adult', 'price_child', 'price_child_nobed', 'price_infant', 'price_single', 'price_joinland', 'commission_agent', 'commission_sale'];
+        
         foreach ($depData as $field => $value) {
             if ($value === null) continue;
+            
+            // Cast numeric fields: handle strings like "26+1", "ปิดกรุ๊ป", "เต็ม" → int
+            if (in_array($field, $numericPeriodFields) && !is_numeric($value)) {
+                $value = (int) $value; // PHP casts "26+1"→26, "ปิดกรุ๊ป"→0, "เต็ม"→0
+            }
             if (in_array($field, $fillableFields) || empty($fillableFields)) {
                 $periodFields[$field] = $value;
             }

@@ -115,12 +115,23 @@ class GenericRestAdapter extends BaseAdapter
             // Handle various response formats:
             // 1. Direct array: [{...}, {...}] (Zego format)
             // 2. Wrapped: { data: [...] } or { tours: [...] } or { items: [...] }
+            // 3. Double-wrapped: { data: { data: [...], meta: {...} } } (Laravel-style paginated)
             if (is_array($response) && isset($response[0]) && is_array($response[0])) {
                 // Direct array format (Zego)
                 $tours = $response;
             } else {
                 // Wrapped format
                 $tours = $response['data'] ?? $response['tours'] ?? $response['items'] ?? [];
+                
+                // Handle double-wrapped: if $tours is still an assoc array with nested 'data' key
+                // e.g., { data: { data: [...], meta: {...} } } → extract inner data
+                if (is_array($tours) && !isset($tours[0]) && isset($tours['data']) && is_array($tours['data'])) {
+                    // Hoist inner meta/pagination info to response level for pagination detection
+                    if (isset($tours['meta']) && !isset($response['meta'])) {
+                        $response['meta'] = $tours['meta'];
+                    }
+                    $tours = $tours['data'];
+                }
             }
 
             // Detect pagination info from response
@@ -138,6 +149,7 @@ class GenericRestAdapter extends BaseAdapter
                     // Try to detect last_page / total_pages from various response formats
                     $responseLastPage = $response['last_page']
                         ?? $response['meta']['last_page']
+                        ?? $response['meta']['totalPages']
                         ?? $response['pagination']['last_page']
                         ?? $response['pagination']['total_pages']
                         ?? $response['totalPage']
