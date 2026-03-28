@@ -1931,7 +1931,22 @@ class SyncToursJob implements ShouldQueue
         }
         
         $tour->fill($tourFields);
-        $tour->save();
+        
+        // Retry on duplicate tour_code collision (concurrent sync jobs)
+        $saved = false;
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            try {
+                $tour->save();
+                $saved = true;
+                break;
+            } catch (\Illuminate\Database\QueryException $e) {
+                if ($attempt < 4 && str_contains($e->getMessage(), 'tours_tour_code_unique')) {
+                    $tour->tour_code = $this->generateTourCode($config->wholesaler_id);
+                    continue;
+                }
+                throw $e;
+            }
+        }
         
         $result['tour_id'] = $tour->id;
         
@@ -2563,15 +2578,22 @@ class SyncToursJob implements ShouldQueue
         $basePattern = $prefix . $yearMonth;
         $prefixLen = strlen($basePattern);
         
-        // Use numeric comparison to find the actual max sequence
+        // Use numeric MAX to find actual highest sequence
         // (string ORDER BY fails when sequence goes from 3 to 4+ digits)
         $maxSeq = (int) Tour::where('tour_code', 'like', "{$basePattern}%")
             ->selectRaw("MAX(CAST(SUBSTRING(tour_code, ?) AS UNSIGNED)) as max_seq", [$prefixLen + 1])
             ->value('max_seq');
         
         $nextSeq = $maxSeq + 1;
+        $code = $basePattern . str_pad($nextSeq, 4, '0', STR_PAD_LEFT);
         
-        return $basePattern . str_pad($nextSeq, 4, '0', STR_PAD_LEFT);
+        // Concurrency guard: if code already exists, skip ahead
+        while (Tour::where('tour_code', $code)->exists()) {
+            $nextSeq++;
+            $code = $basePattern . str_pad($nextSeq, 4, '0', STR_PAD_LEFT);
+        }
+        
+        return $code;
     }
 
     /**
