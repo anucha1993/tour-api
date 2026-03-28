@@ -84,6 +84,7 @@ class SyncToursCommand extends Command
                         null,
                         $syncType
                     );
+                    $job->setProcessPeriodsInline(true);
                     
                     $this->info("  → Running sync ({$syncType})...");
                     $job->handle();

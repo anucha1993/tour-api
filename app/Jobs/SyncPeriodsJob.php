@@ -514,9 +514,23 @@ class SyncPeriodsJob implements ShouldQueue
             return;
         }
         
-        // All periods are always synced regardless of date (past or future).
-        // past_period_handling is ignored — admin controls overrides via sync_locked flag per period.
+        // Check if this period is past based on threshold
         $isPastPeriod = $startDate < $thresholdDate;
+
+        if ($isPastPeriod) {
+            if ($pastPeriodHandling === 'skip') {
+                // Skip: don't save this period at all
+                Log::debug('SyncPeriodsJob: Skipped past period', [
+                    'tour_id' => $tour->id,
+                    'start_date' => $startDate,
+                    'threshold_date' => $thresholdDate,
+                    'handling' => 'skip',
+                ]);
+                $stats['skipped']++;
+                return;
+            }
+            // 'close' and 'keep' continue — handled below when building periodData
+        }
 
         // Generate period code if not provided
         $periodCode = $data['period_code'] ?? $data['external_id'] ?? null;
@@ -591,7 +605,9 @@ class SyncPeriodsJob implements ShouldQueue
             'booked' => $booked,
             // Note: 'available' is intentionally omitted here.
             // Period::boot() always recalculates available = capacity - booked on save.
-            'status' => $this->mapPeriodStatus($data['status'] ?? null),
+            'status' => ($isPastPeriod && $pastPeriodHandling === 'close')
+                ? Period::STATUS_CLOSED
+                : $this->mapPeriodStatus($data['status'] ?? null),
             'is_visible' => $data['is_visible'] ?? true,
             'sale_status' => $data['sale_status'] ?? 'available',
         ];

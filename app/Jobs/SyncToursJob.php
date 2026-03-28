@@ -56,6 +56,7 @@ class SyncToursJob implements ShouldQueue
     protected ?int $limit;
     protected ?int $syncLogId = null;
     protected ?string $syncLockKey = null;
+    protected bool $processPeriodsInline = false;
 
     /**
      * In-memory cache for lookup transforms to avoid repeated DB queries.
@@ -96,6 +97,16 @@ class SyncToursJob implements ShouldQueue
         $this->transformedData = $transformedData;
         $this->syncType = $syncType;
         $this->limit = $limit;
+    }
+
+    /**
+     * When set to true, SyncPeriodsJob will be executed inline (synchronously)
+     * instead of being dispatched to the queue. Useful for CLI sync commands.
+     */
+    public function setProcessPeriodsInline(bool $inline = true): self
+    {
+        $this->processPeriodsInline = $inline;
+        return $this;
     }
 
     /**
@@ -1261,14 +1272,20 @@ class SyncToursJob implements ShouldQueue
 
                     $result = $this->processSingleTour($tourData, $config, $pdfBranding, $wholesalerCode, $syncLog);
                     
-                    // Bulk mode: if newly created tour ended up with 0 active periods
-                    // (all periods were past dates), rollback and skip
-                    if (!empty($bulkPeriodsMap) && $result['action'] === 'created'
-                        && ($result['periods_created'] ?? 0) === 0 && ($result['periods_updated'] ?? 0) === 0) {
+                    // If newly created tour ended up with 0 active periods
+                    // (all periods were past dates or no periods at all), rollback and skip.
+                    // This applies to both bulk mode and single-phase mode.
+                    $periodsReceived = $result['periods_received'] ?? 0;
+                    $periodsCreated = $result['periods_created'] ?? 0;
+                    $periodsUpdated = $result['periods_updated'] ?? 0;
+                    $hasDepartures = !empty($tourData['departure']);
+                    
+                    if ($result['action'] === 'created' && $hasDepartures
+                        && $periodsCreated === 0 && $periodsUpdated === 0) {
                         DB::rollBack();
-                        Log::debug('SyncToursJob: Rollback tour with no active periods (all past)', [
+                        Log::debug('SyncToursJob: Rollback new tour with no active periods (all past/skipped)', [
                             'tour_code' => $currentTourCode,
-                            'periods_received' => $result['periods_received'] ?? 0,
+                            'periods_received' => $periodsReceived,
                         ]);
                         $stats['skipped']++;
                         continue;
@@ -1995,24 +2012,42 @@ class SyncToursJob implements ShouldQueue
                 $result['periods_created'] = 0;
                 $result['periods_updated'] = 0;
             } else {
-            // Two-Phase Sync: dispatch SyncPeriodsJob to fetch periods separately
+            // Two-Phase Sync: fetch periods separately per tour
             $externalId = $tour->external_id ?? $tour->wholesaler_tour_code;
             
             if ($externalId) {
-                SyncPeriodsJob::dispatch(
-                    $tour->id,
-                    $externalId,
-                    $config->id,  // Use integration ID (primary key), not wholesaler_id
-                    $syncLog->id
-                )->onQueue('periods');
-                
-                Log::info('SyncToursJob: Dispatched SyncPeriodsJob for two-phase sync', [
-                    'tour_id' => $tour->id,
-                    'external_id' => $externalId,
-                ]);
+                if ($this->processPeriodsInline) {
+                    // Run inline (synchronously) — no queue worker needed
+                    try {
+                        $periodsJob = new SyncPeriodsJob($tour->id, $externalId, $config->id);
+                        $periodsJob->handle();
+                        Log::info('SyncToursJob: Processed SyncPeriodsJob inline', [
+                            'tour_id' => $tour->id,
+                            'external_id' => $externalId,
+                        ]);
+                    } catch (\Throwable $e) {
+                        Log::error('SyncToursJob: Inline SyncPeriodsJob failed', [
+                            'tour_id' => $tour->id,
+                            'external_id' => $externalId,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                } else {
+                    // Dispatch to queue
+                    SyncPeriodsJob::dispatch(
+                        $tour->id,
+                        $externalId,
+                        $config->id,
+                        $syncLog->id
+                    )->onQueue('periods');
+                    
+                    Log::info('SyncToursJob: Dispatched SyncPeriodsJob to queue', [
+                        'tour_id' => $tour->id,
+                        'external_id' => $externalId,
+                    ]);
+                }
             }
             
-            // Mark stats as deferred (will be updated by SyncPeriodsJob)
             $result['periods_received'] = 0;
             $result['periods_created'] = 0;
             $result['periods_updated'] = 0;
@@ -2132,13 +2167,20 @@ class SyncToursJob implements ShouldQueue
             return 'skipped';
         }
         
-        // Skip past periods if configured (from global settings)
-        $globalSyncSettings = $this->getSyncSettings();
-        $skipPastPeriods = $globalSyncSettings['skip_past_periods'] ?? true;
-        if ($skipPastPeriods && strtotime($departureDate) < strtotime(date('Y-m-d'))) {
+        // Past period handling: use per-integration config (priority), fallback to global
+        $pastPeriodHandling = $config?->past_period_handling ?? 'skip';
+        $thresholdDays = (int) ($config?->past_period_threshold_days ?? 0);
+        $thresholdDays = max(0, min(365, $thresholdDays));
+        $thresholdDate = now()->subDays($thresholdDays)->toDateString();
+
+        $isPastPeriod = date('Y-m-d', strtotime($departureDate)) < $thresholdDate;
+        
+        if ($isPastPeriod && $pastPeriodHandling === 'skip') {
             Log::debug('SyncToursJob: Skipped past period', [
                 'tour_id' => $tour->id,
                 'departure_date' => $departureDate,
+                'threshold_date' => $thresholdDate,
+                'handling' => 'skip',
             ]);
             return 'skipped';
         }
@@ -2180,6 +2222,11 @@ class SyncToursJob implements ShouldQueue
         // Map status if provided (system transform)
         if (isset($depData['status'])) {
             $periodFields['status'] = $this->mapPeriodStatus($depData['status']);
+        }
+        
+        // Force status to 'closed' for past periods when handling = 'close'
+        if ($isPastPeriod && $pastPeriodHandling === 'close') {
+            $periodFields['status'] = Period::STATUS_CLOSED;
         }
         
         // Derive booked from capacity - available_from_api when booked is not mapped.
