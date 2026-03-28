@@ -1894,6 +1894,13 @@ class SyncToursJob implements ShouldQueue
             $tourFields['title'] = mb_substr($tourFields['title'], 0, 247) . '...';
         }
         
+        // Truncate SEO fields to fit varchar(255)
+        foreach (['meta_title' => 200] as $seoField => $maxLen) {
+            if (!empty($tourFields[$seoField]) && is_string($tourFields[$seoField]) && mb_strlen($tourFields[$seoField]) > $maxLen) {
+                $tourFields[$seoField] = mb_substr($tourFields[$seoField], 0, $maxLen - 3) . '...';
+            }
+        }
+        
         // FIX: เปลี่ยน debug log จาก info → debug
         Log::debug('SyncToursJob: tourFields before save', [
             'tour_code' => $tourFields['tour_code'] ?? $tour->tour_code ?? 'N/A',
@@ -1915,6 +1922,12 @@ class SyncToursJob implements ShouldQueue
                 'tour_code' => $tourFields['tour_code'] ?? $tour->tour_code ?? 'N/A',
                 'external_id' => $tourFields['external_id'],
             ]);
+        }
+        
+        // FIX: Validate tour_type against allowed enum values
+        $allowedTourTypes = ['join', 'incentive', 'collective'];
+        if (isset($tourFields['tour_type']) && !in_array($tourFields['tour_type'], $allowedTourTypes, true)) {
+            unset($tourFields['tour_type']); // Let MySQL use default 'join'
         }
         
         $tour->fill($tourFields);
@@ -2541,26 +2554,24 @@ class SyncToursJob implements ShouldQueue
 
     /**
      * Generate unique tour code
-     * Format: NT+YYMM+XXX (e.g., NT202601001)
+     * Format: NT+YYYYMM+XXXX (e.g., NT2026010001)
      */
     protected function generateTourCode(int $wholesalerId): string
     {
         $prefix = 'NT';
         $yearMonth = now()->format('Ym'); // e.g., 202601
+        $basePattern = $prefix . $yearMonth;
+        $prefixLen = strlen($basePattern);
         
-        // Find last tour code with same prefix and year-month
-        $lastTour = Tour::where('tour_code', 'like', "{$prefix}{$yearMonth}%")
-            ->orderBy('tour_code', 'desc')
-            ->first();
+        // Use numeric comparison to find the actual max sequence
+        // (string ORDER BY fails when sequence goes from 3 to 4+ digits)
+        $maxSeq = (int) Tour::where('tour_code', 'like', "{$basePattern}%")
+            ->selectRaw("MAX(CAST(SUBSTRING(tour_code, ?) AS UNSIGNED)) as max_seq", [$prefixLen + 1])
+            ->value('max_seq');
         
-        if ($lastTour && preg_match('/NT\d{6}(\d{3})$/', $lastTour->tour_code, $matches)) {
-            $seq = intval($matches[1]) + 1;
-        } else {
-            $seq = 1;
-        }
+        $nextSeq = $maxSeq + 1;
         
-        // NT + YYMM + 3-digit sequence (e.g., NT202601001)
-        return $prefix . $yearMonth . str_pad($seq, 3, '0', STR_PAD_LEFT);
+        return $basePattern . str_pad($nextSeq, 4, '0', STR_PAD_LEFT);
     }
 
     /**

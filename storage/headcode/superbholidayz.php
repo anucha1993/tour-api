@@ -539,7 +539,7 @@ class HeadcodeSuperbholidayzAdapter extends \App\Services\WholesalerAdapters\Hea
                     'available_seats'      => $totalAvailable,
                 ],
                 'departure' => $departures,
-                'itinerary' => $itinerary,
+                // 'itinerary' => $itinerary,
                 'content'   => [
                     'description' => $description ?: null,
                 ],
