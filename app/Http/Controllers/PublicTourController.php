@@ -49,9 +49,7 @@ class PublicTourController extends Controller
                 'transports.transport:id,code,name,type,image',
                 'itineraries',
                 'periods' => function ($query) {
-                    $query->where('start_date', '>=', now()->toDateString())
-                          ->where('status', 'open')
-                          ->where('is_visible', true)
+                    $query->where('is_visible', true)
                           ->orderBy('start_date')
                           ->with('offer.promotion');
                 },

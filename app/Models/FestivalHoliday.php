@@ -218,8 +218,7 @@ class FestivalHoliday extends Model
             },
             'transports.transport:id,code,name,image',
             'periods' => function ($q) {
-                $q->where('status', 'open')
-                  ->where('is_visible', true)
+                $q->where('is_visible', true)
                   ->where('start_date', '>=', $this->start_date->toDateString())
                   ->where('start_date', '<=', $this->end_date->toDateString())
                   ->orderBy('start_date');

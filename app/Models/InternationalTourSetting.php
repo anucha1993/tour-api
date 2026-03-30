@@ -153,9 +153,7 @@ class InternationalTourSetting extends Model
             },
             'transports.transport:id,code,name,image',
             'periods' => function ($q) {
-                $q->where('start_date', '>=', now()->toDateString())
-                  ->where('status', 'open')
-                  ->where('is_visible', true)
+                $q->where('is_visible', true)
                   ->orderBy('start_date')
                   ->limit($this->max_periods_display);
             },
