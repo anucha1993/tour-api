@@ -499,6 +499,12 @@ class UnifiedSearchService
             $sortBy = substr($sortBy, 1);
         }
 
+        // "latest" preserves API's natural order (newest first)
+        // "-latest" reverses it (oldest first)
+        if ($sortBy === 'latest') {
+            return $direction === 'desc' ? array_values(array_reverse($tours)) : array_values($tours);
+        }
+
         usort($tours, function ($a, $b) use ($sortBy, $direction) {
             $valueA = $a[$sortBy] ?? null;
             $valueB = $b[$sortBy] ?? null;

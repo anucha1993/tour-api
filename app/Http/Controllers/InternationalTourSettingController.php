@@ -62,6 +62,13 @@ class InternationalTourSettingController extends Controller
             'filter_airline' => 'boolean',
             'filter_departure_month' => 'boolean',
             'filter_price_range' => 'boolean',
+            'filter_festival' => 'boolean',
+            'filter_promotion' => 'boolean',
+            'filter_theme' => 'boolean',
+            'filter_special_highlight' => 'boolean',
+            'filter_advanced' => 'boolean',
+            'hero_text' => 'nullable|string|max:255',
+            'pagination_mode' => 'string|in:page,load_more',
             'sort_order' => 'integer|min:0',
             'is_active' => 'boolean',
         ]);
@@ -117,6 +124,13 @@ class InternationalTourSettingController extends Controller
             'filter_airline' => 'boolean',
             'filter_departure_month' => 'boolean',
             'filter_price_range' => 'boolean',
+            'filter_festival' => 'boolean',
+            'filter_promotion' => 'boolean',
+            'filter_theme' => 'boolean',
+            'filter_special_highlight' => 'boolean',
+            'filter_advanced' => 'boolean',
+            'hero_text' => 'nullable|string|max:255',
+            'pagination_mode' => 'string|in:page,load_more',
             'cover_image_position' => 'string|in:top,center,bottom,left top,left center,left bottom,right top,right center,right bottom',
             'sort_order' => 'integer|min:0',
             'is_active' => 'boolean',
@@ -335,6 +349,68 @@ class InternationalTourSettingController extends Controller
     }
 
     /**
+     * Update country cover hero text
+     */
+    public function updateCountryCoverHeroText(Request $request, InternationalTourSetting $internationalTourSetting, $countryId)
+    {
+        $request->validate([
+            'hero_text' => 'nullable|string|max:255',
+        ]);
+
+        $cover = InternationalTourCountryCover::where('setting_id', $internationalTourSetting->id)
+            ->where('country_id', $countryId)
+            ->first();
+
+        if (!$cover) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ไม่พบภาพ Cover ประเทศ',
+            ], 404);
+        }
+
+        $cover->update([
+            'hero_text' => $request->hero_text,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $cover,
+            'message' => 'อัปเดตข้อความ Hero สำเร็จ',
+        ]);
+    }
+
+    /**
+     * Update country cover pinned tour codes
+     */
+    public function updateCountryCoverPinnedTours(Request $request, InternationalTourSetting $internationalTourSetting, $countryId)
+    {
+        $request->validate([
+            'pinned_tour_codes' => 'nullable|string|max:1000',
+        ]);
+
+        $cover = InternationalTourCountryCover::where('setting_id', $internationalTourSetting->id)
+            ->where('country_id', $countryId)
+            ->first();
+
+        if (!$cover) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ไม่พบภาพ Cover ประเทศ',
+            ], 404);
+        }
+
+        $cover->update([
+            'pinned_tour_codes' => $request->pinned_tour_codes,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $cover,
+            'message' => 'อัปเดตทัวร์ปักหมุดสำเร็จ',
+        ]);
+    }
+
+    /**
      * Toggle active status
      */
     public function toggleStatus(InternationalTourSetting $internationalTourSetting)
@@ -446,9 +522,15 @@ class InternationalTourSettingController extends Controller
                     'filter_airline' => true,
                     'filter_departure_month' => true,
                     'filter_price_range' => true,
+                    'filter_festival' => true,
+                    'filter_promotion' => true,
+                    'filter_theme' => true,
+                    'filter_special_highlight' => true,
+                    'filter_advanced' => true,
                     'sort_options' => InternationalTourSetting::SORT_OPTIONS,
                     'cover_image_url' => null,
                     'cover_image_position' => 'center',
+                    'hero_text' => null,
                 ],
             ]);
         }
@@ -471,9 +553,15 @@ class InternationalTourSettingController extends Controller
                 'filter_airline' => $setting->filter_airline,
                 'filter_departure_month' => $setting->filter_departure_month,
                 'filter_price_range' => $setting->filter_price_range,
+                'filter_festival' => $setting->filter_festival ?? true,
+                'filter_promotion' => $setting->filter_promotion ?? true,
+                'filter_theme' => $setting->filter_theme ?? true,
+                'filter_special_highlight' => $setting->filter_special_highlight ?? true,
+                'filter_advanced' => $setting->filter_advanced ?? true,
                 'sort_options' => InternationalTourSetting::SORT_OPTIONS,
                 'cover_image_url' => $setting->cover_image_url,
                 'cover_image_position' => $setting->cover_image_position ?? 'center',
+                'hero_text' => $setting->hero_text,
             ],
         ]);
     }

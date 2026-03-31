@@ -59,7 +59,7 @@ class PublicTourController extends Controller
         if (!$tour) {
             return response()->json([
                 'success' => false,
-                'message' => 'เนเธกเนเธเธเธ—เธฑเธงเธฃเนเธ—เธตเนเธ•เนเธญเธเธเธฒเธฃ',
+                'message' => 'ไม่พบทัวร์ที่ต้องการ',
             ], 404);
         }
 
@@ -677,6 +677,60 @@ class PublicTourController extends Controller
             return $this->formatTourListItem($tour, $setting);
         });
 
+        // On page 1, prepend pinned tours if country-specific pinned codes exist
+        $pinnedTourCodes = [];
+        if ($countryCover && $countryCover->pinned_tour_codes) {
+            $pinnedTourCodes = array_filter(array_map('trim', explode(',', $countryCover->pinned_tour_codes)));
+        }
+
+        if (!empty($pinnedTourCodes) && $tours->currentPage() === 1) {
+            $pinnedTourIds = $formattedTours->pluck('id')->toArray();
+
+            // Fetch pinned tours that aren't already in the current page
+            $pinnedQuery = Tour::query()
+                ->where('status', 'active')
+                ->where(function ($q) use ($pinnedTourCodes) {
+                    $q->whereIn('tour_code', $pinnedTourCodes)
+                      ->orWhereIn('wholesaler_tour_code', $pinnedTourCodes);
+                });
+
+            $eagerLoads = [
+                'primaryCountry:id,name_th,name_en,iso2,flag_emoji',
+                'cities:id,name_th,name_en,slug',
+                'transports' => function ($q) { $q->orderBy('sort_order'); },
+                'transports.transport:id,code,name,image',
+                'periods' => function ($q) use ($setting) {
+                    $q->where('is_visible', true)->orderBy('start_date')->limit($setting->max_periods_display);
+                },
+                'periods.offer.promotion',
+            ];
+            if ($setting->show_meal_count) {
+                $eagerLoads['itineraries'] = function ($q) {
+                    $q->select('id', 'tour_id', 'has_breakfast', 'has_lunch', 'has_dinner');
+                };
+            }
+
+            $pinnedTours = $pinnedQuery->with($eagerLoads)->get();
+
+            // Format and mark as pinned, preserving the order of pinned codes
+            $pinnedFormatted = collect();
+            foreach ($pinnedTourCodes as $code) {
+                $tour = $pinnedTours->first(fn($t) => $t->tour_code === $code || $t->wholesaler_tour_code === $code);
+                if ($tour) {
+                    $item = $this->formatTourListItem($tour, $setting);
+                    $item['is_pinned'] = true;
+                    $pinnedFormatted->push($item);
+                }
+            }
+
+            // Remove pinned tours from regular results to avoid duplicates
+            $pinnedIds = $pinnedFormatted->pluck('id')->toArray();
+            $formattedTours = $formattedTours->filter(fn($t) => !in_array($t['id'], $pinnedIds))->values();
+
+            // Prepend pinned tours
+            $formattedTours = $pinnedFormatted->merge($formattedTours);
+        }
+
         // Get filter options (scoped by selected country/city)
         $filterOptions = $this->getInternationalFilterOptions($setting, $countryId, $cityId);
 
@@ -703,10 +757,17 @@ class PublicTourController extends Controller
                 'filter_airline' => $setting->filter_airline ?? true,
                 'filter_departure_month' => $setting->filter_departure_month ?? true,
                 'filter_price_range' => $setting->filter_price_range ?? true,
+                'filter_festival' => $setting->filter_festival ?? true,
+                'filter_promotion' => $setting->filter_promotion ?? true,
+                'filter_theme' => $setting->filter_theme ?? true,
+                'filter_special_highlight' => $setting->filter_special_highlight ?? true,
+                'filter_advanced' => $setting->filter_advanced ?? true,
                 'sort_options' => InternationalTourSetting::SORT_OPTIONS,
                 // Use country-specific cover if available, otherwise use default cover
                 'cover_image_url' => $countryCover?->image_url ?? $setting->cover_image_url,
                 'cover_image_position' => $countryCover?->image_position ?? $setting->cover_image_position ?? 'center',
+                'hero_text' => $countryCover?->hero_text ?? $setting->hero_text,
+                'pagination_mode' => $setting->pagination_mode ?? 'page',
             ],
             'active_filters' => [
                 'country' => $countryId ? Country::find($countryId, ['id', 'name_th', 'name_en', 'slug', 'iso2']) : null,
@@ -1189,10 +1250,17 @@ class PublicTourController extends Controller
                 'filter_airline' => $setting->filter_airline ?? true,
                 'filter_departure_month' => $setting->filter_departure_month ?? true,
                 'filter_price_range' => $setting->filter_price_range ?? true,
+                'filter_festival' => $setting->filter_festival ?? true,
+                'filter_promotion' => $setting->filter_promotion ?? true,
+                'filter_theme' => $setting->filter_theme ?? true,
+                'filter_special_highlight' => $setting->filter_special_highlight ?? true,
+                'filter_advanced' => $setting->filter_advanced ?? true,
                 'sort_options' => DomesticTourSetting::SORT_OPTIONS,
                 // Use city-specific cover if available, otherwise use default cover
                 'cover_image_url' => $cityCover?->image_url ?? $setting->cover_image_url,
                 'cover_image_position' => $cityCover?->image_position ?? $setting->cover_image_position ?? 'center',
+                'hero_text' => $setting->hero_text,
+                'pagination_mode' => $setting->pagination_mode ?? 'page',
             ],
             'active_filters' => [
                 'city' => $cityId ? City::find($cityId, ['id', 'name_th', 'name_en', 'slug', 'country_id']) : null,

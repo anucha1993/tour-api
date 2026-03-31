@@ -38,7 +38,7 @@ class TourSearchController extends Controller
             'duration_days' => 'nullable|integer|min:1',
             'wholesaler_ids' => 'nullable|array',
             'wholesaler_ids.*' => 'integer',
-            '_sort' => 'nullable|string|in:price,-price,departure_date,-departure_date,title,-title',
+            '_sort' => 'nullable|string|in:latest,-latest,price,-price,departure_date,-departure_date,title,-title',
             '_limit' => 'nullable|integer|min:1|max:500',
             '_offset' => 'nullable|integer|min:0',
         ]);
@@ -94,7 +94,7 @@ class TourSearchController extends Controller
             'min_price' => 'nullable|numeric|min:0',
             'max_price' => 'nullable|numeric|min:0',
             'min_seats' => 'nullable|integer|min:1',
-            '_sort' => 'nullable|string|in:price,-price,departure_date,-departure_date,title,-title',
+            '_sort' => 'nullable|string|in:latest,-latest,price,-price,departure_date,-departure_date,title,-title',
             '_limit' => 'nullable|integer|min:1|max:500',
             '_offset' => 'nullable|integer|min:0',
             'with_periods' => 'nullable|boolean',

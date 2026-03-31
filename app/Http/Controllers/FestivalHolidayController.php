@@ -365,6 +365,11 @@ class FestivalHolidayController extends Controller
                 'filter_airline' => true,
                 'filter_departure_month' => true,
                 'filter_price_range' => true,
+                'filter_festival' => true,
+                'filter_promotion' => true,
+                'filter_theme' => true,
+                'filter_special_highlight' => true,
+                'filter_advanced' => true,
                 'sort_options' => [
                     'departure_date' => 'วันเดินทาง',
                     'price_asc' => 'ราคาต่ำ-สูง',

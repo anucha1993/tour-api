@@ -14,6 +14,8 @@ class InternationalTourCountryCover extends Model
         'cloudflare_id',
         'image_position',
         'alt_text',
+        'hero_text',
+        'pinned_tour_codes',
         'sort_order',
     ];
 

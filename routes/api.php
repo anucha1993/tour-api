@@ -412,6 +412,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('international-tour-settings/{internationalTourSetting}/country-cover/{countryId}', [InternationalTourSettingController::class, 'uploadCountryCover']);
     Route::delete('international-tour-settings/{internationalTourSetting}/country-cover/{countryId}', [InternationalTourSettingController::class, 'deleteCountryCover']);
     Route::patch('international-tour-settings/{internationalTourSetting}/country-cover/{countryId}/position', [InternationalTourSettingController::class, 'updateCountryCoverPosition']);
+    Route::patch('international-tour-settings/{internationalTourSetting}/country-cover/{countryId}/hero-text', [InternationalTourSettingController::class, 'updateCountryCoverHeroText']);
+    Route::patch('international-tour-settings/{internationalTourSetting}/country-cover/{countryId}/pinned-tours', [InternationalTourSettingController::class, 'updateCountryCoverPinnedTours']);
     Route::apiResource('international-tour-settings', InternationalTourSettingController::class);
 
     // Domestic Tour Settings (Admin)
