@@ -325,6 +325,17 @@ class TourTransformService
                 return $numericValue !== null ? (string) $numericValue : '0';
             }, $expr);
 
+            // Process max() and min() functions
+            $expr = preg_replace_callback('/\b(max|min)\s*\(([^)]+)\)/i', function ($m) {
+                $func = strtolower($m[1]);
+                $nums = array_map('trim', explode(',', $m[2]));
+                foreach ($nums as $n) {
+                    if (!is_numeric($n)) return $m[0];
+                }
+                $nums = array_map('floatval', $nums);
+                return (string) ($func === 'max' ? max($nums) : min($nums));
+            }, $expr);
+
             // Security: only allow numbers, operators, spaces, parentheses, decimal points
             if (!preg_match('/^[\d\s+\-*\/().]+$/', $expr)) {
                 Log::warning('TourTransformService: Invalid formula expression', ['expression' => $expression, 'resolved' => $expr]);

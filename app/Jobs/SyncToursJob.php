@@ -2784,6 +2784,17 @@ class SyncToursJob implements ShouldQueue
                 return (string) $numericValue;
             }, $expr);
             
+            // Process max() and min() functions
+            $expr = preg_replace_callback('/\b(max|min)\s*\(([^)]+)\)/i', function ($m) {
+                $func = strtolower($m[1]);
+                $nums = array_map('trim', explode(',', $m[2]));
+                foreach ($nums as $n) {
+                    if (!is_numeric($n)) return $m[0];
+                }
+                $nums = array_map('floatval', $nums);
+                return (string) ($func === 'max' ? max($nums) : min($nums));
+            }, $expr);
+            
             // Security: only allow numbers, operators, parentheses, spaces, decimal points
             if (!preg_match('/^[\d\s+\-*\/().]+$/', trim($expr))) {
                 Log::warning('evaluateFormulaExpression: Invalid expression after substitution', [
