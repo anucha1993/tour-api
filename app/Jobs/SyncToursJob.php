@@ -942,8 +942,48 @@ class SyncToursJob implements ShouldQueue
         $itinerariesPath = $dataStructure['data_structure']['itineraries']['path'] ?? null;
         
         if ($itinerariesPath) {
-            // Use custom nested path (e.g., "periods[].tour_daily[].day_list[]" for GO365)
+            // Use custom nested path (e.g., "periods[].tour_daily[]")
             $itineraryItems = $this->flattenNestedPath($rawTour, $itinerariesPath);
+            
+            // Deduplicate: when path crosses multiple periods (e.g., periods[].tour_daily[]),
+            // the same day appears once per period. Keep only unique days by day_num/day_number.
+            if (!empty($itineraryItems) && count($itineraryItems) > 1) {
+                $dayNumKey = null;
+                // Auto-detect which key holds the day number from mappings
+                if (isset($mappings['itinerary'])) {
+                    foreach ($mappings['itinerary'] as $mapping) {
+                        if ($mapping->our_field === 'day_number') {
+                            $cleanPath = $this->cleanNestedPath($mapping->their_field_path ?? $mapping->their_field ?? '', $itinerariesPath);
+                            $dayNumKey = $cleanPath;
+                            break;
+                        }
+                    }
+                }
+                // Fallback keys for day number
+                if (!$dayNumKey) {
+                    foreach (['day_num', 'day_number', 'DayNumber', 'order', 'day_order'] as $candidate) {
+                        if (isset($itineraryItems[0][$candidate])) {
+                            $dayNumKey = $candidate;
+                            break;
+                        }
+                    }
+                }
+                if ($dayNumKey) {
+                    $seen = [];
+                    $unique = [];
+                    foreach ($itineraryItems as $item) {
+                        $key = $item[$dayNumKey] ?? null;
+                        if ($key !== null && isset($seen[$key])) {
+                            continue; // Skip duplicate day
+                        }
+                        if ($key !== null) {
+                            $seen[$key] = true;
+                        }
+                        $unique[] = $item;
+                    }
+                    $itineraryItems = $unique;
+                }
+            }
         } else {
             // Default: use standard itinerary arrays
             $itineraryItems = [];

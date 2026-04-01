@@ -4176,10 +4176,31 @@ class IntegrationController extends Controller
             return;
         }
 
+        // Handle nested array fields - convert to string
+        // e.g., day_list: [{day_title, day_description}, ...] → concatenated string
+        if (isset($itinData['description']) && is_array($itinData['description'])) {
+            $descParts = [];
+            foreach ($itinData['description'] as $item) {
+                if (is_array($item)) {
+                    $text = $item['day_description'] ?? $item['description'] ?? $item['day_title'] ?? '';
+                    if (!empty($text)) {
+                        $descParts[] = $text;
+                    }
+                } elseif (is_string($item)) {
+                    $descParts[] = $item;
+                }
+            }
+            $itinData['description'] = implode("\n", $descParts);
+        }
+
         // Find existing itinerary
+        // Use both external_id + day_number when available to handle cases where
+        // external_id is a tour-level code (same for all days, e.g. tour_code)
         $itinerary = \App\Models\TourItinerary::where('tour_id', $tour->id)
             ->where(function ($q) use ($dayNumber, $externalId) {
-                if ($externalId) {
+                if ($externalId && $dayNumber) {
+                    $q->where('external_id', $externalId)->where('day_number', $dayNumber);
+                } elseif ($externalId) {
                     $q->where('external_id', $externalId);
                 } else {
                     $q->where('day_number', $dayNumber);
@@ -4192,7 +4213,7 @@ class IntegrationController extends Controller
             $itinerary->tour_id = $tour->id;
         }
 
-        // Fill itinerary fields from transformed data (no hardcode - same as SyncToursJob)
+        // Fill itinerary fields from transformed data (same as SyncToursJob)
         $fillableFields = $itinerary->getFillable();
         $itinFields = [];
 
@@ -4213,6 +4234,11 @@ class IntegrationController extends Controller
 
         // Set data_source
         $itinFields['data_source'] = 'api';
+
+        // Truncate title to fit varchar(255)
+        if (!empty($itinFields['title']) && mb_strlen($itinFields['title']) > 250) {
+            $itinFields['title'] = mb_substr($itinFields['title'], 0, 247) . '...';
+        }
 
         // Auto-set sort_order from day_number if not provided
         if (empty($itinFields['sort_order']) && !empty($itinFields['day_number'])) {
