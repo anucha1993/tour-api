@@ -664,7 +664,7 @@ class PublicTourController extends Controller
             'min_seats' => $request->input('min_seats'),
             'sort_by' => $request->input('sort_by'),
             'festival_id' => $request->input('festival_id'),
-            'promotion' => $request->input('promotion'),
+            'promotions' => $request->input('promotions'),
             'theme' => $request->input('theme'),
             'special_highlight' => $request->input('special_highlight'),
         ];
@@ -1212,7 +1212,7 @@ class PublicTourController extends Controller
             'min_seats' => $request->input('min_seats'),
             'sort_by' => $request->input('sort_by'),
             'festival_id' => $request->input('festival_id'),
-            'promotion' => $request->input('promotion'),
+            'promotions' => $request->input('promotions'),
             'theme' => $request->input('theme'),
             'special_highlight' => $request->input('special_highlight'),
         ];

@@ -329,13 +329,15 @@ class DomesticTourSetting extends Model
             }
         }
 
-        // Promotion filter (match by promo name in offers)
-        if (!empty($filters['promotion'])) {
-            $promoName = $filters['promotion'];
-            $query->whereHas('periods.offer', function ($q) use ($promoName) {
-                $q->where(function ($q2) use ($promoName) {
-                    $q2->where('promo_name', $promoName)
-                       ->orWhereHas('promotion', fn($q3) => $q3->where('name', $promoName));
+        // Promotion filter (match by promo name in offers, supports comma-separated)
+        if (!empty($filters['promotions'])) {
+            $promoNames = is_array($filters['promotions'])
+                ? $filters['promotions']
+                : array_filter(array_map('trim', explode(',', $filters['promotions'])));
+            $query->whereHas('periods.offer', function ($q) use ($promoNames) {
+                $q->where(function ($q2) use ($promoNames) {
+                    $q2->whereIn('promo_name', $promoNames)
+                       ->orWhereHas('promotion', fn($q3) => $q3->whereIn('name', $promoNames));
                 });
             });
         }
