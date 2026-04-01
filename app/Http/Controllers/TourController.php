@@ -556,7 +556,7 @@ class TourController extends Controller
     {
         $request->validate([
             'ids' => 'required|array|min:1|max:50',
-            'ids.*' => 'integer|exists:tours,id',
+            'ids.*' => 'integer',
         ], [
             'ids.required' => 'กรุณาเลือกทัวร์ที่ต้องการลบ',
             'ids.min' => 'กรุณาเลือกอย่างน้อย 1 ทัวร์',
@@ -566,29 +566,23 @@ class TourController extends Controller
         $ids = $request->input('ids');
         $deleted = 0;
         $failed = 0;
+        $filesToCleanup = [];
 
-        foreach ($ids as $id) {
+        // Phase 1: Collect file URLs and delete tours from DB (fast)
+        $tours = Tour::with('gallery')->whereIn('id', $ids)->get();
+
+        foreach ($tours as $tour) {
             try {
-                $tour = Tour::find($id);
-                if (!$tour) {
-                    $failed++;
-                    continue;
-                }
-
-                // Delete PDF file from R2 if exists
+                // Collect files to clean up later
                 if ($tour->pdf_url && str_contains($tour->pdf_url, 'r2.dev')) {
-                    $this->deleteR2File($tour->pdf_url, 'pdf', $tour->id);
+                    $filesToCleanup[] = ['type' => 'r2', 'url' => $tour->pdf_url, 'id' => $tour->id];
                 }
-
-                // Delete cover image from Cloudflare if exists
                 if ($tour->cover_image_url && str_contains($tour->cover_image_url, 'imagedelivery.net')) {
-                    $this->deleteCloudflareImage($tour->cover_image_url, 'cover', $tour->id);
+                    $filesToCleanup[] = ['type' => 'cloudflare', 'url' => $tour->cover_image_url, 'id' => $tour->id];
                 }
-
-                // Delete gallery images from Cloudflare
                 foreach ($tour->gallery as $galleryItem) {
                     if ($galleryItem->url && str_contains($galleryItem->url, 'imagedelivery.net')) {
-                        $this->deleteCloudflareImage($galleryItem->url, 'gallery', $galleryItem->id);
+                        $filesToCleanup[] = ['type' => 'cloudflare', 'url' => $galleryItem->url, 'id' => $galleryItem->id];
                     }
                 }
 
@@ -596,11 +590,35 @@ class TourController extends Controller
                 $deleted++;
             } catch (\Exception $e) {
                 Log::error('Mass delete tour failed', [
-                    'tour_id' => $id,
+                    'tour_id' => $tour->id,
                     'error' => $e->getMessage(),
                 ]);
                 $failed++;
             }
+        }
+
+        $notFound = count($ids) - $tours->count();
+        $failed += $notFound;
+
+        // Phase 2: Clean up external files after response is sent
+        if (!empty($filesToCleanup)) {
+            $controller = $this;
+            app()->terminating(function () use ($controller, $filesToCleanup) {
+                foreach ($filesToCleanup as $file) {
+                    try {
+                        if ($file['type'] === 'r2') {
+                            $controller->cleanupR2File($file['url'], $file['id']);
+                        } else {
+                            $controller->cleanupCloudflareImage($file['url'], $file['id']);
+                        }
+                    } catch (\Exception $e) {
+                        Log::warning('Mass delete file cleanup failed', [
+                            'file' => $file['url'],
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                }
+            });
         }
 
         return response()->json([
@@ -656,6 +674,19 @@ class TourController extends Controller
                 ]);
             }
         }
+    }
+
+    /**
+     * Public cleanup helpers for deferred file deletion (called from app()->terminating())
+     */
+    public function cleanupR2File(string $url, int $id): void
+    {
+        $this->deleteR2File($url, 'mass-delete', $id);
+    }
+
+    public function cleanupCloudflareImage(string $url, int $id): void
+    {
+        $this->deleteCloudflareImage($url, 'mass-delete', $id);
     }
 
     /**

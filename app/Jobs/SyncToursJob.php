@@ -825,6 +825,11 @@ class SyncToursJob implements ShouldQueue
                     if ($value) {
                         try {
                             $format = $config['output_format'] ?? 'Y-m-d';
+                            $inputFormat = $config['input_format'] ?? null;
+                            if ($inputFormat) {
+                                $dt = \Carbon\Carbon::createFromFormat($inputFormat, $value);
+                                return $dt ? $dt->format($format) : date($format, strtotime($value));
+                            }
                             return date($format, strtotime($value));
                         } catch (\Exception $e) {
                             return $value;
@@ -1698,6 +1703,11 @@ class SyncToursJob implements ShouldQueue
                     // Clean the path (remove array prefix like periods[]. )
                     $cleanPath = $this->cleanNestedPath($path, $departuresPath);
                     $value = $this->extractNestedValue($rawPeriod, $cleanPath);
+
+                    // Apply transforms (value_map, date_format, etc.)
+                    if ($value !== null && $mapping->transform_type && $mapping->transform_type !== 'direct') {
+                        $value = $this->applyTransformValue($value, $mapping);
+                    }
 
                     if ($value === null && !empty($mapping->default_value)) {
                         $value = $mapping->default_value;
@@ -2780,6 +2790,11 @@ class SyncToursJob implements ShouldQueue
                 if ($value) {
                     try {
                         $format = $config['output_format'] ?? 'Y-m-d';
+                        $inputFormat = $config['input_format'] ?? null;
+                        if ($inputFormat) {
+                            $dt = \Carbon\Carbon::createFromFormat($inputFormat, $value);
+                            return $dt ? $dt->format($format) : \Carbon\Carbon::parse($value)->format($format);
+                        }
                         return \Carbon\Carbon::parse($value)->format($format);
                     } catch (\Exception $e) {
                         return $value;
