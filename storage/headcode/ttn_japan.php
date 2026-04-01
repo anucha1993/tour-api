@@ -322,9 +322,9 @@ class HeadcodeTtnJapanAdapter extends \App\Services\WholesalerAdapters\HeadcodeB
                 if ($dayNum > 0 && $desc) {
                     $itinerary[] = [
                         'day_number'  => $dayNum,
-                        'title'       => "วันที่ {$dayNum}",
+                        'title'       => $desc,
                         'description' => $desc,
-                        'places'      => $desc,
+                        // 'places'      => $desc,
                         'sort_order'  => $dayNum,
                     ];
                 }
