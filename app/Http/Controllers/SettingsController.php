@@ -1115,6 +1115,9 @@ HTML;
             'facebook_enabled' => false,
             'facebook_app_id' => '',
             'facebook_app_secret' => '',
+            'line_enabled' => false,
+            'line_channel_id' => '',
+            'line_channel_secret' => '',
         ]);
 
         // Mask sensitive fields
@@ -1162,8 +1165,30 @@ HTML;
             $masked['facebook_app_secret_masked'] = '';
         }
 
+        if (!empty($config['line_channel_id'])) {
+            try {
+                $decrypted = decrypt($config['line_channel_id']);
+                $masked['line_channel_id_masked'] = substr($decrypted, 0, 8) . str_repeat('•', 10);
+            } catch (\Exception $e) {
+                $masked['line_channel_id_masked'] = substr($config['line_channel_id'], 0, 8) . str_repeat('•', 10);
+            }
+            $masked['has_line_channel_id'] = true;
+        } else {
+            $masked['line_channel_id_masked'] = '';
+            $masked['has_line_channel_id'] = false;
+        }
+
+        if (!empty($config['line_channel_secret'])) {
+            $masked['has_line_channel_secret'] = true;
+            $masked['line_channel_secret_masked'] = str_repeat('•', 12);
+        } else {
+            $masked['has_line_channel_secret'] = false;
+            $masked['line_channel_secret_masked'] = '';
+        }
+
         unset($masked['google_client_id'], $masked['google_client_secret']);
         unset($masked['facebook_app_id'], $masked['facebook_app_secret']);
+        unset($masked['line_channel_id'], $masked['line_channel_secret']);
 
         return response()->json(['success' => true, 'data' => $masked]);
     }
@@ -1180,6 +1205,9 @@ HTML;
             'facebook_enabled' => 'boolean',
             'facebook_app_id' => 'nullable|string|max:255',
             'facebook_app_secret' => 'nullable|string|max:255',
+            'line_enabled' => 'boolean',
+            'line_channel_id' => 'nullable|string|max:255',
+            'line_channel_secret' => 'nullable|string|max:255',
         ]);
 
         $currentConfig = Setting::get('social_auth_config', []);
@@ -1188,6 +1216,7 @@ HTML;
         $secretFields = [
             'google_client_id', 'google_client_secret',
             'facebook_app_id', 'facebook_app_secret',
+            'line_channel_id', 'line_channel_secret',
         ];
 
         foreach ($secretFields as $field) {

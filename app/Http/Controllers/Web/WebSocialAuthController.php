@@ -24,6 +24,9 @@ class WebSocialAuthController extends Controller
             'facebook_enabled' => false,
             'facebook_app_id' => '',
             'facebook_app_secret' => '',
+            'line_enabled' => false,
+            'line_channel_id' => '',
+            'line_channel_secret' => '',
             'frontend_url' => '',
         ]);
     }
@@ -38,6 +41,7 @@ class WebSocialAuthController extends Controller
             'data' => [
                 'google' => !empty($this->config['google_enabled']) && !empty($this->config['google_client_id']),
                 'facebook' => !empty($this->config['facebook_enabled']) && !empty($this->config['facebook_app_id']),
+                'line' => !empty($this->config['line_enabled']) && !empty($this->config['line_channel_id']),
             ],
         ]);
     }
@@ -47,7 +51,7 @@ class WebSocialAuthController extends Controller
      */
     public function redirect(Request $request, string $provider): JsonResponse
     {
-        if (!in_array($provider, ['google', 'facebook'])) {
+        if (!in_array($provider, ['google', 'facebook', 'line'])) {
             return response()->json(['success' => false, 'message' => 'Provider ไม่ถูกต้อง'], 400);
         }
 
@@ -72,14 +76,22 @@ class WebSocialAuthController extends Controller
                 'access_type' => 'offline',
                 'prompt' => 'select_account',
             ]);
-        } else {
+        } elseif ($provider === 'facebook') {
             $params = http_build_query([
                 'client_id' => $this->getClientId('facebook'),
                 'redirect_uri' => $redirectUri,
                 'response_type' => 'code',
                 'state' => $state,
             ]);
-            $url = 'https://www.facebook.com/v19.0/dialog/oauth?' . $params . '&scope=public_profile,email';
+            $url = 'https://www.facebook.com/v19.0/dialog/oauth?' . $params . '&scope=public_profile';
+        } elseif ($provider === 'line') {
+            $url = 'https://access.line.me/oauth2/v2.1/authorize?' . http_build_query([
+                'response_type' => 'code',
+                'client_id' => $this->getClientId('line'),
+                'redirect_uri' => $redirectUri,
+                'state' => $state,
+                'scope' => 'profile openid email',
+            ]);
         }
 
         return response()->json([
@@ -96,7 +108,7 @@ class WebSocialAuthController extends Controller
      */
     public function callback(Request $request, string $provider): JsonResponse
     {
-        if (!in_array($provider, ['google', 'facebook'])) {
+        if (!in_array($provider, ['google', 'facebook', 'line'])) {
             return response()->json(['success' => false, 'message' => 'Provider ไม่ถูกต้อง'], 400);
         }
 
@@ -111,9 +123,11 @@ class WebSocialAuthController extends Controller
 
         try {
             // Exchange code for tokens and get user info
-            $socialUser = $provider === 'google'
-                ? $this->getGoogleUser($request->code, $request->redirect_uri)
-                : $this->getFacebookUser($request->code, $request->redirect_uri);
+            $socialUser = match ($provider) {
+                'google' => $this->getGoogleUser($request->code, $request->redirect_uri),
+                'facebook' => $this->getFacebookUser($request->code, $request->redirect_uri),
+                'line' => $this->getLineUser($request->code, $request->redirect_uri),
+            };
 
             if (!$socialUser || empty($socialUser['id'])) {
                 return response()->json([
@@ -124,7 +138,7 @@ class WebSocialAuthController extends Controller
             }
 
             // Find or create member
-            $providerIdField = "{$provider}_id";
+            $providerIdField = $provider === 'line' ? 'line_id' : "{$provider}_id";
             $member = WebMember::where($providerIdField, $socialUser['id'])->first();
 
             if ($member) {
@@ -222,18 +236,23 @@ class WebSocialAuthController extends Controller
     private function isProviderEnabled(string $provider): bool
     {
         $enabledKey = "{$provider}_enabled";
-        $idKey = $provider === 'facebook' ? "{$provider}_app_id" : "{$provider}_client_id";
+        $idKey = match ($provider) {
+            'facebook' => 'facebook_app_id',
+            'line' => 'line_channel_id',
+            default => "{$provider}_client_id",
+        };
 
         return !empty($this->config[$enabledKey]) && !empty($this->config[$idKey]);
     }
 
     private function getClientId(string $provider): string
     {
-        if ($provider === 'facebook') {
-            $encrypted = $this->config['facebook_app_id'] ?? '';
-        } else {
-            $encrypted = $this->config["{$provider}_client_id"] ?? '';
-        }
+        $key = match ($provider) {
+            'facebook' => 'facebook_app_id',
+            'line' => 'line_channel_id',
+            default => "{$provider}_client_id",
+        };
+        $encrypted = $this->config[$key] ?? '';
 
         try {
             return decrypt($encrypted);
@@ -244,7 +263,11 @@ class WebSocialAuthController extends Controller
 
     private function getClientSecret(string $provider): string
     {
-        $key = $provider === 'facebook' ? 'facebook_app_secret' : "{$provider}_client_secret";
+        $key = match ($provider) {
+            'facebook' => 'facebook_app_secret',
+            'line' => 'line_channel_secret',
+            default => "{$provider}_client_secret",
+        };
         $encrypted = $this->config[$key] ?? '';
 
         try {
@@ -349,6 +372,70 @@ class WebSocialAuthController extends Controller
             'first_name' => $user['first_name'] ?? '',
             'last_name' => $user['last_name'] ?? '',
             'avatar' => $user['picture']['data']['url'] ?? null,
+        ];
+    }
+
+    /**
+     * Exchange LINE auth code for user info
+     */
+    private function getLineUser(string $code, string $redirectUri): ?array
+    {
+        // Exchange code for tokens
+        $tokenResponse = \Illuminate\Support\Facades\Http::asForm()->post('https://api.line.me/oauth2/v2.1/token', [
+            'grant_type' => 'authorization_code',
+            'code' => $code,
+            'redirect_uri' => $redirectUri,
+            'client_id' => $this->getClientId('line'),
+            'client_secret' => $this->getClientSecret('line'),
+        ]);
+
+        if (!$tokenResponse->successful()) {
+            Log::error('LINE token exchange failed', [
+                'status' => $tokenResponse->status(),
+                'body' => $tokenResponse->body(),
+            ]);
+            return null;
+        }
+
+        $tokens = $tokenResponse->json();
+        $accessToken = $tokens['access_token'] ?? null;
+
+        if (!$accessToken) {
+            return null;
+        }
+
+        // Get user profile
+        $profileResponse = \Illuminate\Support\Facades\Http::withToken($accessToken)
+            ->get('https://api.line.me/v2/profile');
+
+        if (!$profileResponse->successful()) {
+            return null;
+        }
+
+        $profile = $profileResponse->json();
+
+        // Try to get email from id_token if available
+        $email = null;
+        $idToken = $tokens['id_token'] ?? null;
+        if ($idToken) {
+            $parts = explode('.', $idToken);
+            if (count($parts) === 3) {
+                $payload = json_decode(base64_decode(strtr($parts[1], '-_', '+/')), true);
+                $email = $payload['email'] ?? null;
+            }
+        }
+
+        // LINE displayName is typically full name, split into first/last
+        $displayName = $profile['displayName'] ?? '';
+        $nameParts = explode(' ', $displayName, 2);
+
+        return [
+            'id' => $profile['userId'] ?? null,
+            'email' => $email,
+            'email_verified' => !empty($email),
+            'first_name' => $nameParts[0] ?? $displayName,
+            'last_name' => $nameParts[1] ?? '',
+            'avatar' => $profile['pictureUrl'] ?? null,
         ];
     }
 }
