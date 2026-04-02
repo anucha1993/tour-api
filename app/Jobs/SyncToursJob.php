@@ -1927,13 +1927,10 @@ class SyncToursJob implements ShouldQueue
             $tourFields['duration_nights'] = 0;
         }
         
-        // Convert array fields to JSON string (highlights, hashtags, etc.)
-        $jsonFields = ['highlights', 'hashtags', 'themes', 'suitable_for', 'departure_airports'];
-        foreach ($jsonFields as $jsonField) {
-            if (isset($tourFields[$jsonField]) && is_array($tourFields[$jsonField])) {
-                $tourFields[$jsonField] = json_encode($tourFields[$jsonField], JSON_UNESCAPED_UNICODE);
-            }
-        }
+        // NOTE: Do NOT json_encode array fields here.
+        // The Tour model has 'array' cast on highlights, hashtags, themes, suitable_for, departure_airports, keywords, etc.
+        // Laravel's array cast automatically calls json_encode() on save.
+        // Manually encoding here would cause DOUBLE-ENCODING (the value gets stored as '"[...]"' instead of '[...]').
         
         // Set sync metadata (system fields, not from mapping)
         $tourFields['sync_status'] = 'active';
