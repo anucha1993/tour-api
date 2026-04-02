@@ -689,6 +689,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/otp', [SettingsController::class, 'updateOtpConfig']);
         Route::post('/otp/test', [SettingsController::class, 'testOtpConfig']);
 
+        // Social Auth Settings
+        Route::get('/social-auth', [SettingsController::class, 'getSocialAuthConfig']);
+        Route::put('/social-auth', [SettingsController::class, 'updateSocialAuthConfig']);
+
         // Footer Settings
         Route::get('/footer', [SettingsController::class, 'getFooterConfig']);
         Route::put('/footer', [SettingsController::class, 'updateFooterConfig']);
@@ -767,6 +771,7 @@ Route::middleware('auth:sanctum')->group(function () {
 |--------------------------------------------------------------------------
 */
 use App\Http\Controllers\Web\WebAuthController;
+use App\Http\Controllers\Web\WebSocialAuthController;
 use App\Http\Controllers\Web\WebWishlistController;
 use App\Http\Controllers\Web\WebBookingController;
 
@@ -799,6 +804,11 @@ Route::prefix('web')->group(function () {
         // Password reset
         Route::post('/forgot-password', [WebAuthController::class, 'requestPasswordReset']);
         Route::post('/reset-password', [WebAuthController::class, 'resetPassword']);
+
+        // Social auth
+        Route::get('/social/status', [WebSocialAuthController::class, 'status']);
+        Route::post('/social/{provider}/redirect', [WebSocialAuthController::class, 'redirect']);
+        Route::post('/social/{provider}/callback', [WebSocialAuthController::class, 'callback']);
     });
 
     // Booking routes (public - guest + member)

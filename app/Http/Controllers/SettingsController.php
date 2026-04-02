@@ -1102,4 +1102,107 @@ HTML;
             'data'    => $templates[$validated['template_key']],
         ]);
     }
+
+    /**
+     * Get Social Auth configuration
+     */
+    public function getSocialAuthConfig(): JsonResponse
+    {
+        $config = Setting::get('social_auth_config', [
+            'google_enabled' => false,
+            'google_client_id' => '',
+            'google_client_secret' => '',
+            'facebook_enabled' => false,
+            'facebook_app_id' => '',
+            'facebook_app_secret' => '',
+        ]);
+
+        // Mask sensitive fields
+        $masked = $config;
+
+        if (!empty($config['google_client_id'])) {
+            try {
+                $decrypted = decrypt($config['google_client_id']);
+                $masked['google_client_id_masked'] = substr($decrypted, 0, 12) . str_repeat('•', 10);
+            } catch (\Exception $e) {
+                $masked['google_client_id_masked'] = substr($config['google_client_id'], 0, 12) . str_repeat('•', 10);
+            }
+            $masked['has_google_client_id'] = true;
+        } else {
+            $masked['google_client_id_masked'] = '';
+            $masked['has_google_client_id'] = false;
+        }
+
+        if (!empty($config['google_client_secret'])) {
+            $masked['has_google_client_secret'] = true;
+            $masked['google_client_secret_masked'] = str_repeat('•', 12);
+        } else {
+            $masked['has_google_client_secret'] = false;
+            $masked['google_client_secret_masked'] = '';
+        }
+
+        if (!empty($config['facebook_app_id'])) {
+            try {
+                $decrypted = decrypt($config['facebook_app_id']);
+                $masked['facebook_app_id_masked'] = substr($decrypted, 0, 8) . str_repeat('•', 10);
+            } catch (\Exception $e) {
+                $masked['facebook_app_id_masked'] = substr($config['facebook_app_id'], 0, 8) . str_repeat('•', 10);
+            }
+            $masked['has_facebook_app_id'] = true;
+        } else {
+            $masked['facebook_app_id_masked'] = '';
+            $masked['has_facebook_app_id'] = false;
+        }
+
+        if (!empty($config['facebook_app_secret'])) {
+            $masked['has_facebook_app_secret'] = true;
+            $masked['facebook_app_secret_masked'] = str_repeat('•', 12);
+        } else {
+            $masked['has_facebook_app_secret'] = false;
+            $masked['facebook_app_secret_masked'] = '';
+        }
+
+        unset($masked['google_client_id'], $masked['google_client_secret']);
+        unset($masked['facebook_app_id'], $masked['facebook_app_secret']);
+
+        return response()->json(['success' => true, 'data' => $masked]);
+    }
+
+    /**
+     * Update Social Auth configuration
+     */
+    public function updateSocialAuthConfig(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'google_enabled' => 'boolean',
+            'google_client_id' => 'nullable|string|max:255',
+            'google_client_secret' => 'nullable|string|max:255',
+            'facebook_enabled' => 'boolean',
+            'facebook_app_id' => 'nullable|string|max:255',
+            'facebook_app_secret' => 'nullable|string|max:255',
+        ]);
+
+        $currentConfig = Setting::get('social_auth_config', []);
+
+        // Keep existing secrets if not provided
+        $secretFields = [
+            'google_client_id', 'google_client_secret',
+            'facebook_app_id', 'facebook_app_secret',
+        ];
+
+        foreach ($secretFields as $field) {
+            if (empty($validated[$field]) && !empty($currentConfig[$field])) {
+                $validated[$field] = $currentConfig[$field];
+            } elseif (!empty($validated[$field])) {
+                $validated[$field] = encrypt($validated[$field]);
+            }
+        }
+
+        Setting::set('social_auth_config', $validated, 'social_auth', 'json');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Social Auth configuration updated successfully',
+        ]);
+    }
 }
