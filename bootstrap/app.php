@@ -140,6 +140,15 @@ return Application::configure(basePath: dirname(__DIR__))
         // Note: Don't use statefulApi() when frontend uses Bearer token auth
         // statefulApi() enables CSRF which requires cookie-based authentication
 
+        // Prevent TrimStrings from trimming whitespace values in string_transform
+        // e.g. splitBy=" " (space) should be preserved, not trimmed to "" then converted to null
+        $middleware->trimStrings(except: [
+            'mappings.*.string_transform.splitBy',
+            'mappings.*.string_transform.joinWith',
+            'mappings.*.string_transform.replaceFrom',
+            'mappings.*.string_transform.replaceTo',
+        ]);
+
         // Override 'auth' middleware alias so redirectTo() returns null
         // instead of trying to generate route('login') which doesn't exist in this API-only app
         $middleware->alias([

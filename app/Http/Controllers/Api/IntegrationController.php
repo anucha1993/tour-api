@@ -1099,7 +1099,14 @@ class IntegrationController extends Controller
                 }
                 // เก็บ string_transform สำหรับ split/join/template
                 if (!empty($mapping['string_transform'])) {
-                    $transformConfig['string_transform'] = $mapping['string_transform'];
+                    // Clean: remove null values but keep whitespace like " " (space)
+                    $stringTransformData = [];
+                    foreach ($mapping['string_transform'] as $k => $v) {
+                        if ($v !== null) {
+                            $stringTransformData[$k] = $v;
+                        }
+                    }
+                    $transformConfig['string_transform'] = $stringTransformData;
                 }
 
                 // Determine transform type - map to valid enum values:
