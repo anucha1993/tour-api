@@ -164,6 +164,7 @@ class OtpService
                     'msisdn' => $msisdn,
                     'message' => $message,
                     'sender' => $this->sender,
+                    'force' => 'corporate',
                 ]);
 
             /** @var \Illuminate\Http\Client\Response $response */
