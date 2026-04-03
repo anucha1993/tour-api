@@ -1490,16 +1490,6 @@ class SyncToursJob implements ShouldQueue
         }
 
         $pdfUrl = $merged['pdf_url'] ?? null;
-
-        Log::debug('SyncToursJob: PDF branding check', [
-            'tour_code' => $tourCode ?? 'unknown',
-            'merged_pdf_url' => $pdfUrl ? mb_substr($pdfUrl, 0, 80) : null,
-            'has_header' => (bool) $config->pdf_header_image,
-            'has_footer' => (bool) $config->pdf_footer_image,
-            'old_pdf_url' => mb_substr($tourData['_pending_media']['old_pdf_url'] ?? '', 0, 80),
-            'old_branding_hash' => $tourData['_pending_media']['old_branding_hash'] ?? null,
-        ]);
-
         if ($pdfUrl && str_starts_with($pdfUrl, 'http') && !str_contains($pdfUrl, env('R2_URL', ''))) {
             // Only dispatch media job if tour doesn't already have an R2 URL
             // (prevents re-uploading every sync when wholesaler sends same external URL)
@@ -1514,14 +1504,6 @@ class SyncToursJob implements ShouldQueue
                 $oldHash = $tourData['_pending_media']['old_branding_hash'] ?? null;
                 $brandingChanged = ($oldHash !== $currentHash);
             }
-
-            Log::debug('SyncToursJob: PDF branding decision', [
-                'tour_code' => $tourCode ?? 'unknown',
-                'alreadyOnR2' => $alreadyOnR2,
-                'hasBranding' => $hasBranding,
-                'brandingChanged' => $brandingChanged,
-                'will_dispatch' => !$alreadyOnR2 || $brandingChanged,
-            ]);
 
             if (!$alreadyOnR2 || $brandingChanged) {
                 $tourData['_pending_media']['pdf_url'] = $pdfUrl;
