@@ -97,6 +97,10 @@ class ProcessTourMediaJob implements ShouldQueue
                 $processedUrl = $this->uploadPdf();
                 if ($processedUrl) {
                     $updates['pdf_url'] = $processedUrl;
+                    // Track branding hash เพื่อไม่ต้อง re-brand ทุกรอบ sync
+                    $updates['pdf_branding_hash'] = ($this->pdfHeaderImage || $this->pdfFooterImage)
+                        ? md5(($this->pdfHeaderImage ?? '') . '|' . ($this->pdfFooterImage ?? ''))
+                        : null;
                 }
             } catch (\Exception $e) {
                 Log::warning('ProcessTourMediaJob: Failed to upload PDF', [

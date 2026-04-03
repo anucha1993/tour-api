@@ -115,6 +115,7 @@ class Tour extends Model
         'cover_image_source',
         'og_image_url',
         'pdf_url',
+        'pdf_branding_hash',
         'custom_pdf_url',
         'pdf_source',
         'docx_url',

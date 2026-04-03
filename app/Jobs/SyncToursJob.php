@@ -1481,10 +1481,11 @@ class SyncToursJob implements ShouldQueue
                     $q->where('wholesaler_tour_code', $tourCode)
                       ->orWhere('external_id', $tourSection['external_id'] ?? null);
                 })
-                ->first(['pdf_url', 'cover_image_url']);
+                ->first(['pdf_url', 'cover_image_url', 'pdf_branding_hash']);
             if ($existingTour) {
                 $tourData['_pending_media']['old_pdf_url'] = $existingTour->pdf_url;
                 $tourData['_pending_media']['old_cover_image_url'] = $existingTour->cover_image_url;
+                $tourData['_pending_media']['old_branding_hash'] = $existingTour->pdf_branding_hash;
             }
         }
 
@@ -1494,7 +1495,17 @@ class SyncToursJob implements ShouldQueue
             // (prevents re-uploading every sync when wholesaler sends same external URL)
             $existingPdf = $tourData['_pending_media']['old_pdf_url'] ?? null;
             $alreadyOnR2 = $existingPdf && str_contains($existingPdf, env('R2_URL', 'r2.dev'));
-            if (!$alreadyOnR2) {
+
+            // FIX: ถ้า branding config เปลี่ยน (เพิ่ม/แก้ header/footer) → ต้อง re-process PDF
+            $hasBranding = $config->pdf_header_image || $config->pdf_footer_image;
+            $brandingChanged = false;
+            if ($hasBranding && $alreadyOnR2) {
+                $currentHash = md5(($config->pdf_header_image ?? '') . '|' . ($config->pdf_footer_image ?? ''));
+                $oldHash = $tourData['_pending_media']['old_branding_hash'] ?? null;
+                $brandingChanged = ($oldHash !== $currentHash);
+            }
+
+            if (!$alreadyOnR2 || $brandingChanged) {
                 $tourData['_pending_media']['pdf_url'] = $pdfUrl;
             }
         }
