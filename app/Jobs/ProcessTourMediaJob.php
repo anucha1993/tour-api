@@ -94,11 +94,11 @@ class ProcessTourMediaJob implements ShouldQueue
                 // Delete old PDF from R2 before uploading new one
                 $this->deleteOldPdf($this->oldPdfUrl);
 
-                $processedUrl = $this->uploadPdf();
-                if ($processedUrl) {
-                    $updates['pdf_url'] = $processedUrl;
-                    // Track branding hash เพื่อไม่ต้อง re-brand ทุกรอบ sync
-                    $updates['pdf_branding_hash'] = ($this->pdfHeaderImage || $this->pdfFooterImage)
+                $result = $this->uploadPdf();
+                if ($result) {
+                    $updates['pdf_url'] = $result['url'];
+                    // Track branding hash เฉพาะเมื่อ branding ถูก apply สำเร็จจริง
+                    $updates['pdf_branding_hash'] = $result['branded']
                         ? md5(($this->pdfHeaderImage ?? '') . '|' . ($this->pdfFooterImage ?? ''))
                         : null;
                 }
@@ -139,9 +139,10 @@ class ProcessTourMediaJob implements ShouldQueue
         }
     }
 
-    protected function uploadPdf(): ?string
+    protected function uploadPdf(): ?array
     {
         $pdfBranding = null;
+        $brandingApplied = false;
         if ($this->pdfHeaderImage || $this->pdfFooterImage) {
             $pdfBranding = new PdfBrandingService();
             $pdfBranding->setHeader($this->pdfHeaderImage, $this->pdfHeaderHeight);
@@ -152,8 +153,11 @@ class ProcessTourMediaJob implements ShouldQueue
             if ($pdfBranding) {
                 $brandedPdfUrl = $pdfBranding->processAndUpload($this->pdfUrl, $this->wholesalerCode);
                 if ($brandedPdfUrl) {
-                    return $brandedPdfUrl;
+                    return ['url' => $brandedPdfUrl, 'branded' => true];
                 }
+                Log::warning('ProcessTourMediaJob: Branding failed, falling back to direct upload', [
+                    'tour_id' => $this->tourId,
+                ]);
             }
 
             // Fallback: upload directly to R2
@@ -167,9 +171,9 @@ class ProcessTourMediaJob implements ShouldQueue
                 $disk->put($r2Path, $pdfContent, 'public');
                 $r2Url = env('R2_URL');
                 if ($r2Url) {
-                    return rtrim($r2Url, '/') . '/' . $r2Path;
+                    return ['url' => rtrim($r2Url, '/') . '/' . $r2Path, 'branded' => false];
                 }
-                return $disk->url($r2Path);
+                return ['url' => $disk->url($r2Path), 'branded' => false];
             }
         } finally {
             if ($pdfBranding) {
