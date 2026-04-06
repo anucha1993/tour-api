@@ -61,19 +61,19 @@ class User extends Authenticatable
     }
 
     /**
-     * Check if user is manager
+     * Check if user is sale
      */
-    public function isManager(): bool
+    public function isSale(): bool
     {
-        return $this->role === 'manager';
+        return $this->role === 'sale';
     }
 
     /**
-     * Check if user is staff
+     * Check if user is IT
      */
-    public function isStaff(): bool
+    public function isIT(): bool
     {
-        return $this->role === 'staff';
+        return $this->role === 'it';
     }
 
     /**

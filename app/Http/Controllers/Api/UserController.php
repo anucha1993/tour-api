@@ -68,7 +68,7 @@ class UserController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'unique:users,email'],
             'password' => ['required', 'confirmed', Password::min(8)],
-            'role' => ['required', Rule::in(['admin', 'manager', 'staff'])],
+            'role' => ['required', Rule::in(['admin', 'sale', 'it'])],
             'is_active' => ['boolean'],
             'is_sales' => ['boolean'],
         ], [
@@ -119,7 +119,7 @@ class UserController extends Controller
             'name' => ['sometimes', 'required', 'string', 'max:255'],
             'email' => ['sometimes', 'required', 'email', Rule::unique('users')->ignore($user->id)],
             'password' => ['sometimes', 'nullable', 'confirmed', Password::min(8)],
-            'role' => ['sometimes', 'required', Rule::in(['admin', 'manager', 'staff'])],
+            'role' => ['sometimes', 'required', Rule::in(['admin', 'sale', 'it'])],
             'is_active' => ['sometimes', 'boolean'],
             'is_sales' => ['sometimes', 'boolean'],
         ], [
