@@ -677,7 +677,6 @@ class SyncPeriodsJob implements ShouldQueue
                 ? Period::STATUS_CLOSED
                 : $this->mapPeriodStatus($data['status'] ?? null),
             'is_visible' => $data['is_visible'] ?? true,
-            'sale_status' => $data['sale_status'] ?? 'available',
         ];
 
         if ($period) {

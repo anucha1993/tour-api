@@ -96,6 +96,15 @@ class Period extends Model
             // Clamp to 0 minimum because DB column is unsigned integer
             $period->available = max(0, (int) $period->capacity - (int) $period->booked);
             
+            // Auto-calculate sale_status based on available seats
+            if ($period->available === 0) {
+                $period->sale_status = self::SALE_SOLD_OUT;   // เต็ม
+            } elseif ($period->available < 4) {
+                $period->sale_status = self::SALE_AVAILABLE;  // ไลน์
+            } else {
+                $period->sale_status = self::SALE_BOOKING;    // จอง
+            }
+            
             // Auto-mark as sold_out if no seats available and currently open
             if ($period->available === 0 && $period->status === self::STATUS_OPEN) {
                 $period->status = self::STATUS_SOLD_OUT;
@@ -129,12 +138,20 @@ class Period extends Model
 
     public function updateAvailability(): void
     {
-        $this->available = max(0, $this->capacity - $this->booked);
-        
-        if ($this->available === 0 && $this->status === self::STATUS_OPEN) {
-            $this->status = self::STATUS_SOLD_OUT;
-        }
-        
+        // Just save — boot() auto-calculates available, sale_status, and status
         $this->save();
+    }
+
+    /**
+     * Compute sale_status from available seats.
+     */
+    public static function computeSaleStatus(int $available): string
+    {
+        if ($available === 0) {
+            return self::SALE_SOLD_OUT;
+        } elseif ($available < 4) {
+            return self::SALE_AVAILABLE;
+        }
+        return self::SALE_BOOKING;
     }
 }

@@ -56,7 +56,6 @@ class PeriodController extends Controller
             'booked' => 'nullable|integer|min:0',
             'status' => 'nullable|in:open,closed,sold_out,cancelled',
             'is_visible' => 'nullable|boolean',
-            'sale_status' => 'nullable|in:available,booking,sold_out',
             // Offer data
             'price_adult' => 'required|numeric|min:0',
             'discount_adult' => 'nullable|numeric|min:0',
@@ -179,7 +178,6 @@ class PeriodController extends Controller
             'booked' => 'nullable|integer|min:0',
             'status' => 'nullable|in:open,closed,sold_out,cancelled',
             'is_visible' => 'nullable|boolean',
-            'sale_status' => 'nullable|in:available,booking,sold_out',
             // Offer data
             'price_adult' => 'sometimes|required|numeric|min:0',
             'discount_adult' => 'nullable|numeric|min:0',
@@ -288,16 +286,12 @@ class PeriodController extends Controller
             'period_ids.*' => 'exists:periods,id',
             'updates' => 'required|array',
             'updates.is_visible' => 'nullable|boolean',
-            'updates.sale_status' => 'nullable|in:available,booking,sold_out',
             'updates.status' => 'nullable|in:open,closed,sold_out,cancelled',
         ]);
 
         $updateData = [];
         if (isset($validated['updates']['is_visible'])) {
             $updateData['is_visible'] = $validated['updates']['is_visible'];
-        }
-        if (isset($validated['updates']['sale_status'])) {
-            $updateData['sale_status'] = $validated['updates']['sale_status'];
         }
         if (isset($validated['updates']['status'])) {
             $updateData['status'] = $validated['updates']['status'];
