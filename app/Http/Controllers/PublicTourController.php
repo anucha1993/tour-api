@@ -15,6 +15,7 @@ use App\Models\FestivalHoliday;
 use App\Services\PointService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class PublicTourController extends Controller
@@ -732,7 +733,13 @@ class PublicTourController extends Controller
         }
 
         // Get filter options (scoped by selected country/city)
-        $filterOptions = $this->getInternationalFilterOptions($setting, $countryId, $cityId);
+        // Skip on load-more requests (page > 1) to avoid 15+ unnecessary queries
+        $skipFilters = $request->boolean('skip_filters');
+        $filterOptions = $skipFilters ? [] : Cache::remember(
+            'intl_filters:' . ($countryId ?? 'all') . ':' . ($cityId ?? 'all'),
+            300, // 5 minutes
+            fn() => $this->getInternationalFilterOptions($setting, $countryId, $cityId)
+        );
 
         return response()->json([
             'success' => true,
@@ -744,7 +751,7 @@ class PublicTourController extends Controller
                 'total' => $tours->total(),
             ],
             'filters' => $filterOptions,
-            'settings' => [
+            'settings' => $skipFilters ? null : [
                 'show_periods' => $setting->show_periods,
                 'max_periods_display' => $setting->max_periods_display,
                 'show_transport' => $setting->show_transport,
@@ -769,7 +776,7 @@ class PublicTourController extends Controller
                 'hero_text' => $countryCover?->hero_text ?? $setting->hero_text,
                 'pagination_mode' => $setting->pagination_mode ?? 'page',
             ],
-            'active_filters' => [
+            'active_filters' => $skipFilters ? null : [
                 'country' => $countryId ? Country::find($countryId, ['id', 'name_th', 'name_en', 'slug', 'iso2']) : null,
                 'city' => $cityId ? City::find($cityId, ['id', 'name_th', 'name_en', 'slug', 'country_id']) : null,
             ],
@@ -1226,7 +1233,13 @@ class PublicTourController extends Controller
         });
 
         // Get filter options (scoped by selected city)
-        $filterOptions = $this->getDomesticFilterOptions($setting, $cityId);
+        // Skip on load-more requests to avoid unnecessary queries
+        $skipFilters = $request->boolean('skip_filters');
+        $filterOptions = $skipFilters ? [] : Cache::remember(
+            'domestic_filters:' . ($cityId ?? 'all'),
+            300, // 5 minutes
+            fn() => $this->getDomesticFilterOptions($setting, $cityId)
+        );
 
         return response()->json([
             'success' => true,
@@ -1238,7 +1251,7 @@ class PublicTourController extends Controller
                 'total' => $tours->total(),
             ],
             'filters' => $filterOptions,
-            'settings' => [
+            'settings' => $skipFilters ? null : [
                 'show_periods' => $setting->show_periods,
                 'max_periods_display' => $setting->max_periods_display,
                 'show_transport' => $setting->show_transport,
@@ -1262,7 +1275,7 @@ class PublicTourController extends Controller
                 'hero_text' => $setting->hero_text,
                 'pagination_mode' => $setting->pagination_mode ?? 'page',
             ],
-            'active_filters' => [
+            'active_filters' => $skipFilters ? null : [
                 'city' => $cityId ? City::find($cityId, ['id', 'name_th', 'name_en', 'slug', 'country_id']) : null,
             ],
         ]);

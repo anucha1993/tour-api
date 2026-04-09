@@ -122,11 +122,23 @@ class DomesticTourSetting extends Model
     public function getBaseQuery()
     {
         $query = Tour::query()
+            ->select([
+                'id', 'wholesaler_id', 'tour_code', 'wholesaler_tour_code', 'title', 'tour_type',
+                'primary_country_id', 'region', 'sub_region', 'duration_days', 'duration_nights',
+                'highlights', 'shopping_highlights', 'food_highlights', 'special_highlights',
+                'hotel_star_min', 'hotel_star_max', 'hotel_star', 'description', 'slug',
+                'cover_image_url', 'cover_image_alt', 'custom_cover_image_url', 'custom_cover_image_alt',
+                'cover_image_source', 'pdf_url', 'custom_pdf_url', 'pdf_source',
+                'themes', 'suitable_for', 'hashtags', 'departure_airports',
+                'min_price', 'display_price', 'price_adult', 'discount_adult',
+                'discount_amount', 'max_discount_percent', 'discount_label', 'max_price',
+                'next_departure_date', 'total_departures', 'available_seats',
+                'has_promotion', 'badge', 'transport_id', 'popularity_score', 'sort_order',
+                'status', 'view_count', 'created_at', 'updated_at',
+            ])
             ->where('status', 'active')
-            ->whereHas('periods', function ($q) {
-                $q->where('start_date', '>=', now()->toDateString())
-                  ->where('status', 'open');
-            })
+            ->whereNotNull('next_departure_date')
+            ->where('next_departure_date', '>=', now()->toDateString())
             // Only Thailand
             ->where('primary_country_id', self::THAILAND_ID);
 
