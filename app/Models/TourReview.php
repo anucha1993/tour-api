@@ -13,6 +13,7 @@ class TourReview extends Model
 
     protected $fillable = [
         'tour_id',
+        'program_name',
         'user_id',
         'order_id',
         'reviewer_name',

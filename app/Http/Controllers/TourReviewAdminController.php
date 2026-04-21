@@ -6,7 +6,6 @@ use App\Models\TourReview;
 use App\Models\ReviewTag;
 use App\Models\ReviewImage;
 use App\Models\ReviewPageSetting;
-use App\Models\Tour;
 use App\Services\CloudflareImagesService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -75,6 +74,7 @@ class TourReviewAdminController extends Controller
             $query->where(function ($q) use ($search) {
                 $q->where('reviewer_name', 'like', "%{$search}%")
                   ->orWhere('comment', 'like', "%{$search}%")
+                  ->orWhere('program_name', 'like', "%{$search}%")
                   ->orWhereHas('tour', function ($tq) use ($search) {
                       $tq->where('title', 'like', "%{$search}%");
                   });
@@ -153,6 +153,11 @@ class TourReviewAdminController extends Controller
     {
         $review = TourReview::findOrFail($id);
         $admin = $request->user();
+
+        // Backward compatibility: older clients send rejection_reason.
+        if (!$request->filled('reason') && $request->filled('rejection_reason')) {
+            $request->merge(['reason' => $request->input('rejection_reason')]);
+        }
 
         $validator = Validator::make($request->all(), [
             'reason' => 'required|string|max:500',
@@ -234,7 +239,8 @@ class TourReviewAdminController extends Controller
         $admin = $request->user();
 
         $validator = Validator::make($request->all(), [
-            'tour_id' => 'required|exists:tours,id',
+            'tour_id' => 'nullable|exists:tours,id',
+            'program_name' => 'nullable|string|max:255',
             'reviewer_name' => 'required|string|max:100',
             'reviewer_avatar' => 'nullable|image|max:2048',
             'rating' => 'required|integer|min:1|max:5',
@@ -273,6 +279,24 @@ class TourReviewAdminController extends Controller
             ], 422);
         }
 
+        if (!$request->filled('tour_id') && !$request->filled('program_name')) {
+            return response()->json([
+                'success' => false,
+                'errors' => [
+                    'program_name' => ['กรุณาเลือกทัวร์ หรือระบุชื่อโปรแกรม'],
+                ],
+            ], 422);
+        }
+
+        if (!$request->filled('tour_id') && (!$request->filled('tags') || !is_array($request->tags) || count($request->tags) === 0)) {
+            return response()->json([
+                'success' => false,
+                'errors' => [
+                    'tags' => ['กรุณาเพิ่มแท็กโปรแกรมอย่างน้อย 1 แท็ก เพื่อใช้แสดงรีวิวตามโปรแกรม'],
+                ],
+            ], 422);
+        }
+
         // Upload reviewer avatar to R2
         $avatarUrl = null;
         if ($request->hasFile('reviewer_avatar')) {
@@ -295,6 +319,7 @@ class TourReviewAdminController extends Controller
 
         $review = TourReview::create([
             'tour_id' => $request->tour_id,
+            'program_name' => $request->program_name,
             'reviewer_name' => $request->reviewer_name,
             'reviewer_avatar_url' => $avatarUrl,
             'rating' => $request->rating,
@@ -389,6 +414,7 @@ class TourReviewAdminController extends Controller
 
         $validator = Validator::make($request->all(), [
             'reviewer_name' => 'required|string|max:100',
+            'program_name' => 'nullable|string|max:255',
             'reviewer_avatar' => 'nullable|image|max:2048',
             'rating' => 'required|integer|min:1|max:5',
             'category_ratings' => 'nullable|array',
@@ -423,6 +449,15 @@ class TourReviewAdminController extends Controller
             ], 422);
         }
 
+        if (!$review->tour_id && !$request->filled('program_name')) {
+            return response()->json([
+                'success' => false,
+                'errors' => [
+                    'program_name' => ['กรุณาระบุชื่อโปรแกรมสำหรับรีวิวที่ไม่ได้ผูกกับทัวร์'],
+                ],
+            ], 422);
+        }
+
         $disk = Storage::disk('r2');
         $r2Url = rtrim(env('R2_URL'), '/');
 
@@ -447,6 +482,7 @@ class TourReviewAdminController extends Controller
         }
 
         $review->reviewer_name = $request->reviewer_name;
+        $review->program_name = $request->program_name;
         $review->rating = $request->rating;
         $review->category_ratings = $request->category_ratings;
         $review->tags = $request->tags;
