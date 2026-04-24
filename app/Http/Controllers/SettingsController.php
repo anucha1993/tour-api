@@ -553,6 +553,215 @@ class SettingsController extends Controller
         }
     }
 
+    // ═══════════════════════════════════════════
+    //  CONTACT POPUP (floating LINE/QR popup)
+    // ═══════════════════════════════════════════
+
+    /**
+     * Default config for the contact popup
+     */
+    private function contactPopupDefaults(): array
+    {
+        return [
+            'is_active' => false,
+            'heading' => 'จองผ่านไลน์',
+            'subheading' => 'ติดต่อข่าวสารโปรโมชั่นทัวร์',
+            'mascot_image' => '',
+            'mascot_size' => 112, // px, width/height of mascot image
+            'qr_image' => '',
+            'line_id' => '',
+            'line_url' => '',
+            'phones' => [],                 // array of {number:string, tel:string}
+            'hours_text' => "ทุกวัน\n08.00-20.00 น.",
+            'facebook_url' => '',
+            'email' => '',
+            'theme_color' => '#F97316',
+            'position' => 'bottom-right',    // bottom-right | bottom-left
+            'display_frequency' => 'once_per_session', // always | once_per_session | once_per_day
+            'delay_seconds' => 3,
+            'show_close_button' => true,
+            'show_on_mobile' => true,
+        ];
+    }
+
+    /**
+     * Get contact popup configuration (admin)
+     */
+    public function getContactPopupConfig(): JsonResponse
+    {
+        $config = array_merge(
+            $this->contactPopupDefaults(),
+            (array) Setting::get('contact_popup_config', [])
+        );
+
+        return response()->json([
+            'success' => true,
+            'data' => $config,
+        ]);
+    }
+
+    /**
+     * Get contact popup configuration (public - no auth)
+     */
+    public function getContactPopupConfigPublic(): JsonResponse
+    {
+        $config = array_merge(
+            $this->contactPopupDefaults(),
+            (array) Setting::get('contact_popup_config', [])
+        );
+
+        // If not active, return minimal payload so clients can short-circuit
+        if (empty($config['is_active'])) {
+            return response()->json([
+                'success' => true,
+                'data' => ['is_active' => false],
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $config,
+        ]);
+    }
+
+    /**
+     * Update contact popup configuration (admin)
+     */
+    public function updateContactPopupConfig(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'is_active' => 'nullable|boolean',
+            'heading' => 'nullable|string|max:100',
+            'subheading' => 'nullable|string|max:255',
+            'mascot_image' => 'nullable|string|max:1000',
+            'mascot_size' => 'nullable|integer|min:40|max:400',
+            'qr_image' => 'nullable|string|max:1000',
+            'line_id' => 'nullable|string|max:100',
+            'line_url' => 'nullable|string|max:500',
+            'phones' => 'nullable|array|max:10',
+            'phones.*.number' => 'required_with:phones|string|max:50',
+            'phones.*.tel' => 'nullable|string|max:50',
+            'hours_text' => 'nullable|string|max:255',
+            'facebook_url' => 'nullable|string|max:500',
+            'email' => 'nullable|string|max:255',
+            'theme_color' => 'nullable|string|max:20',
+            'position' => 'nullable|in:bottom-right,bottom-left',
+            'display_frequency' => 'nullable|in:always,once_per_session,once_per_day',
+            'delay_seconds' => 'nullable|integer|min:0|max:60',
+            'show_close_button' => 'nullable|boolean',
+            'show_on_mobile' => 'nullable|boolean',
+        ]);
+
+        $current = array_merge(
+            $this->contactPopupDefaults(),
+            (array) Setting::get('contact_popup_config', [])
+        );
+        $newConfig = array_merge($current, $validated);
+
+        Setting::set('contact_popup_config', $newConfig, 'contact_popup', 'json');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'บันทึก Contact Popup สำเร็จ',
+            'data' => $newConfig,
+        ]);
+    }
+
+    /**
+     * Upload QR or mascot image for contact popup.
+     * Field name ($field) can be "qr_image" or "mascot_image".
+     * Uses Cloudflare Images (same as PopupController), with R2 fallback
+     * to avoid dependency on php_fileinfo.
+     */
+    private function uploadContactPopupImage(Request $request, string $field): JsonResponse
+    {
+        $request->validate([
+            'image' => 'required|file|mimes:jpeg,jpg,png,gif,webp|max:2048',
+        ]);
+
+        if (!in_array($field, ['qr_image', 'mascot_image'], true)) {
+            return response()->json(['success' => false, 'message' => 'Invalid image field'], 400);
+        }
+
+        try {
+            $file = $request->file('image');
+
+            $current = array_merge(
+                $this->contactPopupDefaults(),
+                (array) Setting::get('contact_popup_config', [])
+            );
+
+            $cloudflare = app(\App\Services\CloudflareImagesService::class);
+            $cfIdKey = $field . '_cf_id';
+            $imageUrl = null;
+
+            if ($cloudflare->isConfigured()) {
+                // Delete old Cloudflare image if we tracked its id
+                if (!empty($current[$cfIdKey])) {
+                    try { $cloudflare->delete($current[$cfIdKey]); } catch (\Throwable $e) { /* ignore */ }
+                }
+
+                $customId = 'contact-popup-' . str_replace('_', '-', $field) . '-' . uniqid() . '-' . time();
+                $result = $cloudflare->uploadFromFile($file, $customId, ['type' => 'contact_popup', 'field' => $field]);
+
+                if (!$result) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'อัปโหลดรูปไป Cloudflare Images ไม่สำเร็จ',
+                    ], 500);
+                }
+
+                $imageUrl = $cloudflare->getDisplayUrl($result['id'], 'public');
+                $current[$cfIdKey] = $result['id'];
+            } else {
+                // Fallback: R2 (requires php_fileinfo for MIME guessing)
+                $disk = Storage::disk('r2');
+
+                // Delete old if it lives on R2
+                if (!empty($current[$field])) {
+                    $r2Url = rtrim((string) env('R2_URL'), '/');
+                    if ($r2Url && str_starts_with($current[$field], $r2Url . '/')) {
+                        $oldPath = substr($current[$field], strlen($r2Url) + 1);
+                        if ($oldPath && $disk->exists($oldPath)) {
+                            try { $disk->delete($oldPath); } catch (\Throwable $e) { /* ignore */ }
+                        }
+                    }
+                }
+
+                $filename = 'contact-popup-' . str_replace('_', '-', $field) . '-' . time() . '.' . $file->getClientOriginalExtension();
+                $path = $disk->putFileAs('contact-popup', $file, $filename);
+                $imageUrl = rtrim((string) env('R2_URL'), '/') . '/' . $path;
+                $current[$cfIdKey] = null;
+            }
+
+            $current[$field] = $imageUrl;
+            Setting::set('contact_popup_config', $current, 'contact_popup', 'json');
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Upload success',
+                'data' => [
+                    $field => $imageUrl,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Upload failed: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function uploadContactPopupQrImage(Request $request): JsonResponse
+    {
+        return $this->uploadContactPopupImage($request, 'qr_image');
+    }
+
+    public function uploadContactPopupMascotImage(Request $request): JsonResponse
+    {
+        return $this->uploadContactPopupImage($request, 'mascot_image');
+    }
+
     /**
      * Get OTP configuration
      */

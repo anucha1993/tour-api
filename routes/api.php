@@ -124,6 +124,9 @@ Route::get('site-contacts/public', [\App\Http\Controllers\SeoController::class, 
 Route::get('footer-config/public', [SettingsController::class, 'getFooterConfigPublic']);
 Route::get('why-choose-us/public', [SettingsController::class, 'getWhyChooseUsConfigPublic']);
 
+// Public Contact Popup (for tour-web)
+Route::get('contact-popup/public', [SettingsController::class, 'getContactPopupConfigPublic']);
+
 // Public Subscriber endpoints
 Route::post('subscribers/subscribe', [SubscriberController::class, 'subscribe']);
 Route::get('subscribers/confirm/{token}', [SubscriberController::class, 'confirm']);
@@ -697,6 +700,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/footer', [SettingsController::class, 'getFooterConfig']);
         Route::put('/footer', [SettingsController::class, 'updateFooterConfig']);
         Route::post('/footer/upload-qr', [SettingsController::class, 'uploadLineQrImage']);
+
+        // Contact Popup Settings (floating LINE popup)
+        Route::get('/contact-popup', [SettingsController::class, 'getContactPopupConfig']);
+        Route::put('/contact-popup', [SettingsController::class, 'updateContactPopupConfig']);
+        Route::post('/contact-popup/upload-qr', [SettingsController::class, 'uploadContactPopupQrImage']);
+        Route::post('/contact-popup/upload-mascot', [SettingsController::class, 'uploadContactPopupMascotImage']);
 
         // Why Choose Us Settings
         Route::get('/why-choose-us', [SettingsController::class, 'getWhyChooseUsConfig']);
