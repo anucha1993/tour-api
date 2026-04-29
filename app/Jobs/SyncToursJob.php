@@ -1664,6 +1664,7 @@ class SyncToursJob implements ShouldQueue
      */
     protected function injectBulkPeriods(array $tourData, array $bulkPeriodsMap, WholesalerApiConfig $config): array
     {
+        \Log::warning('injectBulkPeriods CALLED', ['map_keys' => array_slice(array_keys($bulkPeriodsMap), 0, 3), 'tour_keys' => array_keys($tourData['tour'] ?? [])]);
         $credentials = $config->auth_credentials ?? [];
         $periodsMatchKey = $credentials['periods_match_key'] ?? null;
         $periodsTourKey = $credentials['periods_tour_key'] ?? null;
@@ -1708,6 +1709,28 @@ class SyncToursJob implements ShouldQueue
                 foreach ($mappings as $mapping) {
                     $fieldName = $mapping->our_field;
                     $path = $mapping->their_field_path ?? $mapping->their_field ?? '';
+
+                    // Handle formula transform first - doesn't need a path,
+                    // evaluates an expression against the raw period data
+                    if ($mapping->transform_type === 'formula') {
+                        $cfg = $mapping->transform_config ?? [];
+                        $st = $cfg['string_transform'] ?? [];
+                        $expression = $st['formulaExpression'] ?? null;
+                        if ($expression) {
+                            $skipZero = ($st['formulaSkipZero'] ?? true) !== false;
+                            $formulaResult = $this->evaluateFormulaExpression($expression, $rawPeriod, $skipZero);
+                            $dep[$fieldName] = $formulaResult ?? 0;
+                            \Log::warning('injectBulkPeriods formula', [
+                                'field' => $fieldName,
+                                'expr' => $expression,
+                                'result' => $formulaResult,
+                                'rawPeriod_keys' => array_keys($rawPeriod),
+                                'discount_val' => $rawPeriod['period_promotion_group']['discount'] ?? '(missing)',
+                                'price_adult' => $rawPeriod['period_rate_adult_twn'] ?? '(missing)',
+                            ]);
+                        }
+                        continue;
+                    }
 
                     if (empty($path)) continue;
 
@@ -2857,6 +2880,25 @@ class SyncToursJob implements ShouldQueue
                 $nums = array_map('floatval', $nums);
                 return (string) ($func === 'max' ? max($nums) : min($nums));
             }, $expr);
+
+            // Process abs() function — supports nested arithmetic expression inside
+            // Repeat until no more abs(...) tokens (handles innermost first via balanced match)
+            $guard = 0;
+            while (preg_match('/\babs\s*\(([^()]+)\)/i', $expr) && $guard++ < 10) {
+                $expr = preg_replace_callback('/\babs\s*\(([^()]+)\)/i', function ($m) {
+                    $inner = trim($m[1]);
+                    if (!preg_match('/^[\d\s+\-*\/.]+$/', $inner)) {
+                        return $m[0];
+                    }
+                    try {
+                        $val = eval("return ({$inner});");
+                        if (!is_numeric($val)) return $m[0];
+                        return (string) abs((float) $val);
+                    } catch (\Throwable $e) {
+                        return $m[0];
+                    }
+                }, $expr);
+            }
             
             // Security: only allow numbers, operators, parentheses, spaces, decimal points
             if (!preg_match('/^[\d\s+\-*\/().]+$/', trim($expr))) {

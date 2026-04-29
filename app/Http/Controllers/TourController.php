@@ -95,6 +95,15 @@ class TourController extends Controller
             $query->where('display_price', '<=', $request->max_price);
         }
 
+        // Minimum available seats (at least 1 period must have available seats >= min_available)
+        if ($request->filled('min_available')) {
+            $minAvailable = (int) $request->min_available;
+            $query->whereHas('periods', function ($q) use ($minAvailable) {
+                $q->where('available', '>=', $minAvailable)
+                  ->where('status', 'open');
+            });
+        }
+
         // Duration
         if ($request->filled('duration_days')) {
             $query->where('duration_days', $request->duration_days);

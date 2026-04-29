@@ -705,10 +705,10 @@ class SyncPeriodsJob implements ShouldQueue
             'price_child' => $data['price_child'] ?? null,
             'price_child_nobed' => $data['price_child_nobed'] ?? null,
             'price_single' => $data['price_single'] ?? null,
-            'discount_adult' => $data['discount_adult'] ?? 0,
-            'discount_child_bed' => $data['discount_child_bed'] ?? 0,
-            'discount_child_nobed' => $data['discount_child_nobed'] ?? 0,
-            'discount_single' => $data['discount_single'] ?? 0,
+            'discount_adult' => abs((float)($data['discount_adult'] ?? 0)),
+            'discount_child_bed' => abs((float)($data['discount_child_bed'] ?? 0)),
+            'discount_child_nobed' => abs((float)($data['discount_child_nobed'] ?? 0)),
+            'discount_single' => abs((float)($data['discount_single'] ?? 0)),
             'deposit' => $data['deposit'] ?? null,
         ];
 
