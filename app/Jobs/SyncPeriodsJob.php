@@ -244,8 +244,23 @@ class SyncPeriodsJob implements ShouldQueue
                         'skipped' => $stats['skipped'],
                     ]);
                 } else {
-                    // Existing tour: set to draft so it doesn't show on frontend
-                    if ($tour->status !== 'draft') {
+                    // Existing tour: set to draft so it doesn't show on frontend.
+                    // BUT: respect manual status overrides — if admin set status to 'active'
+                    // (or marked status as manually overridden), don't auto-revert to draft.
+                    $manualOverrides = $tour->manual_override_fields ?? [];
+                    $statusManuallyOverridden = isset($manualOverrides['status']);
+                    $isActivelyManaged = in_array($tour->status, ['active'], true);
+
+                    if ($tour->status === 'draft') {
+                        // already draft; nothing to do
+                    } elseif ($statusManuallyOverridden || $isActivelyManaged) {
+                        Log::info('SyncPeriodsJob: Preserved tour status (manual override / active)', [
+                            'tour_id' => $this->tourId,
+                            'external_id' => $this->externalId,
+                            'current_status' => $tour->status,
+                            'manual_override' => $statusManuallyOverridden,
+                        ]);
+                    } else {
                         $tour->update(['status' => 'draft']);
                         Log::info('SyncPeriodsJob: Set existing tour to draft (no active future periods)', [
                             'tour_id' => $this->tourId,
