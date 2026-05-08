@@ -283,13 +283,16 @@ class WebSocialAuthController extends Controller
     private function getGoogleUser(string $code, string $redirectUri): ?array
     {
         // Exchange code for tokens
-        $tokenResponse = \Illuminate\Support\Facades\Http::asForm()->post('https://oauth2.googleapis.com/token', [
-            'code' => $code,
-            'client_id' => $this->getClientId('google'),
-            'client_secret' => $this->getClientSecret('google'),
-            'redirect_uri' => $redirectUri,
-            'grant_type' => 'authorization_code',
-        ]);
+        $tokenResponse = \Illuminate\Support\Facades\Http::asForm()
+            ->timeout(15)
+            ->connectTimeout(10)
+            ->post('https://oauth2.googleapis.com/token', [
+                'code' => $code,
+                'client_id' => $this->getClientId('google'),
+                'client_secret' => $this->getClientSecret('google'),
+                'redirect_uri' => $redirectUri,
+                'grant_type' => 'authorization_code',
+            ]);
 
         if (!$tokenResponse->successful()) {
             Log::error('Google token exchange failed', [
@@ -300,30 +303,62 @@ class WebSocialAuthController extends Controller
         }
 
         $tokens = $tokenResponse->json();
+        $idToken = $tokens['id_token'] ?? null;
         $accessToken = $tokens['access_token'] ?? null;
+
+        // Prefer id_token (JWT) — contains user info, no extra HTTP call needed.
+        // Fallback to userinfo endpoint only if id_token is missing.
+        if ($idToken) {
+            $parts = explode('.', $idToken);
+            if (count($parts) === 3) {
+                $payload = json_decode(
+                    base64_decode(strtr($parts[1], '-_', '+/')),
+                    true
+                );
+                if (is_array($payload) && !empty($payload['sub'])) {
+                    return [
+                        'id' => $payload['sub'],
+                        'email' => $payload['email'] ?? null,
+                        'email_verified' => $payload['email_verified'] ?? false,
+                        'first_name' => $payload['given_name'] ?? '',
+                        'last_name' => $payload['family_name'] ?? '',
+                        'avatar' => $payload['picture'] ?? null,
+                    ];
+                }
+            }
+        }
 
         if (!$accessToken) {
             return null;
         }
 
-        // Get user info
-        $userResponse = \Illuminate\Support\Facades\Http::withToken($accessToken)
-            ->get('https://www.googleapis.com/oauth2/v2/userinfo');
+        // Fallback: call userinfo endpoint (requires outbound access to www.googleapis.com)
+        try {
+            $userResponse = \Illuminate\Support\Facades\Http::withToken($accessToken)
+                ->timeout(15)
+                ->connectTimeout(10)
+                ->get('https://www.googleapis.com/oauth2/v2/userinfo');
 
-        if (!$userResponse->successful()) {
+            if (!$userResponse->successful()) {
+                return null;
+            }
+
+            $user = $userResponse->json();
+
+            return [
+                'id' => $user['id'] ?? null,
+                'email' => $user['email'] ?? null,
+                'email_verified' => $user['verified_email'] ?? false,
+                'first_name' => $user['given_name'] ?? '',
+                'last_name' => $user['family_name'] ?? '',
+                'avatar' => $user['picture'] ?? null,
+            ];
+        } catch (\Throwable $e) {
+            Log::error('Google userinfo fetch failed (id_token also unavailable)', [
+                'error' => $e->getMessage(),
+            ]);
             return null;
         }
-
-        $user = $userResponse->json();
-
-        return [
-            'id' => $user['id'] ?? null,
-            'email' => $user['email'] ?? null,
-            'email_verified' => $user['verified_email'] ?? false,
-            'first_name' => $user['given_name'] ?? '',
-            'last_name' => $user['family_name'] ?? '',
-            'avatar' => $user['picture'] ?? null,
-        ];
     }
 
     /**
