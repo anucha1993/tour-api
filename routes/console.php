@@ -1,6 +1,7 @@
 <?php
 
 use App\Jobs\AutoCloseExpiredJob;
+use App\Jobs\ExpireHeldBookingsJob;
 use App\Models\SystemSetting;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
@@ -20,6 +21,12 @@ Schedule::job(new AutoCloseExpiredJob())->dailyAt($autoCloseRunTime)
 // Expire member points - runs daily at 2:00 AM
 Schedule::command('points:expire')->dailyAt('02:00')
     ->name('expire-member-points')
+    ->withoutOverlapping()
+    ->onOneServer();
+
+// Auto-cancel outbound bookings whose provider hold has expired - every minute
+Schedule::job(new ExpireHeldBookingsJob())->everyMinute()
+    ->name('expire-held-bookings')
     ->withoutOverlapping()
     ->onOneServer();
 

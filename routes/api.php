@@ -102,6 +102,13 @@ Route::get('sync/{syncLogId}/progress', [IntegrationController::class, 'getSyncP
 Route::post('sync/{syncLogId}/cancel', [IntegrationController::class, 'cancelSync']);
 Route::post('sync/{syncLogId}/force-cancel', [IntegrationController::class, 'forceCancelSync']);
 
+// Booking API configuration (Outbound)
+Route::get('integrations/booking/providers', [\App\Http\Controllers\Api\BookingIntegrationController::class, 'providers']);
+Route::get('integrations/booking/providers/{code}/schema', [\App\Http\Controllers\Api\BookingIntegrationController::class, 'providerSchema']);
+Route::get('integrations/{id}/booking', [\App\Http\Controllers\Api\BookingIntegrationController::class, 'show']);
+Route::put('integrations/{id}/booking', [\App\Http\Controllers\Api\BookingIntegrationController::class, 'update']);
+Route::post('integrations/{id}/booking/test', [\App\Http\Controllers\Api\BookingIntegrationController::class, 'test']);
+
 // Public Hero Slides (for tour-web homepage)
 Route::get('hero-slides/public', [\App\Http\Controllers\HeroSlideController::class, 'publicList']);
 
@@ -548,6 +555,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('bookings/{id}', [BookingController::class, 'show']);
     Route::put('bookings/{id}', [BookingController::class, 'update']);
     Route::patch('bookings/{id}/status', [BookingController::class, 'updateStatus']);
+
+    // Outbound booking lifecycle (quote → hold → confirm → cancel)
+    Route::post('bookings/outbound/quote', [\App\Http\Controllers\Api\BookingController::class, 'quote']);
+    Route::post('bookings/outbound/{id}/hold', [\App\Http\Controllers\Api\BookingController::class, 'hold']);
+    Route::post('bookings/outbound/{id}/confirm', [\App\Http\Controllers\Api\BookingController::class, 'confirm']);
+    Route::post('bookings/outbound/{id}/cancel', [\App\Http\Controllers\Api\BookingController::class, 'cancel']);
 
     // Gallery Images CRUD
     Route::get('gallery/tags', [GalleryImageController::class, 'tags']);

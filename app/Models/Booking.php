@@ -15,6 +15,14 @@ class Booking extends Model
         'tour_id',
         'period_id',
         'flash_sale_item_id',
+        'integration_id',
+        'provider',
+        'provider_booking_ref',
+        'provider_quote_ref',
+        'provider_status',
+        'hold_expires_at',
+        'currency',
+        'provider_payload',
         'qty_adult',
         'qty_adult_single',
         'qty_child_bed',
@@ -42,6 +50,8 @@ class Booking extends Model
     ];
 
     protected $casts = [
+        'hold_expires_at' => 'datetime',
+        'provider_payload' => 'array',
         'price_adult' => 'decimal:2',
         'price_single' => 'decimal:2',
         'price_child_bed' => 'decimal:2',
@@ -80,6 +90,21 @@ class Booking extends Model
         return $this->belongsTo(FlashSaleItem::class);
     }
 
+    public function integration()
+    {
+        return $this->belongsTo(WholesalerApiConfig::class, 'integration_id');
+    }
+
+    public function passengers()
+    {
+        return $this->hasMany(BookingPassenger::class);
+    }
+
+    public function leadPassenger()
+    {
+        return $this->hasOne(BookingPassenger::class)->where('is_lead', true);
+    }
+
     // ─── Scopes ───
 
     public function scopePending($query)
@@ -100,6 +125,18 @@ class Booking extends Model
     public function scopeFromWebsite($query)
     {
         return $query->where('source', 'website');
+    }
+
+    public function scopeHeld($query)
+    {
+        return $query->where('provider_status', 'held');
+    }
+
+    public function scopeExpiredHold($query)
+    {
+        return $query->where('provider_status', 'held')
+            ->whereNotNull('hold_expires_at')
+            ->where('hold_expires_at', '<', now());
     }
 
     // ─── Helpers ───

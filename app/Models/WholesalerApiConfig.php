@@ -75,6 +75,11 @@ class WholesalerApiConfig extends Model
         // Headcode Integration
         'integration_type',
         'headcode_file',
+        // Booking API (Outbound)
+        'booking_provider',
+        'booking_enabled',
+        'booking_config',
+        'booking_hold_ttl_seconds',
     ];
 
     protected $casts = [
@@ -101,6 +106,8 @@ class WholesalerApiConfig extends Model
         'auto_close_expired_tours' => 'boolean',
         'skip_past_periods_on_sync' => 'boolean',
         'skip_disabled_tours_on_sync' => 'boolean',
+        // Booking API
+        'booking_enabled' => 'boolean',
     ];
 
     /**
@@ -121,6 +128,36 @@ class WholesalerApiConfig extends Model
      * Decrypt credentials when accessing
      */
     public function getAuthCredentialsAttribute($value): ?array
+    {
+        if ($value) {
+            try {
+                $decrypted = Crypt::decryptString($value);
+                return json_decode($decrypted, true);
+            } catch (\Exception $e) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Encrypt booking_config before saving
+     */
+    public function setBookingConfigAttribute($value): void
+    {
+        if ($value) {
+            $this->attributes['booking_config'] = Crypt::encryptString(
+                is_array($value) ? json_encode($value) : $value
+            );
+        } else {
+            $this->attributes['booking_config'] = null;
+        }
+    }
+
+    /**
+     * Decrypt booking_config when accessing
+     */
+    public function getBookingConfigAttribute($value): ?array
     {
         if ($value) {
             try {
