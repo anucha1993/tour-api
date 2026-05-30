@@ -171,6 +171,14 @@ class OtpService
 
             $data = $response->json() ?? [];
 
+            // Always log the raw response while debugging integration issues
+            Log::info('ThaiBulkSMS SMS response', [
+                'status' => $response->status(),
+                'body' => $data,
+                'msisdn' => $msisdn,
+                'sender' => $this->sender,
+            ]);
+
             if (!$response->successful()) {
                 $error = $data['error'] ?? [];
                 $errorCode = (int) ($error['code'] ?? 0);
@@ -223,15 +231,22 @@ class OtpService
                 ];
             }
 
-            // Get message_id from response
-            $messageId = $data['phone_number_list'][0]['message_id'] ?? null;
+            // Get message_id from response (try multiple known shapes from ThaiBulkSMS v1/v2)
+            $messageId = $data['phone_number_list'][0]['message_id']
+                ?? $data['message_id']
+                ?? $data['queue_id']
+                ?? $data['phone_number_list'][0]['queue_id']
+                ?? null;
 
             if (!$messageId) {
-                return [
-                    'success' => false,
-                    'error' => 'no_message_id',
-                    'message' => 'ไม่ได้รับการยืนยันจากระบบ',
-                ];
+                // SMS may still have been queued successfully — generate a synthetic id
+                // so the OTP flow can proceed (we already verified the call returned 2xx + no error).
+                $messageId = 'auto-' . uniqid();
+                Log::warning('ThaiBulkSMS response missing message_id, using synthetic id', [
+                    'msisdn' => $msisdn,
+                    'synthetic_id' => $messageId,
+                    'body' => $data,
+                ]);
             }
 
             // Create OTP request record (store hashed OTP)
@@ -265,13 +280,24 @@ class OtpService
         } catch (\Exception $e) {
             Log::error('OTP request exception', [
                 'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => collect($e->getTrace())->take(5)->toArray(),
                 'phone' => $msisdn,
             ]);
 
             return [
                 'success' => false,
                 'error' => 'exception',
-                'message' => 'เกิดข้อผิดพลาด กรุณาลองใหม่',
+                'message' => config('app.debug')
+                    ? ('เกิดข้อผิดพลาด: ' . $e->getMessage() . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ')')
+                    : 'เกิดข้อผิดพลาด กรุณาลองใหม่',
+                'debug_exception' => config('app.debug') ? [
+                    'class' => get_class($e),
+                    'message' => $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                ] : null,
             ];
         }
     }

@@ -277,18 +277,34 @@ class ZegoBookingAdapter extends BaseBookingAdapter
             ?? ''
         );
 
+        // Zego sometimes does NOT return bookingId/bookingNo in the submit
+        // response — look it up via the audit API by customer phone.
+        $auditLookup = null;
+        if ($bookingRef === '') {
+            $auditLookup = $this->findRecentAuditBookingByPhone(
+                preg_replace('/\D/', '', (string) ($booking['customer_phone'] ?? ''))
+            );
+            if ($auditLookup) {
+                $bookingRef = (string) ($auditLookup['bookingNo'] ?? $auditLookup['bookingId'] ?? '');
+            }
+        }
+
         Log::info('Zego booking-submit success', [
             'http_status' => $res->status(),
             'booking_ref' => $bookingRef,
             'data' => $data,
             'raw_body' => $body,
+            'audit_lookup' => $auditLookup,
         ]);
 
         return BookingResult::success(
             bookingRef: $bookingRef,
-            confirmationNumber: $data['bookingNo'] ?? $data['booking_no'] ?? null,
+            confirmationNumber: $data['bookingNo'] ?? $data['booking_no'] ?? ($auditLookup['bookingNo'] ?? null),
             status: 'confirmed',
-            metadata: array_merge($data, ['raw_response' => $body]),
+            metadata: array_merge($data, [
+                'raw_response' => $body,
+                'audit_lookup' => $auditLookup,
+            ]),
         );
     }
 
@@ -324,5 +340,90 @@ class ZegoBookingAdapter extends BaseBookingAdapter
         if (($pax['paxChildNB'] ?? 0) > 0) $details[] = ['code' => 'CHNB',   'num' => $pax['paxChildNB']];
         if (($pax['paxInfant'] ?? 0) > 0)  $details[] = ['code' => 'IF',     'num' => $pax['paxInfant']];
         return $details;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Zego Audit API (v1.5) — list/inspect bookings already submitted
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * GET /agency/audit/bookings — list past bookings (default 7 days).
+     *
+     * Params: page, limit, dateFrom (Y-m-d), dateTo (Y-m-d),
+     *         status, bookingNo, customerPhone
+     */
+    public function listAuditBookings(array $params = []): array
+    {
+        return $this->auditGet('/agency/audit/bookings', $params);
+    }
+
+    /**
+     * GET /agency/audit/bookings/{bookingNo} — booking detail log.
+     */
+    public function getAuditBooking(string $bookingNo): array
+    {
+        return $this->auditGet("/agency/audit/bookings/{$bookingNo}");
+    }
+
+    /**
+     * GET /agency/audit/bookings/{bookingNo}/assignment — who handles it.
+     */
+    public function getBookingAssignment(string $bookingNo): array
+    {
+        return $this->auditGet("/agency/audit/bookings/{$bookingNo}/assignment");
+    }
+
+    /**
+     * GET /agency/audit/failures — failed booking attempts.
+     */
+    public function listAuditFailures(array $params = []): array
+    {
+        return $this->auditGet('/agency/audit/failures', $params);
+    }
+
+    private function auditGet(string $path, array $params = []): array
+    {
+        $res = Http::timeout(15)->connectTimeout(10)
+            ->withHeaders(['x-public-key' => $this->publicKey()])
+            ->get($this->baseUrl() . $path, $params);
+
+        $body = $res->json() ?? [];
+        if (!$res->successful() || !($body['status'] ?? false)) {
+            Log::warning('Zego audit GET failed', [
+                'path' => $path,
+                'http_status' => $res->status(),
+                'code' => $body['code'] ?? null,
+                'body' => $body,
+            ]);
+        }
+        return $body;
+    }
+
+    /**
+     * Look up the most recent successful booking for a given customer phone
+     * within the last 24 hours. Returns the matched booking row or null.
+     */
+    private function findRecentAuditBookingByPhone(string $phone): ?array
+    {
+        if ($phone === '') return null;
+
+        $body = $this->listAuditBookings([
+            'customerPhone' => $phone,
+            'limit' => 10,
+            'page' => 1,
+            'dateFrom' => now()->subDay()->format('Y-m-d'),
+            'dateTo' => now()->format('Y-m-d'),
+        ]);
+
+        $rows = $body['data']['list'] ?? $body['data']['items'] ?? $body['data'] ?? [];
+        if (!is_array($rows) || empty($rows)) return null;
+
+        // Return the first (most recent) row that has a bookingNo
+        foreach ($rows as $row) {
+            if (!empty($row['bookingNo']) || !empty($row['bookingId'])) {
+                return $row;
+            }
+        }
+        return null;
     }
 }

@@ -273,6 +273,14 @@ class PublicTourController extends Controller
      */
     private function formatTourDetail(Tour $tour): array
     {
+        // Check whether this tour's wholesaler has booking integration enabled
+        $bookingOnlineEnabled = false;
+        if ($tour->wholesaler_id) {
+            $bookingOnlineEnabled = (bool) \App\Models\WholesalerApiConfig::where('wholesaler_id', $tour->wholesaler_id)
+                ->where('booking_enabled', true)
+                ->exists();
+        }
+
         // Format periods with offers
         $periods = $tour->periods->map(function ($period) {
             $offer = $period->offer;
@@ -469,6 +477,10 @@ class PublicTourController extends Controller
             // SEO
             'meta_title' => $tour->meta_title,
             'meta_description' => $tour->meta_description,
+
+            // Booking integration — when true, the booking form is wired
+            // straight to the wholesaler (e.g. Zego) and confirms instantly.
+            'booking_online_enabled' => $bookingOnlineEnabled,
         ];
     }
 

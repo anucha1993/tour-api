@@ -13,6 +13,7 @@ use App\Services\WholesalerAdapters\Contracts\DTOs\QuoteResult;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
+use Throwable;
 
 /**
  * Orchestrates the outbound booking lifecycle:
@@ -23,6 +24,148 @@ use RuntimeException;
  */
 class BookingService
 {
+    /**
+     * Returns true when the given period belongs to a tour whose wholesaler
+     * has an enabled booking integration. Used by both web and admin entry
+     * points to decide whether to auto-push the booking to the provider.
+     */
+    public static function isOutboundEnabledForPeriod(Period $period): bool
+    {
+        $tour = $period->tour;
+        if (!$tour || !$tour->wholesaler_id) return false;
+
+        $config = WholesalerApiConfig::where('wholesaler_id', $tour->wholesaler_id)->first();
+        return (bool) ($config?->booking_enabled);
+    }
+
+    /**
+     * Run the full outbound flow (quote → submit) on an EXISTING booking row.
+     *
+     * Used by both the customer-facing form and the admin's "create booking"
+     * action so they both behave identically when the wholesaler integration
+     * is enabled. Booking row stays as-is on failure (provider_status='failed')
+     * so the back office can fall back to manual handling.
+     *
+     * Returns the (refreshed) booking. Never throws — the caller can inspect
+     * $booking->provider_status to know what happened.
+     */
+    public function runOutboundForBooking(Booking $booking, array $passengers = []): Booking
+    {
+        $period = $booking->period()->with('tour')->first();
+        if (!$period || !self::isOutboundEnabledForPeriod($period)) {
+            return $booking; // nothing to do
+        }
+
+        $tour = $period->tour;
+        $config = WholesalerApiConfig::where('wholesaler_id', $tour->wholesaler_id)->first();
+        if (!$config) return $booking;
+
+        // Stamp provider info on the booking up front so the UI can show it.
+        $booking->update([
+            'integration_id' => $config->id,
+            'provider' => $config->booking_provider,
+            'provider_status' => 'pending',
+        ]);
+
+        try {
+            $adapter = AdapterFactory::createBookingAdapter($tour->wholesaler_id);
+
+            $quoteRequest = [
+                'product_code' => $tour->wholesaler_tour_code ?? $tour->code,
+                'travel_date' => $period->start_date?->format('Y-m-d'),
+                'pax_adult' => (int) $booking->qty_adult + (int) $booking->qty_adult_single,
+                'pax_child' => (int) $booking->qty_child_bed,
+                'pax_child_nb' => (int) $booking->qty_child_nobed,
+                'pax_infant' => (int) $booking->qty_infant,
+                'rooms' => [], // BookingService::buildRoomCodes() handles this later
+            ];
+
+            $quote = $adapter->createQuote($quoteRequest);
+            if (!$quote->success) {
+                $this->markOutboundFailed($booking, 'quote', $quote->errorMessage ?? 'Quote failed', $quote->toArray());
+                return $booking->fresh();
+            }
+
+            $booking->update([
+                'provider_quote_ref' => $quote->quoteId,
+                'provider_status' => 'quoted',
+                'hold_expires_at' => $quote->expiresAt,
+                'provider_payload' => array_merge($booking->provider_payload ?? [], ['quote' => $quote->toArray()]),
+            ]);
+
+            // Persist passengers if supplied (overwrites any previous set)
+            if (!empty($passengers)) {
+                $this->hold($booking, $passengers);
+                $booking = $booking->fresh('passengers');
+            } else {
+                // No passengers given → synthesize one row per pax from the
+                // contact info so confirm() doesn't fail downstream.
+                $synth = $this->synthesizePassengers($booking);
+                if (!empty($synth)) {
+                    $this->hold($booking, $synth);
+                    $booking = $booking->fresh('passengers');
+                }
+            }
+
+            $this->confirm($booking);
+            return $booking->fresh('passengers');
+        } catch (Throwable $e) {
+            Log::error('runOutboundForBooking exception', [
+                'booking_id' => $booking->id,
+                'error' => $e->getMessage(),
+            ]);
+            $this->markOutboundFailed($booking, 'exception', $e->getMessage(), []);
+            return $booking->fresh();
+        }
+    }
+
+    /**
+     * Build one synthetic passenger row per pax slot using the contact info.
+     * Used when the customer flow doesn't collect per-pax data yet.
+     */
+    protected function synthesizePassengers(Booking $booking): array
+    {
+        $rows = [];
+        $first = $booking->first_name ?: 'Guest';
+        $last = $booking->last_name ?: 'Pax';
+        $email = $booking->email;
+        $phone = $booking->phone;
+
+        $addAdult = function (bool $isLead) use (&$rows, $first, $last, $email, $phone) {
+            $rows[] = [
+                'type' => 'adult',
+                'title' => 'Mr',
+                'first_name' => $first,
+                'last_name' => $last,
+                'nationality' => 'TH',
+                'is_lead' => $isLead,
+                'email' => $isLead ? $email : null,
+                'phone' => $isLead ? $phone : null,
+            ];
+        };
+
+        $total = (int) $booking->qty_adult + (int) $booking->qty_adult_single;
+        for ($i = 0; $i < $total; $i++) $addAdult($i === 0);
+
+        for ($i = 0; $i < (int) $booking->qty_child_bed + (int) $booking->qty_child_nobed; $i++) {
+            $rows[] = ['type' => 'child', 'title' => 'Mstr', 'first_name' => $first, 'last_name' => $last, 'nationality' => 'TH'];
+        }
+        for ($i = 0; $i < (int) $booking->qty_infant; $i++) {
+            $rows[] = ['type' => 'infant', 'title' => 'Mstr', 'first_name' => $first, 'last_name' => $last, 'nationality' => 'TH'];
+        }
+
+        return $rows;
+    }
+
+    protected function markOutboundFailed(Booking $booking, string $stage, string $message, array $detail): void
+    {
+        $booking->update([
+            'provider_status' => 'failed',
+            'admin_note' => trim(($booking->admin_note ?? '') . "\n[outbound:{$stage}] " . $message),
+            'provider_payload' => array_merge($booking->provider_payload ?? [], ["outbound_{$stage}_error" => $detail]),
+        ]);
+    }
+
     /**
      * Step 1: Create a quote for a period + pax mix.
      *

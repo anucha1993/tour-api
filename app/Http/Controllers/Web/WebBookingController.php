@@ -10,6 +10,7 @@ use App\Models\Period;
 use App\Models\Tour;
 use App\Services\OtpService;
 use App\Services\BookingEmailService;
+use App\Services\Booking\BookingService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -225,6 +226,22 @@ class WebBookingController extends Controller
 
             Log::info('Booking created', ['booking_code' => $booking->booking_code, 'id' => $booking->id]);
 
+            // If this period's wholesaler has booking integration enabled,
+            // push the booking to the provider (Zego etc.) and update with
+            // provider_booking_ref. Failures fall back to manual handling.
+            $outboundAttempted = BookingService::isOutboundEnabledForPeriod($period);
+            if ($outboundAttempted) {
+                try {
+                    $bookingService = app(BookingService::class);
+                    $booking = $bookingService->runOutboundForBooking($booking);
+                } catch (\Throwable $e) {
+                    Log::warning('Outbound booking flow failed (kept as manual)', [
+                        'booking_id' => $booking->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
             // Send booking confirmation email (async-safe, never throws)
             try {
                 BookingEmailService::sendBookingConfirmation($booking);
@@ -232,9 +249,13 @@ class WebBookingController extends Controller
                 Log::warning('Booking email failed but booking is OK', ['error' => $e->getMessage()]);
             }
 
+            $isProviderConfirmed = $booking->provider_status === 'confirmed' && $booking->provider_booking_ref;
+
             return response()->json([
                 'success' => true,
-                'message' => 'จองทัวร์สำเร็จ รอการยืนยันจากเจ้าหน้าที่',
+                'message' => $isProviderConfirmed
+                    ? 'จองทัวร์สำเร็จ ยืนยันโดย ' . ucfirst($booking->provider ?? 'provider') . ' แล้ว'
+                    : 'จองทัวร์สำเร็จ รอการยืนยันจากเจ้าหน้าที่',
                 'booking' => [
                     'id' => $booking->id,
                     'booking_code' => $booking->booking_code,
@@ -243,6 +264,11 @@ class WebBookingController extends Controller
                     'total_amount' => $grandTotal,
                     'status' => $booking->status,
                     'status_label' => $booking->status_label,
+                    'provider' => $booking->provider,
+                    'provider_status' => $booking->provider_status,
+                    'provider_booking_ref' => $booking->provider_booking_ref,
+                    'is_outbound' => $outboundAttempted,
+                    'is_confirmed_by_provider' => $isProviderConfirmed,
                 ],
             ]);
         } catch (\Exception $e) {

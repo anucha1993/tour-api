@@ -3,8 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\Booking;
+use App\Models\Period;
 use App\Services\BookingEmailService;
+use App\Services\Booking\BookingService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class BookingController extends Controller
 {
@@ -202,10 +205,28 @@ class BookingController extends Controller
             'source' => 'manual', // Admin manual creation
         ]);
 
+        // Auto-push to provider when the period's wholesaler has booking
+        // integration enabled. Same behaviour as the customer flow.
+        $period = Period::find($booking->period_id);
+        $outboundAttempted = $period ? BookingService::isOutboundEnabledForPeriod($period) : false;
+        if ($outboundAttempted) {
+            try {
+                $bookingService = app(BookingService::class);
+                $booking = $bookingService->runOutboundForBooking($booking);
+            } catch (\Throwable $e) {
+                Log::warning('Admin booking outbound failed (kept as manual)', [
+                    'booking_id' => $booking->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'สร้างใบจองสำเร็จ',
             'booking' => $booking->fresh(['tour', 'period']),
+            'outbound_attempted' => $outboundAttempted,
+            'is_confirmed_by_provider' => $booking->provider_status === 'confirmed' && $booking->provider_booking_ref,
         ], 201);
     }
 
