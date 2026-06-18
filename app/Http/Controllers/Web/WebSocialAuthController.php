@@ -231,6 +231,80 @@ class WebSocialAuthController extends Controller
         }
     }
 
+    /**
+     * Link a social provider to the currently authenticated member.
+     * Different from callback() — this never creates a new account, only attaches.
+     */
+    public function linkAccount(Request $request, string $provider): JsonResponse
+    {
+        if (!in_array($provider, ['google', 'facebook', 'line'])) {
+            return response()->json(['success' => false, 'message' => 'Provider ไม่ถูกต้อง'], 400);
+        }
+
+        if (!$this->isProviderEnabled($provider)) {
+            return response()->json(['success' => false, 'message' => 'การเชื่อมต่อ ' . ucfirst($provider) . ' ถูกปิดอยู่'], 400);
+        }
+
+        $request->validate([
+            'code' => 'required|string',
+            'redirect_uri' => 'required|string',
+        ]);
+
+        $member = $request->user();
+        if (!$member) {
+            return response()->json(['success' => false, 'message' => 'กรุณาเข้าสู่ระบบ'], 401);
+        }
+
+        try {
+            $socialUser = match ($provider) {
+                'google' => $this->getGoogleUser($request->code, $request->redirect_uri),
+                'facebook' => $this->getFacebookUser($request->code, $request->redirect_uri),
+                'line' => $this->getLineUser($request->code, $request->redirect_uri),
+            };
+
+            if (!$socialUser || empty($socialUser['id'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'ไม่สามารถดึงข้อมูลจาก ' . ucfirst($provider) . ' ได้',
+                ], 400);
+            }
+
+            $providerIdField = $provider === 'line' ? 'line_id' : "{$provider}_id";
+
+            // Check if this social account is already linked to another member
+            $existing = WebMember::where($providerIdField, $socialUser['id'])
+                ->where('id', '!=', $member->id)
+                ->first();
+            if ($existing) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'already_linked',
+                    'message' => 'บัญชี ' . ucfirst($provider) . ' นี้เชื่อมต่อกับสมาชิกท่านอื่นแล้ว',
+                ], 409);
+            }
+
+            $member->{$providerIdField} = $socialUser['id'];
+            $member->{"{$provider}_linked_at"} = now();
+            if (!$member->avatar && !empty($socialUser['avatar'])) {
+                $member->avatar = $socialUser['avatar'];
+            }
+            $member->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'เชื่อมต่อ ' . ucfirst($provider) . ' สำเร็จ',
+            ]);
+        } catch (\Exception $e) {
+            Log::error("Social link {$provider} failed", [
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'เกิดข้อผิดพลาดในการเชื่อมต่อ',
+            ], 500);
+        }
+    }
+
     // ─── Private helpers ───
 
     private function isProviderEnabled(string $provider): bool

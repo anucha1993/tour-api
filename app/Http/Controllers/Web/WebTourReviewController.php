@@ -342,6 +342,19 @@ class WebTourReviewController extends Controller
         $tour = Tour::where('slug', $tourSlug)->firstOrFail();
         $member = $request->user();
 
+        // Must have confirmed booking for this tour
+        $hasEligibleBooking = \App\Models\Booking::where('web_member_id', $member->id)
+            ->where('tour_id', $tour->id)
+            ->where('status', 'confirmed')
+            ->exists();
+
+        if (!$hasEligibleBooking) {
+            return response()->json([
+                'success' => false,
+                'message' => 'คุณต้องเคยจองและยืนยันการจองทัวร์นี้ก่อน จึงจะรีวิวได้',
+            ], 422);
+        }
+
         // Check if member already reviewed this tour
         $existingReview = TourReview::where('tour_id', $tour->id)
             ->where('user_id', $member->id)
@@ -493,12 +506,71 @@ class WebTourReviewController extends Controller
             ->where('user_id', $member->id)
             ->first();
 
+        $hasEligibleBooking = \App\Models\Booking::where('web_member_id', $member->id)
+            ->where('tour_id', $tour->id)
+            ->where('status', 'confirmed')
+            ->exists();
+
         return response()->json([
             'success' => true,
             'data' => [
-                'can_review' => !$existingReview,
+                'can_review' => !$existingReview && $hasEligibleBooking,
+                'has_booking' => $hasEligibleBooking,
                 'existing_review' => $existingReview,
             ],
+        ]);
+    }
+
+    /**
+     * List tours the member is eligible to review
+     * (has confirmed booking + departure date passed + not yet reviewed)
+     */
+    public function eligibleTours(Request $request)
+    {
+        $member = $request->user();
+
+        $bookings = \App\Models\Booking::with(['tour:id,title,slug,tour_code,cover_image_url', 'period:id,start_date,end_date'])
+            ->where('web_member_id', $member->id)
+            ->where('status', 'confirmed')
+            ->whereNotNull('tour_id')
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        // Group by tour, keep latest booking per tour
+        $tourMap = [];
+        foreach ($bookings as $bk) {
+            if (!$bk->tour) continue;
+            $tid = $bk->tour->id;
+            if (isset($tourMap[$tid])) continue;
+            $tourMap[$tid] = [
+                'id' => $bk->tour->id,
+                'title' => $bk->tour->title,
+                'tour_name' => $bk->tour->title,
+                'slug' => $bk->tour->slug,
+                'tour_code' => $bk->tour->tour_code,
+                'cover_image_url' => $bk->tour->cover_image_url,
+                'booking_id' => $bk->id,
+                'booking_code' => $bk->booking_code ?? null,
+                'period_start' => $bk->period?->start_date?->format('Y-m-d'),
+                'period_end' => $bk->period?->end_date?->format('Y-m-d'),
+            ];
+        }
+
+        // Mark already reviewed
+        $reviewedTourIds = TourReview::where('user_id', $member->id)
+            ->whereIn('tour_id', array_keys($tourMap))
+            ->pluck('tour_id')
+            ->toArray();
+
+        $list = [];
+        foreach ($tourMap as $tid => $row) {
+            $row['already_reviewed'] = in_array($tid, $reviewedTourIds);
+            $list[] = $row;
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $list,
         ]);
     }
 

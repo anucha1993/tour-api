@@ -253,6 +253,16 @@ Route::middleware('auth:sanctum')->group(function () {
     });
     Route::apiResource('web-members', \App\Http\Controllers\Api\WebMemberController::class)->only(['index', 'show', 'destroy']);
 
+    // Quotations Admin
+    Route::prefix('quotations')->group(function () {
+        Route::get('/statistics', [\App\Http\Controllers\Api\QuotationAdminController::class, 'statistics']);
+        Route::get('/', [\App\Http\Controllers\Api\QuotationAdminController::class, 'index']);
+        Route::get('/{id}', [\App\Http\Controllers\Api\QuotationAdminController::class, 'show']);
+        Route::put('/{id}', [\App\Http\Controllers\Api\QuotationAdminController::class, 'update']);
+        Route::post('/{id}/send', [\App\Http\Controllers\Api\QuotationAdminController::class, 'send']);
+        Route::post('/{id}/cancel', [\App\Http\Controllers\Api\QuotationAdminController::class, 'cancel']);
+    });
+
     // Member Points Admin
     Route::prefix('member-points')->group(function () {
         // Stats dashboard
@@ -859,7 +869,17 @@ Route::prefix('web')->group(function () {
         // Profile
         Route::get('/me', [WebAuthController::class, 'me']);
         Route::put('/profile', [WebAuthController::class, 'updateProfile']);
+        Route::post('/profile/avatar', [WebAuthController::class, 'uploadAvatar']);
+        Route::delete('/profile/avatar', [WebAuthController::class, 'deleteAvatar']);
         Route::put('/password', [WebAuthController::class, 'changePassword']);
+
+        // Account deletion (PDPA)
+        Route::delete('/account', [WebAuthController::class, 'deleteAccount']);
+
+        // Linked social accounts
+        Route::get('/profile/linked-accounts', [WebAuthController::class, 'getLinkedAccounts']);
+        Route::delete('/profile/social/{provider}', [WebAuthController::class, 'unlinkSocial']);
+        Route::post('/profile/social/{provider}/link', [WebSocialAuthController::class, 'linkAccount']);
         
         // Wishlist
         Route::prefix('wishlist')->group(function () {
@@ -883,6 +903,7 @@ Route::prefix('web')->group(function () {
         // Tour Reviews (member)
         Route::prefix('reviews')->group(function () {
             Route::get('/my', [\App\Http\Controllers\Web\WebTourReviewController::class, 'myReviews']);
+            Route::get('/eligible-tours', [\App\Http\Controllers\Web\WebTourReviewController::class, 'eligibleTours']);
             Route::get('/{tourSlug}/can-review', [\App\Http\Controllers\Web\WebTourReviewController::class, 'canReview']);
             Route::post('/{tourSlug}', [\App\Http\Controllers\Web\WebTourReviewController::class, 'store']);
         });
@@ -905,6 +926,15 @@ Route::prefix('web')->group(function () {
             Route::get('/{id}', [\App\Http\Controllers\Web\WebNotificationController::class, 'show']);
             Route::post('/{id}/read', [\App\Http\Controllers\Web\WebNotificationController::class, 'markRead']);
             Route::post('/{id}/claim', [\App\Http\Controllers\Web\WebNotificationController::class, 'claim']);
+        });
+
+        // Quotations (member-facing)
+        Route::prefix('quotations')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Web\WebQuotationController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Web\WebQuotationController::class, 'store']);
+            Route::get('/{id}', [\App\Http\Controllers\Web\WebQuotationController::class, 'show']);
+            Route::post('/{id}/accept', [\App\Http\Controllers\Web\WebQuotationController::class, 'accept']);
+            Route::post('/{id}/decline', [\App\Http\Controllers\Web\WebQuotationController::class, 'decline']);
         });
     });
 });
