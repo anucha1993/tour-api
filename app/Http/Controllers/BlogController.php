@@ -159,19 +159,82 @@ class BlogController extends Controller
         // Increment view count
         $post->increment('view_count');
 
-        // Get related posts from same category
+        $settings = BlogPageSetting::getSettings();
+
+        // Related posts from same category (always returned for backward compat)
+        $relatedLimit = max(1, (int) ($settings->sidebar_related_posts_limit ?? 5));
         $related = BlogPost::with('category:id,name,slug')
             ->published()
             ->where('id', '!=', $post->id)
             ->when($post->category_id, fn($q) => $q->where('category_id', $post->category_id))
             ->orderByDesc('published_at')
-            ->limit(3)
+            ->limit($relatedLimit)
             ->get();
+
+        // Sidebar widgets data (only when enabled to avoid wasted queries)
+        $sidebar = [];
+
+        if ($settings->show_sidebar && $settings->sidebar_show_recent_posts) {
+            $sidebar['recent_posts'] = BlogPost::with('category:id,name,slug')
+                ->published()
+                ->where('id', '!=', $post->id)
+                ->orderByDesc('published_at')
+                ->limit(max(1, (int) ($settings->sidebar_recent_posts_limit ?? 5)))
+                ->get();
+        }
+
+        if ($settings->show_sidebar && $settings->sidebar_show_recommended_tours) {
+            $tourLimit = max(1, (int) ($settings->sidebar_recommended_tours_limit ?? 3));
+            $countryIds = (array) ($post->country_ids ?? []);
+
+            $tourQuery = \App\Models\Tour::query()
+                ->where('status', 'active')
+                ->with(['primaryCountry:id,slug,name_th', 'countries:id,slug,name_th'])
+                ->select('id', 'tour_code', 'title', 'slug', 'cover_image_url', 'custom_cover_image_url', 'cover_image_source', 'view_count', 'primary_country_id');
+
+            // Prefer tours from the same countries as the post
+            if (!empty($countryIds)) {
+                $tourQuery->whereHas('countries', function ($q) use ($countryIds) {
+                    $q->whereIn('countries.id', $countryIds);
+                });
+            }
+
+            $tours = $tourQuery
+                ->orderByDesc('view_count')
+                ->limit($tourLimit)
+                ->get();
+
+            // Fallback: if no country-matched tours found, take top-viewed active tours
+            if ($tours->isEmpty() && !empty($countryIds)) {
+                $tours = \App\Models\Tour::query()
+                    ->where('status', 'active')
+                    ->with(['primaryCountry:id,slug,name_th', 'countries:id,slug,name_th'])
+                    ->select('id', 'tour_code', 'title', 'slug', 'cover_image_url', 'custom_cover_image_url', 'cover_image_source', 'view_count', 'primary_country_id')
+                    ->orderByDesc('view_count')
+                    ->limit($tourLimit)
+                    ->get();
+            }
+
+            $sidebar['recommended_tours'] = $tours->map(function ($t) {
+                $country = $t->primaryCountry ?: $t->countries->first();
+                return [
+                    'id' => $t->id,
+                    'tour_code' => $t->tour_code,
+                    'title' => $t->title,
+                    'slug' => $t->slug,
+                    'cover_image_url' => $t->effective_cover_image_url,
+                    'country_slug' => $country->slug ?? null,
+                    'country_name' => $country->name_th ?? null,
+                ];
+            })->values();
+        }
 
         return response()->json([
             'success' => true,
             'data' => $post,
             'related' => $related,
+            'sidebar' => $sidebar,
+            'settings' => $settings,
         ]);
     }
 
@@ -460,6 +523,19 @@ class BlogController extends Controller
             'seo_description' => 'nullable|string|max:500',
             'seo_keywords' => 'nullable|string|max:500',
             'is_active' => 'sometimes|boolean',
+            // Sidebar settings
+            'show_sidebar' => 'sometimes|boolean',
+            'sidebar_show_author' => 'sometimes|boolean',
+            'sidebar_show_related_posts' => 'sometimes|boolean',
+            'sidebar_show_recent_posts' => 'sometimes|boolean',
+            'sidebar_show_recommended_tours' => 'sometimes|boolean',
+            'sidebar_show_back_button' => 'sometimes|boolean',
+            'sidebar_related_posts_limit' => 'sometimes|integer|min:1|max:20',
+            'sidebar_recent_posts_limit' => 'sometimes|integer|min:1|max:20',
+            'sidebar_recommended_tours_limit' => 'sometimes|integer|min:1|max:10',
+            'sidebar_recommended_tours_title' => 'nullable|string|max:100',
+            'sidebar_related_posts_title' => 'nullable|string|max:100',
+            'sidebar_recent_posts_title' => 'nullable|string|max:100',
         ]);
 
         $settings->update($validated);

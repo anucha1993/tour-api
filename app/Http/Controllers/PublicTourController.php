@@ -12,6 +12,8 @@ use App\Models\Country;
 use App\Models\City;
 use App\Models\Transport;
 use App\Models\FestivalHoliday;
+use App\Models\BlogPost;
+use App\Models\GroupTourPortfolio;
 use App\Services\PointService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -753,6 +755,12 @@ class PublicTourController extends Controller
             fn() => $this->getInternationalFilterOptions($setting, $countryId, $cityId)
         );
 
+        // Build sidebar payload (only on first page request, when sidebar is enabled)
+        $sidebar = null;
+        if (!$skipFilters && $setting->show_sidebar) {
+            $sidebar = $this->buildInternationalSidebar($setting, $countryId);
+        }
+
         return response()->json([
             'success' => true,
             'data' => $formattedTours,
@@ -787,12 +795,155 @@ class PublicTourController extends Controller
                 'cover_image_position' => $countryCover?->image_position ?? $setting->cover_image_position ?? 'center',
                 'hero_text' => $countryCover?->hero_text ?? $setting->hero_text,
                 'pagination_mode' => $setting->pagination_mode ?? 'page',
+                'show_sidebar' => (bool) ($setting->show_sidebar ?? true),
+                'sidebar_show_blog_posts' => (bool) ($setting->sidebar_show_blog_posts ?? true),
+                'sidebar_show_popular_tours' => (bool) ($setting->sidebar_show_popular_tours ?? true),
+                'sidebar_show_contact' => (bool) ($setting->sidebar_show_contact ?? true),
+                'sidebar_show_portfolios' => (bool) ($setting->sidebar_show_portfolios ?? false),
+                'sidebar_blog_posts_title' => $setting->sidebar_blog_posts_title ?? 'บทความท่องเที่ยว',
+                'sidebar_popular_tours_title' => $setting->sidebar_popular_tours_title ?? 'ทัวร์ยอดนิยม',
+                'sidebar_contact_title' => $setting->sidebar_contact_title ?? 'ติดต่อสอบถาม',
+                'sidebar_portfolios_title' => $setting->sidebar_portfolios_title ?? 'ผลงานที่ผ่านมา',
             ],
+            'sidebar' => $sidebar,
             'active_filters' => $skipFilters ? null : [
                 'country' => $countryId ? Country::find($countryId, ['id', 'name_th', 'name_en', 'slug', 'iso2']) : null,
                 'city' => $cityId ? City::find($cityId, ['id', 'name_th', 'name_en', 'slug', 'country_id']) : null,
             ],
         ]);
+    }
+
+    /**
+     * Build sidebar payload for international tours listing page
+     */
+    private function buildInternationalSidebar(InternationalTourSetting $setting, ?int $countryId): array
+    {
+        $payload = [];
+
+        // Blog posts about this country
+        if ($setting->sidebar_show_blog_posts) {
+            $limit = (int) ($setting->sidebar_blog_posts_limit ?? 5);
+            $query = BlogPost::published()
+                ->select('id', 'title', 'slug', 'cover_image_url', 'published_at', 'reading_time_min', 'country_ids')
+                ->orderByDesc('published_at')
+                ->limit($limit);
+
+            if ($countryId) {
+                $query->whereJsonContains('country_ids', $countryId);
+            }
+
+            $posts = $query->get()->map(fn ($p) => [
+                'id' => $p->id,
+                'title' => $p->title,
+                'slug' => $p->slug,
+                'cover_image_url' => $p->cover_image_url,
+                'published_at' => $p->published_at?->toIso8601String(),
+                'reading_time_min' => $p->reading_time_min,
+            ]);
+
+            // Fallback to latest published posts if no country-specific results
+            if ($countryId && $posts->isEmpty()) {
+                $posts = BlogPost::published()
+                    ->select('id', 'title', 'slug', 'cover_image_url', 'published_at', 'reading_time_min')
+                    ->orderByDesc('published_at')
+                    ->limit($limit)
+                    ->get()
+                    ->map(fn ($p) => [
+                        'id' => $p->id,
+                        'title' => $p->title,
+                        'slug' => $p->slug,
+                        'cover_image_url' => $p->cover_image_url,
+                        'published_at' => $p->published_at?->toIso8601String(),
+                        'reading_time_min' => $p->reading_time_min,
+                    ]);
+            }
+
+            $payload['blog_posts'] = $posts->values();
+        }
+
+        // Popular tours (top viewed) in this country
+        if ($setting->sidebar_show_popular_tours) {
+            $limit = (int) ($setting->sidebar_popular_tours_limit ?? 3);
+            $mode = $setting->sidebar_popular_tours_mode ?: 'popular';
+
+            $toursQuery = Tour::query()
+                ->where('status', 'active')
+                ->with(['primaryCountry:id,slug,name_th'])
+                ->limit($limit);
+
+            if ($mode === 'manual') {
+                $codes = array_filter(array_map('trim', explode(',', (string) ($setting->sidebar_popular_tours_codes ?? ''))));
+                if (!empty($codes)) {
+                    $toursQuery->where(function ($q) use ($codes) {
+                        $q->whereIn('tour_code', $codes)
+                          ->orWhereIn('wholesaler_tour_code', $codes);
+                    });
+                    // Preserve admin's specified order
+                    $orderExpr = 'FIELD(tour_code,' . implode(',', array_map(fn ($c) => "'" . addslashes($c) . "'", $codes)) . ')';
+                    $toursQuery->orderByRaw($orderExpr);
+                } else {
+                    // No codes provided — return empty list
+                    $toursQuery->whereRaw('1=0');
+                }
+            } else {
+                if ($countryId) {
+                    $toursQuery->where(function ($q) use ($countryId) {
+                        $q->where('primary_country_id', $countryId)
+                          ->orWhereHas('countries', fn ($qq) => $qq->where('countries.id', $countryId));
+                    });
+                }
+                if ($mode === 'latest') {
+                    $toursQuery->orderByDesc('created_at');
+                } else {
+                    $toursQuery->orderByDesc('view_count');
+                }
+            }
+
+            $payload['popular_tours'] = $toursQuery->get()->map(fn ($t) => [
+                'id' => $t->id,
+                'slug' => $t->slug,
+                'tour_code' => $t->tour_code,
+                'title' => $t->title,
+                'cover_image_url' => $t->effective_cover_image_url,
+                'duration_days' => $t->duration_days,
+                'duration_nights' => $t->duration_nights,
+                'min_price' => $t->min_price,
+                'display_price' => $t->display_price,
+                'country_slug' => $t->primaryCountry?->slug,
+                'country_name' => $t->primaryCountry?->name_th,
+            ])->values();
+        }
+
+        // Contact info
+        if ($setting->sidebar_show_contact) {
+            $payload['contact'] = [
+                'title' => $setting->sidebar_contact_title ?? 'ติดต่อสอบถาม',
+                'phone' => $setting->sidebar_contact_phone,
+                'line' => $setting->sidebar_contact_line,
+                'text' => $setting->sidebar_contact_text,
+            ];
+        }
+
+        // Past portfolios from group tour page
+        if ($setting->sidebar_show_portfolios) {
+            $limit = (int) ($setting->sidebar_portfolios_limit ?? 3);
+            $payload['portfolios'] = GroupTourPortfolio::active()
+                ->orderBy('sort_order')
+                ->orderByDesc('created_at')
+                ->limit($limit)
+                ->get()
+                ->map(fn ($p) => [
+                    'id' => $p->id,
+                    'title' => $p->title,
+                    'caption' => $p->caption,
+                    'group_size' => $p->group_size,
+                    'destination' => $p->destination,
+                    'image_url' => $p->image_url,
+                    'group_type' => $p->group_type,
+                ])->values();
+        }
+
+        return $payload;
     }
 
     /**

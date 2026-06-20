@@ -16,10 +16,31 @@ class BlogPageSetting extends Model
         'seo_description',
         'seo_keywords',
         'is_active',
+        'show_sidebar',
+        'sidebar_show_author',
+        'sidebar_show_related_posts',
+        'sidebar_show_recent_posts',
+        'sidebar_show_recommended_tours',
+        'sidebar_show_back_button',
+        'sidebar_related_posts_limit',
+        'sidebar_recent_posts_limit',
+        'sidebar_recommended_tours_limit',
+        'sidebar_recommended_tours_title',
+        'sidebar_related_posts_title',
+        'sidebar_recent_posts_title',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'show_sidebar' => 'boolean',
+        'sidebar_show_author' => 'boolean',
+        'sidebar_show_related_posts' => 'boolean',
+        'sidebar_show_recent_posts' => 'boolean',
+        'sidebar_show_recommended_tours' => 'boolean',
+        'sidebar_show_back_button' => 'boolean',
+        'sidebar_related_posts_limit' => 'integer',
+        'sidebar_recent_posts_limit' => 'integer',
+        'sidebar_recommended_tours_limit' => 'integer',
     ];
 
     public static function getSettings(): self

@@ -42,6 +42,23 @@ class InternationalTourSetting extends Model
         'filter_advanced',
         'is_active',
         'sort_order',
+        'show_sidebar',
+        'sidebar_show_blog_posts',
+        'sidebar_show_popular_tours',
+        'sidebar_show_contact',
+        'sidebar_blog_posts_limit',
+        'sidebar_popular_tours_limit',
+        'sidebar_blog_posts_title',
+        'sidebar_popular_tours_title',
+        'sidebar_contact_title',
+        'sidebar_contact_phone',
+        'sidebar_contact_line',
+        'sidebar_contact_text',
+        'sidebar_show_portfolios',
+        'sidebar_portfolios_limit',
+        'sidebar_portfolios_title',
+        'sidebar_popular_tours_mode',
+        'sidebar_popular_tours_codes',
     ];
 
     protected $casts = [
@@ -67,6 +84,14 @@ class InternationalTourSetting extends Model
         'filter_advanced' => 'boolean',
         'is_active' => 'boolean',
         'sort_order' => 'integer',
+        'show_sidebar' => 'boolean',
+        'sidebar_show_blog_posts' => 'boolean',
+        'sidebar_show_popular_tours' => 'boolean',
+        'sidebar_show_contact' => 'boolean',
+        'sidebar_blog_posts_limit' => 'integer',
+        'sidebar_popular_tours_limit' => 'integer',
+        'sidebar_show_portfolios' => 'boolean',
+        'sidebar_portfolios_limit' => 'integer',
     ];
 
     // Reuse condition types from TourTab
