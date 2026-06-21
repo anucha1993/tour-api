@@ -162,6 +162,7 @@ Route::get('tours/detail/{slug}/related', [PublicTourController::class, 'related
 
 // Public Tour Reviews (for tour-web)
 Route::get('reviews/featured', [\App\Http\Controllers\Web\WebTourReviewController::class, 'featured']);
+Route::get('reviews/homepage', [\App\Http\Controllers\Web\WebTourReviewController::class, 'homepage']);
 Route::get('reviews/all', [\App\Http\Controllers\Web\WebTourReviewController::class, 'listAll']);
 Route::get('reviews/page-settings', [\App\Http\Controllers\Web\WebTourReviewController::class, 'publicPageSettings']);
 Route::get('reviews/{reviewId}', [\App\Http\Controllers\Web\WebTourReviewController::class, 'show'])->where('reviewId', '[0-9]+');

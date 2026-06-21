@@ -59,6 +59,10 @@ class InternationalTourSetting extends Model
         'sidebar_portfolios_title',
         'sidebar_popular_tours_mode',
         'sidebar_popular_tours_codes',
+        'detail_country_sidebar_enabled',
+        'detail_country_sidebar_title',
+        'detail_country_sidebar_limit',
+        'detail_country_sidebar_sort',
     ];
 
     protected $casts = [
@@ -92,6 +96,8 @@ class InternationalTourSetting extends Model
         'sidebar_popular_tours_limit' => 'integer',
         'sidebar_show_portfolios' => 'boolean',
         'sidebar_portfolios_limit' => 'integer',
+        'detail_country_sidebar_enabled' => 'boolean',
+        'detail_country_sidebar_limit' => 'integer',
     ];
 
     // Reuse condition types from TourTab

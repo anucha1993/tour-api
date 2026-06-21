@@ -724,6 +724,13 @@ class TourReviewAdminController extends Controller
             'seo_description' => 'nullable|string|max:500',
             'seo_keywords' => 'nullable|string|max:500',
             'is_active' => 'sometimes|boolean',
+            'homepage_enabled' => 'sometimes|boolean',
+            'homepage_title' => 'sometimes|string|max:255',
+            'homepage_subtitle' => 'nullable|string|max:500',
+            'homepage_mode' => 'sometimes|string|in:latest,manual',
+            'homepage_limit' => 'sometimes|integer|min:1|max:30',
+            'homepage_review_ids' => 'nullable|array',
+            'homepage_review_ids.*' => 'integer',
         ]);
 
         $settings->update($validated);

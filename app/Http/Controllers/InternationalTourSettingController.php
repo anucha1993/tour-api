@@ -88,6 +88,10 @@ class InternationalTourSettingController extends Controller
             'sidebar_portfolios_title' => 'nullable|string|max:100',
             'sidebar_popular_tours_mode' => 'nullable|string|in:popular,latest,manual',
             'sidebar_popular_tours_codes' => 'nullable|string|max:1000',
+            'detail_country_sidebar_enabled' => 'boolean',
+            'detail_country_sidebar_title' => 'nullable|string|max:100',
+            'detail_country_sidebar_limit' => 'integer|min:1|max:20',
+            'detail_country_sidebar_sort' => 'nullable|string|in:same_city,popular,price_asc,latest',
         ]);
 
         if (empty($validated['slug'])) {
@@ -168,6 +172,10 @@ class InternationalTourSettingController extends Controller
             'sidebar_portfolios_title' => 'nullable|string|max:100',
             'sidebar_popular_tours_mode' => 'nullable|string|in:popular,latest,manual',
             'sidebar_popular_tours_codes' => 'nullable|string|max:1000',
+            'detail_country_sidebar_enabled' => 'boolean',
+            'detail_country_sidebar_title' => 'nullable|string|max:100',
+            'detail_country_sidebar_limit' => 'integer|min:1|max:20',
+            'detail_country_sidebar_sort' => 'nullable|string|in:same_city,popular,price_asc,latest',
         ]);
 
         $internationalTourSetting->update($validated);
@@ -565,6 +573,10 @@ class InternationalTourSettingController extends Controller
                     'cover_image_url' => null,
                     'cover_image_position' => 'center',
                     'hero_text' => null,
+                    'detail_country_sidebar_enabled' => true,
+                    'detail_country_sidebar_title' => null,
+                    'detail_country_sidebar_limit' => 8,
+                    'detail_country_sidebar_sort' => 'same_city',
                 ],
             ]);
         }
@@ -596,6 +608,10 @@ class InternationalTourSettingController extends Controller
                 'cover_image_url' => $setting->cover_image_url,
                 'cover_image_position' => $setting->cover_image_position ?? 'center',
                 'hero_text' => $setting->hero_text,
+                'detail_country_sidebar_enabled' => $setting->detail_country_sidebar_enabled ?? true,
+                'detail_country_sidebar_title' => $setting->detail_country_sidebar_title,
+                'detail_country_sidebar_limit' => $setting->detail_country_sidebar_limit ?? 8,
+                'detail_country_sidebar_sort' => $setting->detail_country_sidebar_sort ?? 'same_city',
             ],
         ]);
     }

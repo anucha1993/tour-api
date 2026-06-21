@@ -335,6 +335,54 @@ class WebTourReviewController extends Controller
     }
 
     /**
+     * Public: Homepage reviews section (controlled by admin settings)
+     */
+    public function homepage()
+    {
+        $settings = ReviewPageSetting::getSettings();
+
+        // Section disabled from admin
+        if (!$settings->homepage_enabled) {
+            return response()->json([
+                'success' => true,
+                'enabled' => false,
+                'title' => $settings->homepage_title,
+                'subtitle' => $settings->homepage_subtitle,
+                'data' => [],
+            ]);
+        }
+
+        $limit = max(1, min((int) ($settings->homepage_limit ?: 10), 30));
+        $with = ['tour:id,title,slug,tour_code,cover_image_url', 'images'];
+
+        if ($settings->homepage_mode === 'manual' && !empty($settings->homepage_review_ids)) {
+            $ids = array_values(array_filter(array_map('intval', $settings->homepage_review_ids)));
+
+            $reviews = TourReview::approved()
+                ->whereIn('id', $ids)
+                ->with($with)
+                ->get()
+                // Keep the admin-defined order
+                ->sortBy(fn ($r) => array_search($r->id, $ids))
+                ->values();
+        } else {
+            $reviews = TourReview::approved()
+                ->with($with)
+                ->orderByDesc('created_at')
+                ->limit($limit)
+                ->get();
+        }
+
+        return response()->json([
+            'success' => true,
+            'enabled' => true,
+            'title' => $settings->homepage_title,
+            'subtitle' => $settings->homepage_subtitle,
+            'data' => $reviews,
+        ]);
+    }
+
+    /**
      * Submit a review (authenticated member)
      */
     public function store(Request $request, $tourSlug)

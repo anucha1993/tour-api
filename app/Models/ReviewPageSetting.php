@@ -16,10 +16,19 @@ class ReviewPageSetting extends Model
         'seo_description',
         'seo_keywords',
         'is_active',
+        'homepage_enabled',
+        'homepage_title',
+        'homepage_subtitle',
+        'homepage_mode',
+        'homepage_limit',
+        'homepage_review_ids',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'homepage_enabled' => 'boolean',
+        'homepage_limit' => 'integer',
+        'homepage_review_ids' => 'array',
     ];
 
     public static function getSettings(): self
@@ -29,6 +38,11 @@ class ReviewPageSetting extends Model
             'hero_subtitle' => 'เสียงจากลูกค้าที่ไว้วางใจเดินทางกับเรา อ่านประสบการณ์จริงจากผู้เดินทาง',
             'hero_image_position' => 'center',
             'is_active' => true,
+            'homepage_enabled' => true,
+            'homepage_title' => 'รีวิวจากลูกค้า',
+            'homepage_subtitle' => 'เสียงจากลูกค้าที่ไว้วางใจเดินทางกับเรา',
+            'homepage_mode' => 'latest',
+            'homepage_limit' => 10,
         ]);
     }
 }
