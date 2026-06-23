@@ -303,6 +303,139 @@ class OtpService
     }
 
     /**
+     * Request OTP via email (uses SMTP from Setting)
+     */
+    public function requestEmailOtp(
+        string $email,
+        string $purpose = 'booking',
+        ?string $ip = null,
+        ?string $userAgent = null,
+        ?int $webMemberId = null
+    ): array {
+        if (!$this->enabled) {
+            return [
+                'success' => false,
+                'error' => 'disabled',
+                'message' => 'ระบบ OTP ถูกปิดใช้งานชั่วคราว',
+            ];
+        }
+
+        $email = strtolower(trim($email));
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return [
+                'success' => false,
+                'error' => 'invalid_email',
+                'message' => 'รูปแบบอีเมลไม่ถูกต้อง',
+            ];
+        }
+
+        if (OtpRequest::isRateLimitedByEmail($email)) {
+            return [
+                'success' => false,
+                'error' => 'rate_limited',
+                'message' => 'ขอ OTP บ่อยเกินไป กรุณารอสักครู่',
+            ];
+        }
+
+        if ($ip && OtpRequest::isRateLimitedByIp($ip)) {
+            return [
+                'success' => false,
+                'error' => 'rate_limited',
+                'message' => 'มีการขอ OTP มากเกินไป กรุณารอสักครู่',
+            ];
+        }
+
+        $smtpConfig = Setting::get('smtp_config');
+        if (!$smtpConfig || empty($smtpConfig['host']) || empty($smtpConfig['enabled'])) {
+            return [
+                'success' => false,
+                'error' => 'smtp_not_configured',
+                'message' => 'ระบบส่งอีเมลยังไม่พร้อมใช้งาน กรุณาเลือกยืนยันผ่านเบอร์โทรแทน',
+            ];
+        }
+
+        $otpCode = $this->generateOtpCode($this->defaultDigits);
+        $subject = $this->getEmailSubject($purpose);
+        $bodyHtml = $this->getEmailBody($purpose, $otpCode);
+
+        try {
+            $password = '';
+            if (!empty($smtpConfig['password'])) {
+                try {
+                    $password = decrypt($smtpConfig['password']);
+                } catch (\Exception $e) {
+                    $password = $smtpConfig['password'];
+                }
+            }
+
+            $useTls = ($smtpConfig['encryption'] ?? '') === 'ssl';
+
+            $transport = new \Symfony\Component\Mailer\Transport\Smtp\EsmtpTransport(
+                $smtpConfig['host'],
+                (int) $smtpConfig['port'],
+                $useTls
+            );
+
+            if (!empty($smtpConfig['username'])) {
+                $transport->setUsername($smtpConfig['username']);
+            }
+            if (!empty($password)) {
+                $transport->setPassword($password);
+            }
+
+            $mailer = new \Symfony\Component\Mailer\Mailer($transport);
+
+            $message = (new \Symfony\Component\Mime\Email())
+                ->from(new \Symfony\Component\Mime\Address(
+                    $smtpConfig['from_address'] ?? 'noreply@nexttrip.asia',
+                    $smtpConfig['from_name'] ?? 'NextTrip'
+                ))
+                ->to($email)
+                ->subject($subject)
+                ->html($bodyHtml);
+
+            $mailer->send($message);
+
+            $otpRequest = OtpRequest::create([
+                'email' => $email,
+                'channel' => 'email',
+                'message_id' => 'email-' . uniqid(),
+                'otp_code' => bcrypt($otpCode),
+                'ttl' => $this->defaultTtl,
+                'expires_at' => now()->addSeconds($this->defaultTtl),
+                'purpose' => $purpose,
+                'ip_address' => $ip,
+                'user_agent' => $userAgent,
+                'web_member_id' => $webMemberId,
+            ]);
+
+            $result = [
+                'success' => true,
+                'message' => 'ส่ง OTP ไปยังอีเมล ' . $this->maskEmail($email) . ' แล้ว',
+                'otp_request_id' => $otpRequest->id,
+                'expires_in' => $this->defaultTtl,
+            ];
+
+            if ($this->debugMode) {
+                $result['debug_otp'] = $otpCode;
+            }
+
+            return $result;
+        } catch (\Exception $e) {
+            Log::error('Email OTP send failed', [
+                'email' => $email,
+                'error' => $e->getMessage(),
+            ]);
+
+            return [
+                'success' => false,
+                'error' => 'send_failed',
+                'message' => 'ไม่สามารถส่งอีเมลได้ กรุณาลองใหม่หรือเลือกยืนยันผ่านเบอร์โทร',
+            ];
+        }
+    }
+
+    /**
      * Verify OTP (local verification)
      */
     public function verifyOtp(int $otpRequestId, string $otp): array
@@ -418,5 +551,58 @@ class OtpService
         }
         
         return substr($phone, 0, 3) . '****' . substr($phone, -4);
+    }
+
+    /**
+     * Mask email for display (john.doe@example.com -> j***e@example.com)
+     */
+    private function maskEmail(string $email): string
+    {
+        $parts = explode('@', $email);
+        if (count($parts) !== 2) return $email;
+        $local = $parts[0];
+        $len = strlen($local);
+        if ($len <= 2) return $email;
+        return substr($local, 0, 1) . str_repeat('*', max(1, $len - 2)) . substr($local, -1) . '@' . $parts[1];
+    }
+
+    /**
+     * Get email subject by purpose
+     */
+    private function getEmailSubject(string $purpose): string
+    {
+        return match ($purpose) {
+            'register' => 'รหัส OTP สมัครสมาชิก NextTrip',
+            'login' => 'รหัส OTP เข้าสู่ระบบ NextTrip',
+            'reset_password' => 'รหัส OTP รีเซ็ตรหัสผ่าน NextTrip',
+            'booking' => 'รหัส OTP สำหรับจองทัวร์ NextTrip',
+            default => 'รหัส OTP ของคุณ',
+        };
+    }
+
+    /**
+     * Get email HTML body
+     */
+    private function getEmailBody(string $purpose, string $otpCode): string
+    {
+        $label = match ($purpose) {
+            'booking' => 'การจองทัวร์',
+            'register' => 'การสมัครสมาชิก',
+            'login' => 'การเข้าสู่ระบบ',
+            'reset_password' => 'การรีเซ็ตรหัสผ่าน',
+            default => 'การยืนยันตัวตน',
+        };
+
+        return <<<HTML
+<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px;background:#fff;border:1px solid #eee;border-radius:8px">
+    <h2 style="color:#1f2937;margin:0 0 8px">NextTrip</h2>
+    <p style="color:#374151;font-size:14px">รหัส OTP สำหรับ{$label} ของคุณคือ:</p>
+    <div style="font-size:32px;letter-spacing:8px;font-weight:bold;text-align:center;background:#fff7ed;color:#c2410c;padding:16px;border-radius:8px;margin:16px 0">
+        {$otpCode}
+    </div>
+    <p style="color:#6b7280;font-size:13px">รหัสนี้จะหมดอายุภายใน 5 นาที กรุณาอย่าเปิดเผยรหัสนี้แก่ผู้อื่น</p>
+    <p style="color:#9ca3af;font-size:12px;margin-top:24px">หากคุณไม่ได้เป็นผู้ขอ OTP นี้ กรุณาเพิกเฉยต่ออีเมลฉบับนี้</p>
+</div>
+HTML;
     }
 }

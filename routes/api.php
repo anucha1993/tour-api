@@ -847,6 +847,7 @@ Route::prefix('web')->group(function () {
     // Booking routes (public - guest + member)
     Route::prefix('booking')->group(function () {
         Route::post('/request-otp', [WebBookingController::class, 'requestOtp']);
+        Route::post('/request-email-otp', [WebBookingController::class, 'requestEmailOtp']);
         Route::post('/verify-otp', [WebBookingController::class, 'verifyOtp']);
         Route::post('/submit', [WebBookingController::class, 'submit']);
     });

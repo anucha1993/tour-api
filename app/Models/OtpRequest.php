@@ -11,6 +11,8 @@ class OtpRequest extends Model
 
     protected $fillable = [
         'phone_msisdn',
+        'email',
+        'channel',
         'message_id',
         'otp_code',
         'ttl',
@@ -116,6 +118,18 @@ class OtpRequest extends Model
     public static function isRateLimitedByPhone(string $phone, int $maxRequests = 3, int $minutes = 10): bool
     {
         $count = self::where('phone_msisdn', $phone)
+            ->where('created_at', '>=', now()->subMinutes($minutes))
+            ->count();
+
+        return $count >= $maxRequests;
+    }
+
+    /**
+     * Check rate limit for email
+     */
+    public static function isRateLimitedByEmail(string $email, int $maxRequests = 3, int $minutes = 10): bool
+    {
+        $count = self::where('email', $email)
             ->where('created_at', '>=', now()->subMinutes($minutes))
             ->count();
 

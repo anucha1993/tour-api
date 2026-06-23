@@ -52,6 +52,32 @@ class WebBookingController extends Controller
     }
 
     /**
+     * Request OTP via email for booking (guest only)
+     */
+    public function requestEmailOtp(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email|max:191',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $result = $this->otpService->requestEmailOtp(
+            $request->email,
+            'booking',
+            $request->ip(),
+            $request->userAgent()
+        );
+
+        return response()->json($result, $result['success'] ? 200 : 400);
+    }
+
+    /**
      * Verify OTP for booking (guest only)
      */
     public function verifyOtp(Request $request)
