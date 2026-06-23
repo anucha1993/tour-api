@@ -1408,20 +1408,31 @@ HTML;
     public function updateSocialAuthConfig(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'google_enabled' => 'boolean',
-            'google_client_id' => 'nullable|string|max:255',
-            'google_client_secret' => 'nullable|string|max:255',
-            'facebook_enabled' => 'boolean',
-            'facebook_app_id' => 'nullable|string|max:255',
-            'facebook_app_secret' => 'nullable|string|max:255',
-            'line_enabled' => 'boolean',
-            'line_channel_id' => 'nullable|string|max:255',
-            'line_channel_secret' => 'nullable|string|max:255',
+            'google_enabled' => 'sometimes|boolean',
+            'google_client_id' => 'sometimes|nullable|string|max:255',
+            'google_client_secret' => 'sometimes|nullable|string|max:255',
+            'facebook_enabled' => 'sometimes|boolean',
+            'facebook_app_id' => 'sometimes|nullable|string|max:255',
+            'facebook_app_secret' => 'sometimes|nullable|string|max:255',
+            'line_enabled' => 'sometimes|boolean',
+            'line_channel_id' => 'sometimes|nullable|string|max:255',
+            'line_channel_secret' => 'sometimes|nullable|string|max:255',
         ]);
 
         $currentConfig = Setting::get('social_auth_config', []);
 
-        // Keep existing secrets if not provided
+        // Start with current config so unspecified fields are preserved
+        $newConfig = $currentConfig;
+
+        // Apply non-secret fields (boolean toggles)
+        foreach (['google_enabled', 'facebook_enabled', 'line_enabled'] as $field) {
+            if (array_key_exists($field, $validated)) {
+                $newConfig[$field] = $validated[$field];
+            }
+        }
+
+        // Handle secret fields: only update if a non-empty new value was sent;
+        // otherwise keep the existing (already encrypted) value.
         $secretFields = [
             'google_client_id', 'google_client_secret',
             'facebook_app_id', 'facebook_app_secret',
@@ -1429,14 +1440,12 @@ HTML;
         ];
 
         foreach ($secretFields as $field) {
-            if (empty($validated[$field]) && !empty($currentConfig[$field])) {
-                $validated[$field] = $currentConfig[$field];
-            } elseif (!empty($validated[$field])) {
-                $validated[$field] = encrypt($validated[$field]);
+            if (array_key_exists($field, $validated) && !empty($validated[$field])) {
+                $newConfig[$field] = encrypt($validated[$field]);
             }
         }
 
-        Setting::set('social_auth_config', $validated, 'social_auth', 'json');
+        Setting::set('social_auth_config', $newConfig, 'social_auth', 'json');
 
         return response()->json([
             'success' => true,
