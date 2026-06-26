@@ -14,11 +14,38 @@ class WebWishlistController extends Controller
     public function index(Request $request)
     {
         $member = $request->user();
-        
+
         $wishlists = $member->wishlists()
-            ->with(['country', 'featuredImage'])
+            ->with(['primaryCountry:id,name_th,name_en'])
             ->orderBy('web_member_wishlists.created_at', 'desc')
             ->paginate(12);
+
+        $wishlists->getCollection()->transform(function (Tour $tour) {
+            $days = $tour->duration_days ?? $tour->days;
+            $nights = $tour->duration_nights ?? $tour->nights;
+            $duration = ($days && $nights) ? "{$days} วัน {$nights} คืน" : null;
+            $countryName = $tour->primaryCountry?->name_th ?? $tour->primaryCountry?->name_en;
+
+            return [
+                'id' => $tour->pivot?->id ?? $tour->id,
+                'tour_id' => $tour->id,
+                'created_at' => $tour->pivot?->created_at,
+                'tour' => [
+                    'id' => $tour->id,
+                    'name' => $tour->title,
+                    'slug' => $tour->slug,
+                    'tour_code' => $tour->tour_code,
+                    'thumbnail' => $tour->effective_cover_image_url,
+                    'image_url' => $tour->effective_cover_image_url,
+                    'price' => $tour->min_price ? (float) $tour->min_price : null,
+                    'duration' => $duration,
+                    'days' => $days,
+                    'nights' => $nights,
+                    'destination' => $countryName,
+                    'country_name' => $countryName,
+                ],
+            ];
+        });
 
         return response()->json([
             'success' => true,
