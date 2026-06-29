@@ -390,11 +390,11 @@ class InternationalTourSetting extends Model
             }
         }
 
-        // Promotion filter (match by promo name in offers, supports comma-separated)
+        // Promotion filter (match by promo name in offers, supports pipe-separated since names may contain commas)
         if (!empty($filters['promotions'])) {
             $promoNames = is_array($filters['promotions'])
                 ? $filters['promotions']
-                : array_filter(array_map('trim', explode(',', $filters['promotions'])));
+                : array_filter(array_map('trim', explode('|', $filters['promotions'])));
             $query->whereHas('periods.offer', function ($q) use ($promoNames) {
                 $q->where(function ($q2) use ($promoNames) {
                     $q2->whereIn('promo_name', $promoNames)

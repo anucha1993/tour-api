@@ -19,6 +19,7 @@ class Promotion extends Model
         'is_active',
         'sort_order',
         'banner_url',
+        'show_banner',
         'cloudflare_id',
         'link_url',
         'start_date',
@@ -30,6 +31,7 @@ class Promotion extends Model
     protected $casts = [
         'discount_value' => 'decimal:2',
         'is_active' => 'boolean',
+        'show_banner' => 'boolean',
         'sort_order' => 'integer',
         'start_date' => 'date',
         'end_date' => 'date',

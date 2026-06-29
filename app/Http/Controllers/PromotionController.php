@@ -49,6 +49,7 @@ class PromotionController extends Controller
             'type' => 'required|in:discount_amount,discount_percent,free_gift,installment,special',
             'discount_value' => 'nullable|numeric|min:0',
             'is_active' => 'boolean',
+            'show_banner' => 'boolean',
             'sort_order' => 'nullable|integer',
             'link_url' => 'nullable|string|max:500',
             'start_date' => 'nullable|date',
@@ -89,6 +90,7 @@ class PromotionController extends Controller
             'type' => 'in:discount_amount,discount_percent,free_gift,installment,special',
             'discount_value' => 'nullable|numeric|min:0',
             'is_active' => 'boolean',
+            'show_banner' => 'boolean',
             'sort_order' => 'nullable|integer',
             'link_url' => 'nullable|string|max:500',
             'start_date' => 'nullable|date',
@@ -267,10 +269,13 @@ class PromotionController extends Controller
     {
         $limit = $request->integer('limit', 10);
         $type = $request->get('type');
+        $withBannerOnly = $request->boolean('with_banner');
 
-        $query = Promotion::active()
-            ->ordered()
-            ->whereNotNull('banner_url');
+        $query = Promotion::active()->ordered();
+
+        if ($withBannerOnly) {
+            $query->whereNotNull('banner_url')->where('show_banner', true);
+        }
 
         // Filter by date range if start/end dates are set
         $query->where(function ($q) {
@@ -294,12 +299,30 @@ class PromotionController extends Controller
             'type',
             'discount_value',
             'banner_url',
+            'show_banner',
             'link_url',
             'start_date',
             'end_date',
             'badge_text',
             'badge_color',
         ]);
+
+        // Attach tour_ids (distinct tour ids whose offers reference this promotion)
+        if ($promotions->isNotEmpty()) {
+            $promoIds = $promotions->pluck('id');
+            $tourMap = \Illuminate\Support\Facades\DB::table('offers')
+                ->join('periods', 'offers.period_id', '=', 'periods.id')
+                ->whereIn('offers.promotion_id', $promoIds)
+                ->select('offers.promotion_id', 'periods.tour_id')
+                ->distinct()
+                ->get()
+                ->groupBy('promotion_id')
+                ->map(fn ($rows) => $rows->pluck('tour_id')->unique()->values()->all());
+
+            $promotions->each(function ($p) use ($tourMap) {
+                $p->tour_ids = $tourMap[$p->id] ?? [];
+            });
+        }
 
         return response()->json([
             'success' => true,
