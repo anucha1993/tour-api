@@ -698,7 +698,23 @@ class PublicTourController extends Controller
             $pinnedTourCodes = array_filter(array_map('trim', explode(',', $countryCover->pinned_tour_codes)));
         }
 
-        if (!empty($pinnedTourCodes) && $tours->currentPage() === 1) {
+        // Skip pinning when user has narrowing filters active — otherwise pinned tours
+        // would override the filter and show non-matching results at the top
+        $hasNarrowingFilter = !empty($filters['search'])
+            || !empty($filters['airline_id'])
+            || !empty($filters['departure_month'])
+            || !empty($filters['departure_date_from'])
+            || !empty($filters['departure_date_to'])
+            || !empty($filters['return_date'])
+            || !empty($filters['price_min'])
+            || !empty($filters['price_max'])
+            || !empty($filters['min_seats'])
+            || !empty($filters['festival_id'])
+            || !empty($filters['promotions'])
+            || !empty($filters['theme'])
+            || !empty($filters['special_highlight']);
+
+        if (!empty($pinnedTourCodes) && $tours->currentPage() === 1 && !$hasNarrowingFilter) {
             $pinnedTourIds = $formattedTours->pluck('id')->toArray();
 
             // Fetch pinned tours that aren't already in the current page

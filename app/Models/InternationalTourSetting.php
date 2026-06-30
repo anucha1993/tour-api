@@ -395,10 +395,17 @@ class InternationalTourSetting extends Model
             $promoNames = is_array($filters['promotions'])
                 ? $filters['promotions']
                 : array_filter(array_map('trim', explode('|', $filters['promotions'])));
-            $query->whereHas('periods.offer', function ($q) use ($promoNames) {
+            $today = now()->toDateString();
+            $query->whereHas('periods.offer', function ($q) use ($promoNames, $today) {
                 $q->where(function ($q2) use ($promoNames) {
                     $q2->whereIn('promo_name', $promoNames)
                        ->orWhereHas('promotion', fn($q3) => $q3->whereIn('name', $promoNames));
+                })
+                ->where(function ($q2) use ($today) {
+                    $q2->whereNull('promo_start_date')->orWhereDate('promo_start_date', '<=', $today);
+                })
+                ->where(function ($q2) use ($today) {
+                    $q2->whereNull('promo_end_date')->orWhereDate('promo_end_date', '>=', $today);
                 });
             });
         }
