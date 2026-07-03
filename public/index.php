@@ -14,14 +14,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     $allowedOrigins = [
         'http://localhost:3000',
         'http://127.0.0.1:3000',
-        'https://nexttrip.asia',
-        'https://www.nexttrip.asia',
-        'https://admin.nexttrip.asia',
-        'https://backend.nexttrip.asia',
-        'https://nexttrip.asia',
-        'https://www.nexttrip.asia',
-        'https://admin.nexttrip.asia',
-        'https://backend.nexttrip.asia',
+        'https://nexttripholiday.com',
+        'https://www.nexttripholiday.com',
+        'https://admin.nexttripholiday.com',
+        'https://backend.nexttripholiday.com',
+        'https://nexttripholiday.com',
+        'https://www.nexttripholiday.com',
+        'https://admin.nexttripholiday.com',
+        'https://backend.nexttripholiday.com',
     ];
 
     $origin = $_SERVER['HTTP_ORIGIN'] ?? '';

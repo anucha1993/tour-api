@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal
 
 set PHP="C:\Program Files (x86)\Plesk\Additional\PleskPHP82\php.exe"
-set API_DIR=C:\inetpub\vhosts\nexttrip.asia\api.nexttrip.asia
+set API_DIR=C:\inetpub\vhosts\nexttripholiday.com\api.nexttripholiday.com
 
 :: Change to API directory
 cd /d %API_DIR%

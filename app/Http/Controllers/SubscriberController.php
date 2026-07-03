@@ -720,7 +720,7 @@ class SubscriberController extends Controller
         }
 
         try {
-            $frontendUrl = rtrim(env('FRONTEND_URL', 'https://nexttrip.asia'), '/');
+            $frontendUrl = rtrim(env('FRONTEND_URL', 'https://nexttripholiday.com'), '/');
             $confirmUrl = $frontendUrl . '/subscribe/confirm?token=' . $token;
 
             $password = '';
@@ -754,7 +754,7 @@ class SubscriberController extends Controller
                 . "หากคุณไม่ได้สมัคร กรุณาเพิกเฉยอีเมลนี้";
 
             // API URL for List-Unsubscribe header (Gmail sends POST here directly)
-            $apiUrl = rtrim(env('APP_URL', 'https://api.nexttrip.asia'), '/') . '/api';
+            $apiUrl = rtrim(env('APP_URL', 'https://api.nexttripholiday.com'), '/') . '/api';
             $apiUnsubscribeUrl = $apiUrl . '/subscribers/unsubscribe/' . $subscriber->unsubscribe_token;
 
             $email = (new \Symfony\Component\Mime\Email())
@@ -802,7 +802,7 @@ class SubscriberController extends Controller
         }
 
         try {
-            $frontendUrl = rtrim(env('FRONTEND_URL', 'https://nexttrip.asia'), '/');
+            $frontendUrl = rtrim(env('FRONTEND_URL', 'https://nexttripholiday.com'), '/');
             $unsubscribeUrl = $frontendUrl . '/subscribe/unsubscribe?token=' . $subscriber->unsubscribe_token;
 
             $password = '';
@@ -832,7 +832,7 @@ class SubscriberController extends Controller
             $html = $this->getWelcomeEmailHtml($frontendUrl, $unsubscribeUrl);
 
             // API URL for List-Unsubscribe header (Gmail sends POST here directly)
-            $apiUrl = rtrim(env('APP_URL', 'https://api.nexttrip.asia'), '/') . '/api';
+            $apiUrl = rtrim(env('APP_URL', 'https://api.nexttripholiday.com'), '/') . '/api';
             $apiUnsubscribeUrl = $apiUrl . '/subscribers/unsubscribe/' . $subscriber->unsubscribe_token;
 
             $email = (new \Symfony\Component\Mime\Email())

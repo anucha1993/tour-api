@@ -6,15 +6,15 @@
 #
 # Setup:
 #   1. Plesk > Scheduled Tasks (Cron Jobs)
-#   2. Command: bash /var/www/vhosts/nexttrip.asia/api.nexttrip.asia/start_workers_linux.sh
+#   2. Command: bash /var/www/vhosts/nexttripholiday.com/api.nexttripholiday.com/start_workers_linux.sh
 #   3. Run as: domain owner
 #   4. Schedule: 0 * * * *
 # ===========================================
 
 # ===== Config =====
-APP_DIR="/var/www/vhosts/nexttrip.asia/api.nexttrip.asia"
+APP_DIR="/var/www/vhosts/nexttripholiday.com/api.nexttripholiday.com"
 PHP_BIN="/opt/plesk/php/8.4/bin/php"
-LOG_DIR="/var/www/vhosts/nexttrip.asia/logs"
+LOG_DIR="/var/www/vhosts/nexttripholiday.com/logs"
 LOG_FILE="${LOG_DIR}/worker.log"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S %z')
 

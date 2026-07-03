@@ -45,7 +45,7 @@ Server: **Plesk Linux + PHP 8.4**
 
 | Field | Value |
 |-------|-------|
-| Command | `bash /var/www/vhosts/nexttrip.asia/api.nexttrip.asia/start_workers_linux.sh` |
+| Command | `bash /var/www/vhosts/nexttripholiday.com/api.nexttripholiday.com/start_workers_linux.sh` |
 | Run as | domain owner หรือ root |
 | Schedule | `0 * * * *` (ทุก 1 ชั่วโมง) |
 
@@ -58,7 +58,7 @@ Script จะตรวจสอบว่า worker ยังรันอยู�
 | Field | Value |
 |-------|-------|
 | Task Type | Run a command |
-| Command | `/opt/plesk/php/8.4/bin/php /var/www/vhosts/nexttrip.asia/api.nexttrip.asia/artisan queue:work database --queue=default,periods --stop-when-empty --max-time=55` |
+| Command | `/opt/plesk/php/8.4/bin/php /var/www/vhosts/nexttripholiday.com/api.nexttripholiday.com/artisan queue:work database --queue=default,periods --stop-when-empty --max-time=55` |
 | Run | Cron style `* * * * *` (ทุก 1 นาที) |
 
 #### Task 2: Queue Worker (media)
@@ -66,7 +66,7 @@ Script จะตรวจสอบว่า worker ยังรันอยู�
 | Field | Value |
 |-------|-------|
 | Task Type | Run a command |
-| Command | `/opt/plesk/php/8.4/bin/php /var/www/vhosts/nexttrip.asia/api.nexttrip.asia/artisan queue:work database --queue=media --stop-when-empty --max-time=55` |
+| Command | `/opt/plesk/php/8.4/bin/php /var/www/vhosts/nexttripholiday.com/api.nexttripholiday.com/artisan queue:work database --queue=media --stop-when-empty --max-time=55` |
 | Run | Cron style `* * * * *` (ทุก 1 นาที) |
 
 #### Task 3: Laravel Scheduler
@@ -74,7 +74,7 @@ Script จะตรวจสอบว่า worker ยังรันอยู�
 | Field | Value |
 |-------|-------|
 | Task Type | Run a command |
-| Command | `/opt/plesk/php/8.4/bin/php /var/www/vhosts/nexttrip.asia/api.nexttrip.asia/artisan schedule:run` |
+| Command | `/opt/plesk/php/8.4/bin/php /var/www/vhosts/nexttripholiday.com/api.nexttripholiday.com/artisan schedule:run` |
 | Run | Cron style `* * * * *` (ทุก 1 นาที) |
 
 ### หมายเหตุสำคัญ
@@ -211,12 +211,12 @@ php artisan queue:listen database --queue=default,periods,media
 
 ### Production (Plesk Linux - Cron ทุก 1 นาที)
 ```bash
-/opt/plesk/php/8.4/bin/php /var/www/vhosts/nexttrip.asia/api.nexttrip.asia/artisan queue:work database --queue=default,periods,media --stop-when-empty --max-time=55
+/opt/plesk/php/8.4/bin/php /var/www/vhosts/nexttripholiday.com/api.nexttripholiday.com/artisan queue:work database --queue=default,periods,media --stop-when-empty --max-time=55
 ```
 
 ### Production (Plesk Linux - Background Worker)
 ```bash
-bash /var/www/vhosts/nexttrip.asia/api.nexttrip.asia/start_workers_linux.sh
+bash /var/www/vhosts/nexttripholiday.com/api.nexttripholiday.com/start_workers_linux.sh
 ```
 
 ### Parameters

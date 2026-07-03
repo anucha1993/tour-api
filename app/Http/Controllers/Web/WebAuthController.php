@@ -711,7 +711,7 @@ class WebAuthController extends Controller
         }
 
         try {
-            $frontendUrl = rtrim(env('FRONTEND_URL', 'https://nexttrip.asia'), '/');
+            $frontendUrl = rtrim(env('FRONTEND_URL', 'https://nexttripholiday.com'), '/');
             $resetUrl = $frontendUrl . '/reset-password?token=' . $token;
 
             $password = '';

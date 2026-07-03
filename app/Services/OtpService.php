@@ -387,7 +387,7 @@ class OtpService
 
             $message = (new \Symfony\Component\Mime\Email())
                 ->from(new \Symfony\Component\Mime\Address(
-                    $smtpConfig['from_address'] ?? 'noreply@nexttrip.asia',
+                    $smtpConfig['from_address'] ?? 'noreply@nexttripholiday.com',
                     $smtpConfig['from_name'] ?? 'NextTrip'
                 ))
                 ->to($email)

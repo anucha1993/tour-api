@@ -2,15 +2,15 @@
 # Worker 1: default + periods (sync jobs)
 WORKER1_COUNT=$(pgrep -f 'queue:work.*--queue=default,periods ' | wc -l)
 if [ "$WORKER1_COUNT" -lt 1 ]; then
-    cd C:\inetpub\vhosts\nexttrip.asia
+    cd C:\inetpub\vhosts\nexttripholiday.com
     nohup 'C:\Program Files (x86)\Plesk\Additional\PleskPHP82' queue:work --queue=default,periods --tries=1 --timeout=600 --sleep=3 --max-jobs=100 --max-time=3600 > /dev/null 2>&1 &
-    echo "[Wed Feb 25 22:01:50 +07 2026] Started Worker 1 (default+periods)" >> /var/www/vhosts/nexttrip.asia/logs/worker.log
+    echo "[Wed Feb 25 22:01:50 +07 2026] Started Worker 1 (default+periods)" >> /var/www/vhosts/nexttripholiday.com/logs/worker.log
 fi
 
 # Worker 2: media (media upload jobs)
 WORKER2_COUNT=$(pgrep -f 'queue:work.*--queue=media' | wc -l)
 if [ "$WORKER2_COUNT" -lt 1 ]; then
-    cd  C:\inetpub\vhosts\nexttrip.asia
+    cd  C:\inetpub\vhosts\nexttripholiday.com
     nohup 'C:\Program Files (x86)\Plesk\Additional\PleskPHP82' artisan queue:work --queue=media --tries=2 --timeout=120 --sleep=5 --max-jobs=50 --max-time=3600 > /dev/null 2>&1 &
-    echo "[Wed Feb 25 22:01:50 +07 2026] Started Worker 2 (media)" >> /var/www/vhosts/nexttrip.asia/logs/worker.log
+    echo "[Wed Feb 25 22:01:50 +07 2026] Started Worker 2 (media)" >> /var/www/vhosts/nexttripholiday.com/logs/worker.log
 fi

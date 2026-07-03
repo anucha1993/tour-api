@@ -11,7 +11,7 @@
 # ===== ตั้งค่า Server =====
 SERVER_USER="root"
 SERVER_HOST="147.50.254.113"
-SERVER_PATH="/var/www/vhosts/nexttrip.asia/api.nexttrip.asia"
+SERVER_PATH="/var/www/vhosts/nexttripholiday.com/api.nexttripholiday.com"
 SSH_PORT="22"
 
 # ===== สี =====
@@ -48,7 +48,7 @@ echo -e "${GREEN}Upload complete!${NC}"
 echo -e "${YELLOW}Step 2: Installing & optimizing on server...${NC}"
 
 ssh -p ${SSH_PORT} ${SERVER_USER}@${SERVER_HOST} << 'ENDSSH'
-    cd /var/www/vhosts/nexttrip.asia/api.nexttrip.asia
+    cd /var/www/vhosts/nexttripholiday.com/api.nexttripholiday.com
 
     # Install composer dependencies
     /opt/plesk/php/8.4/bin/php /usr/local/bin/composer install --no-dev --optimize-autoloader --no-interaction
