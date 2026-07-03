@@ -36,15 +36,10 @@ return [
         'https://www.nexttripholiday.com',
         'https://admin.nexttripholiday.com',
         'https://backend.nexttripholiday.com',
-        'https://nexttripholiday.com',
-        'https://www.nexttripholiday.com',
-        'https://admin.nexttripholiday.com',
-        'https://backend.nexttripholiday.com',
     ],
 
     'allowed_origins_patterns' => [
-        '#^https://.*\.nexttrip\.asia$#',
-        '#^https://.*\.nexttrip\.world$#',
+        '#^https://.*\.nexttripholiday\.com$#',
     ],
 
     'allowed_headers' => ['*'],
