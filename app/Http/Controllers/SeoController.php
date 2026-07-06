@@ -6,6 +6,7 @@ use App\Models\SeoSetting;
 use App\Models\SiteContact;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Log;
 use App\Services\CloudflareImagesService;
 
 class SeoController extends Controller
@@ -132,22 +133,26 @@ class SeoController extends Controller
 
         // Delete old image if exists
         if ($seo->og_image_cloudflare_id) {
-            $this->cloudflare->deleteImage($seo->og_image_cloudflare_id);
+            try {
+                $this->cloudflare->delete($seo->og_image_cloudflare_id);
+            } catch (\Exception $e) {
+                Log::warning('CF delete failed: ' . $e->getMessage());
+            }
         }
 
         $file = $request->file('image');
-        $result = $this->cloudflare->uploadImage($file, "seo-og-{$slug}");
+        $result = $this->cloudflare->uploadFromFile($file, "seo-og-{$slug}");
 
-        if (!$result['success']) {
+        if (!$result) {
             return response()->json([
                 'success' => false,
-                'message' => 'อัพโหลดรูปล้มเหลว: ' . ($result['error'] ?? 'Unknown error'),
+                'message' => 'อัพโหลดรูปล้มเหลว',
             ], 500);
         }
 
         $seo->update([
             'og_image_cloudflare_id' => $result['id'],
-            'og_image' => $result['url'],
+            'og_image' => $this->cloudflare->getDisplayUrl($result['id'], 'public'),
         ]);
 
         return response()->json([

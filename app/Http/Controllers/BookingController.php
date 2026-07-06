@@ -128,6 +128,36 @@ class BookingController extends Controller
     }
 
     /**
+     * Delete a booking (admin only)
+     */
+    public function destroy(int $id)
+    {
+        $booking = Booking::find($id);
+        if (!$booking) {
+            return response()->json(['message' => 'ไม่พบข้อมูลการจอง'], 404);
+        }
+
+        // If active flash-sale booking, roll back the sold count
+        if ($booking->flash_sale_item_id && $booking->status !== 'cancelled') {
+            $booking->flashSaleItem?->decrement('quantity_sold');
+        }
+
+        $code = $booking->booking_code;
+        $booking->delete();
+
+        Log::info('Admin deleted booking', [
+            'booking_id' => $id,
+            'booking_code' => $code,
+            'user_id' => \Illuminate\Support\Facades\Auth::id(),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'ลบใบจองสำเร็จ',
+        ]);
+    }
+
+    /**
      * Get booking statistics
      */
     public function statistics()
