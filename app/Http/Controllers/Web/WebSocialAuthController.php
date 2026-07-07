@@ -91,6 +91,9 @@ class WebSocialAuthController extends Controller
                 'redirect_uri' => $redirectUri,
                 'state' => $state,
                 'scope' => 'profile openid email',
+                // Prompt the user to add the LINE Official Account as a friend
+                // during login so we can run the friend-gate afterwards.
+                'bot_prompt' => 'aggressive',
             ]);
         }
 
@@ -205,6 +208,9 @@ class WebSocialAuthController extends Controller
                 'success' => true,
                 'message' => 'เข้าสู่ระบบสำเร็จ',
                 'is_new' => $member->wasRecentlyCreated,
+                // Friend-gate flag for LINE: true=friend, false=not a friend,
+                // null=unknown/not-applicable (non-LINE providers or API failure).
+                'line_friend' => $provider === 'line' ? ($socialUser['line_friend'] ?? null) : null,
                 'member' => [
                     'id' => $member->id,
                     'first_name' => $member->first_name,
@@ -523,6 +529,19 @@ class WebSocialAuthController extends Controller
 
         $profile = $profileResponse->json();
 
+        // Check friendship status with the LINE Official Account (friend-gate).
+        // https://developers.line.biz/en/reference/line-login/#get-friendship-status
+        $friendFlag = null; // null = unknown (API failed); bool otherwise
+        try {
+            $friendshipResponse = \Illuminate\Support\Facades\Http::withToken($accessToken)
+                ->get('https://api.line.me/friendship/v1/status');
+            if ($friendshipResponse->successful()) {
+                $friendFlag = (bool) ($friendshipResponse->json()['friendFlag'] ?? false);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('LINE friendship status check failed', ['error' => $e->getMessage()]);
+        }
+
         // Try to get email from id_token if available
         $email = null;
         $idToken = $tokens['id_token'] ?? null;
@@ -545,6 +564,7 @@ class WebSocialAuthController extends Controller
             'first_name' => $nameParts[0] ?? $displayName,
             'last_name' => $nameParts[1] ?? '',
             'avatar' => $profile['pictureUrl'] ?? null,
+            'line_friend' => $friendFlag,
         ];
     }
 }

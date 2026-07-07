@@ -204,13 +204,12 @@ class TourSyncService
             }
         }
 
-        // Convert array fields to JSON
-        $jsonFields = ['highlights', 'hashtags', 'themes', 'suitable_for', 'departure_airports'];
-        foreach ($jsonFields as $jsonField) {
-            if (isset($tourFields[$jsonField]) && is_array($tourFields[$jsonField])) {
-                $tourFields[$jsonField] = json_encode($tourFields[$jsonField], JSON_UNESCAPED_UNICODE);
-            }
-        }
+        // Normalize array-cast fields to ALWAYS be a proper PHP array before fill().
+        // The Tour model casts these as 'array' and json_encode()s them on save, so:
+        //   - array      → encoded once → correct  '["a","b"]'
+        //   - JSON string → encoded again → DOUBLE  '"[\"a\"]"'  (the old bug)
+        //   - scalar      → wrapped in quotes → '"foo"' (Array.isArray() fails on frontend)
+        $this->normalizeArrayFields($tourFields);
 
         // Set sync metadata
         $tourFields['sync_status'] = 'active';
@@ -222,6 +221,59 @@ class TourSyncService
         }
 
         return $tourFields;
+    }
+
+    /**
+     * Normalize array-cast fields so they are always a clean PHP array before fill()/save().
+     * Prevents double-encoding (array/JSON-string) and scalar-wrapping corruption.
+     *
+     * @param array<string,mixed> $tourFields Passed by reference and mutated in place.
+     */
+    protected function normalizeArrayFields(array &$tourFields): void
+    {
+        $arrayListFields = [
+            'highlights', 'shopping_highlights', 'food_highlights', 'special_highlights',
+            'hashtags', 'keywords', 'themes', 'suitable_for', 'departure_airports',
+        ];
+
+        foreach ($arrayListFields as $field) {
+            if (!array_key_exists($field, $tourFields)) {
+                continue;
+            }
+
+            $value = $tourFields[$field];
+
+            if (is_array($value)) {
+                $tourFields[$field] = array_values($value);
+                continue;
+            }
+
+            if (is_string($value)) {
+                $trimmed = trim($value);
+                if ($trimmed === '') {
+                    $tourFields[$field] = [];
+                    continue;
+                }
+
+                // Unwrap up to 2 levels of JSON encoding (handles previously double-encoded input).
+                $decoded = json_decode($trimmed, true);
+                if (is_string($decoded)) {
+                    $inner = json_decode($decoded, true);
+                    $decoded = $inner !== null ? $inner : $decoded;
+                }
+
+                if (is_array($decoded)) {
+                    $tourFields[$field] = array_values($decoded);
+                } elseif (is_string($decoded)) {
+                    $tourFields[$field] = [$decoded];
+                } else {
+                    $tourFields[$field] = [$trimmed];
+                }
+                continue;
+            }
+
+            unset($tourFields[$field]);
+        }
     }
 
     /**

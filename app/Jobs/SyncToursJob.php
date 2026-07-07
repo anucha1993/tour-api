@@ -1494,7 +1494,7 @@ class SyncToursJob implements ShouldQueue
             // Only dispatch media job if tour doesn't already have an R2 URL
             // (prevents re-uploading every sync when wholesaler sends same external URL)
             $existingPdf = $tourData['_pending_media']['old_pdf_url'] ?? null;
-            $alreadyOnR2 = $existingPdf && str_contains($existingPdf, env('R2_URL', 'r2.dev'));
+            $alreadyOnR2 = $existingPdf && (str_contains($existingPdf, 'r2.dev') || str_contains($existingPdf, 'files.nexttrip.world'));
 
             // FIX: ถ้า branding config เปลี่ยน (เพิ่ม/แก้ header/footer) → ต้อง re-process PDF
             $hasBranding = $config->pdf_header_image || $config->pdf_footer_image;
@@ -1523,7 +1523,7 @@ class SyncToursJob implements ShouldQueue
         // Write back URLs — keep existing R2/Cloudflare URLs if media job was not dispatched
         $existingPdf = $tourData['_pending_media']['old_pdf_url'] ?? null;
         $existingCover = $tourData['_pending_media']['old_cover_image_url'] ?? null;
-        $keepPdf = $existingPdf && str_contains($existingPdf, env('R2_URL', 'r2.dev')) && !$tourData['_pending_media']['pdf_url'];
+        $keepPdf = $existingPdf && (str_contains($existingPdf, 'r2.dev') || str_contains($existingPdf, 'files.nexttrip.world')) && !$tourData['_pending_media']['pdf_url'];
         $keepCover = $existingCover && str_contains($existingCover, 'imagedelivery.net') && !$tourData['_pending_media']['cover_image_url'];
 
         $finalPdfUrl = $keepPdf ? $existingPdf : ($merged['pdf_url'] ?? null);
@@ -1961,10 +1961,13 @@ class SyncToursJob implements ShouldQueue
             $tourFields['duration_nights'] = 0;
         }
         
-        // NOTE: Do NOT json_encode array fields here.
-        // The Tour model has 'array' cast on highlights, hashtags, themes, suitable_for, departure_airports, keywords, etc.
-        // Laravel's array cast automatically calls json_encode() on save.
-        // Manually encoding here would cause DOUBLE-ENCODING (the value gets stored as '"[...]"' instead of '[...]').
+        // Normalize array-cast fields to ALWAYS be a proper PHP array before fill().
+        // The Tour model casts these as 'array', so Laravel json_encode()s them automatically on save.
+        // - If we pass an array   → cast encodes once → correct  '["a","b"]'
+        // - If we pass a JSON str  → cast encodes again → DOUBLE  '"[\"a\"]"'   ← the old bug
+        // - If we pass a scalar    → cast wraps in quotes → '"foo"' (Array.isArray() fails on frontend)
+        // This normalization guarantees a clean single-encoded JSON array every time.
+        $this->normalizeArrayFields($tourFields);
         
         // Set sync metadata (system fields, not from mapping)
         $tourFields['sync_status'] = 'active';
@@ -2297,6 +2300,70 @@ class SyncToursJob implements ShouldQueue
         $tour->recalculateAggregates();
 
         return $result;
+    }
+
+    /**
+     * Normalize array-cast fields so they are ALWAYS a clean PHP array before fill()/save().
+     *
+     * The Tour model casts these columns as 'array', so Laravel will json_encode() them
+     * automatically on save. Passing anything other than a plain array causes corruption:
+     *   - JSON array string  '["a","b"]'  → cast encodes again → double-encoded  '"[\"a\"]"'
+     *   - plain scalar        'foo bar'    → cast wraps         → '"foo bar"' (Array.isArray() fails)
+     *
+     * This guarantees the DB always stores a single-encoded JSON array like ["a","b"].
+     *
+     * @param array<string,mixed> $tourFields  Passed by reference and mutated in place.
+     */
+    protected function normalizeArrayFields(array &$tourFields): void
+    {
+        // List-type array columns on the Tour model (excludes manual_override_fields which is assoc).
+        $arrayListFields = [
+            'highlights', 'shopping_highlights', 'food_highlights', 'special_highlights',
+            'hashtags', 'keywords', 'themes', 'suitable_for', 'departure_airports',
+        ];
+
+        foreach ($arrayListFields as $field) {
+            if (!array_key_exists($field, $tourFields)) {
+                continue;
+            }
+
+            $value = $tourFields[$field];
+
+            // Already a proper array → let the model cast encode it once.
+            if (is_array($value)) {
+                $tourFields[$field] = array_values($value);
+                continue;
+            }
+
+            // String: could be a JSON array string, a JSON-encoded scalar, or plain text.
+            if (is_string($value)) {
+                $trimmed = trim($value);
+                if ($trimmed === '') {
+                    $tourFields[$field] = [];
+                    continue;
+                }
+
+                // Unwrap up to 2 levels of JSON encoding (handles previously double-encoded input).
+                $decoded = json_decode($trimmed, true);
+                if (is_string($decoded)) {
+                    $inner = json_decode($decoded, true);
+                    $decoded = $inner !== null ? $inner : $decoded;
+                }
+
+                if (is_array($decoded)) {
+                    $tourFields[$field] = array_values($decoded);
+                } elseif (is_string($decoded)) {
+                    // Plain (non-JSON) string from a 'direct' mapping → keep as single item.
+                    $tourFields[$field] = [$decoded];
+                } else {
+                    $tourFields[$field] = [$trimmed];
+                }
+                continue;
+            }
+
+            // Any other scalar type → drop it so the cast never receives a non-array.
+            unset($tourFields[$field]);
+        }
     }
 
     /**

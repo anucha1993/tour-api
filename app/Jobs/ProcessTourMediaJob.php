@@ -206,11 +206,12 @@ class ProcessTourMediaJob implements ShouldQueue
     {
         if (!$oldPdfUrl) return;
 
-        $r2Url = env('R2_URL', '');
-        if (!$r2Url || !str_contains($oldPdfUrl, $r2Url)) return;
+        // Only delete files that live on our R2 storage (old r2.dev or new custom domain).
+        if (!str_contains($oldPdfUrl, 'r2.dev') && !str_contains($oldPdfUrl, 'files.nexttrip.world')) return;
 
         try {
-            $r2Path = str_replace(rtrim($r2Url, '/') . '/', '', $oldPdfUrl);
+            // Extract the object key from the URL path (domain-agnostic).
+            $r2Path = ltrim((string) parse_url($oldPdfUrl, PHP_URL_PATH), '/');
             if ($r2Path && Storage::disk('r2')->exists($r2Path)) {
                 Storage::disk('r2')->delete($r2Path);
                 Log::info('ProcessTourMediaJob: Deleted old PDF from R2', [

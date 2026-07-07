@@ -264,69 +264,104 @@ class PromotionController extends Controller
 
     /**
      * Public list of active promotions for website display.
+     *
+     * Defensive: guards against schema columns that may not yet exist on a
+     * given environment (e.g. pending migrations on production) so the public
+     * homepage never receives a 500. If something goes wrong we log the real
+     * cause and return an empty (but successful) payload instead.
      */
     public function publicList(Request $request): JsonResponse
     {
-        $limit = $request->integer('limit', 10);
-        $type = $request->get('type');
-        $withBannerOnly = $request->boolean('with_banner');
+        try {
+            $limit = $request->integer('limit', 10);
+            $type = $request->get('type');
+            $withBannerOnly = $request->boolean('with_banner');
 
-        $query = Promotion::active()->ordered();
+            // Detect which optional columns actually exist in this environment.
+            $hasShowBanner = \Illuminate\Support\Facades\Schema::hasColumn('promotions', 'show_banner');
+            $hasBannerUrl = \Illuminate\Support\Facades\Schema::hasColumn('promotions', 'banner_url');
+            $hasLinkUrl = \Illuminate\Support\Facades\Schema::hasColumn('promotions', 'link_url');
+            $hasBadgeText = \Illuminate\Support\Facades\Schema::hasColumn('promotions', 'badge_text');
+            $hasBadgeColor = \Illuminate\Support\Facades\Schema::hasColumn('promotions', 'badge_color');
+            $hasStartDate = \Illuminate\Support\Facades\Schema::hasColumn('promotions', 'start_date');
+            $hasEndDate = \Illuminate\Support\Facades\Schema::hasColumn('promotions', 'end_date');
 
-        if ($withBannerOnly) {
-            $query->whereNotNull('banner_url')->where('show_banner', true);
+            $query = Promotion::active()->ordered();
+
+            if ($withBannerOnly) {
+                if ($hasBannerUrl) {
+                    $query->whereNotNull('banner_url');
+                }
+                if ($hasShowBanner) {
+                    $query->where('show_banner', true);
+                }
+            }
+
+            // Filter by date range if start/end dates are set
+            if ($hasStartDate) {
+                $query->where(function ($q) {
+                    $q->whereNull('start_date')
+                      ->orWhere('start_date', '<=', now());
+                });
+            }
+            if ($hasEndDate) {
+                $query->where(function ($q) {
+                    $q->whereNull('end_date')
+                      ->orWhere('end_date', '>=', now());
+                });
+            }
+
+            // Filter by type if provided
+            if ($type) {
+                $query->where('type', $type);
+            }
+
+            // Only select columns that exist in this environment.
+            $columns = array_merge(
+                ['id', 'name', 'code', 'description', 'type', 'discount_value'],
+                $hasBannerUrl ? ['banner_url'] : [],
+                $hasShowBanner ? ['show_banner'] : [],
+                $hasLinkUrl ? ['link_url'] : [],
+                $hasStartDate ? ['start_date'] : [],
+                $hasEndDate ? ['end_date'] : [],
+                $hasBadgeText ? ['badge_text'] : [],
+                $hasBadgeColor ? ['badge_color'] : [],
+            );
+
+            $promotions = $query->take($limit)->get($columns);
+
+            // Attach tour_ids (distinct tour ids whose offers reference this promotion)
+            if ($promotions->isNotEmpty()) {
+                $promoIds = $promotions->pluck('id');
+                $tourMap = \Illuminate\Support\Facades\DB::table('offers')
+                    ->join('periods', 'offers.period_id', '=', 'periods.id')
+                    ->whereIn('offers.promotion_id', $promoIds)
+                    ->select('offers.promotion_id', 'periods.tour_id')
+                    ->distinct()
+                    ->get()
+                    ->groupBy('promotion_id')
+                    ->map(fn ($rows) => $rows->pluck('tour_id')->unique()->values()->all());
+
+                $promotions->each(function ($p) use ($tourMap) {
+                    $p->tour_ids = $tourMap[$p->id] ?? [];
+                });
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $promotions,
+            ]);
+        } catch (\Throwable $e) {
+            // Never break the public homepage: log the real cause and return empty.
+            Log::error('promotions/public failed: ' . $e->getMessage(), [
+                'exception' => $e,
+                'params' => $request->query(),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => [],
+            ]);
         }
-
-        // Filter by date range if start/end dates are set
-        $query->where(function ($q) {
-            $q->whereNull('start_date')
-              ->orWhere('start_date', '<=', now());
-        })->where(function ($q) {
-            $q->whereNull('end_date')
-              ->orWhere('end_date', '>=', now());
-        });
-
-        // Filter by type if provided
-        if ($type) {
-            $query->where('type', $type);
-        }
-
-        $promotions = $query->take($limit)->get([
-            'id',
-            'name',
-            'code',
-            'description',
-            'type',
-            'discount_value',
-            'banner_url',
-            'show_banner',
-            'link_url',
-            'start_date',
-            'end_date',
-            'badge_text',
-            'badge_color',
-        ]);
-
-        // Attach tour_ids (distinct tour ids whose offers reference this promotion)
-        if ($promotions->isNotEmpty()) {
-            $promoIds = $promotions->pluck('id');
-            $tourMap = \Illuminate\Support\Facades\DB::table('offers')
-                ->join('periods', 'offers.period_id', '=', 'periods.id')
-                ->whereIn('offers.promotion_id', $promoIds)
-                ->select('offers.promotion_id', 'periods.tour_id')
-                ->distinct()
-                ->get()
-                ->groupBy('promotion_id')
-                ->map(fn ($rows) => $rows->pluck('tour_id')->unique()->values()->all());
-
-            $promotions->each(function ($p) use ($tourMap) {
-                $p->tour_ids = $tourMap[$p->id] ?? [];
-            });
-        }
-
-        return response()->json([
-            'success' => true,
-            'data' => $promotions,
-        ]);
     }
 }

@@ -533,8 +533,8 @@ class TourController extends Controller
      */
     public function destroy(Tour $tour): JsonResponse
     {
-        // Delete PDF file from R2 if exists
-        if ($tour->pdf_url && str_contains($tour->pdf_url, 'r2.dev')) {
+        // Delete PDF file from R2 if exists (matches old r2.dev and new custom domain)
+        if ($tour->pdf_url && (str_contains($tour->pdf_url, 'r2.dev') || str_contains($tour->pdf_url, 'files.nexttrip.world'))) {
             $this->deleteR2File($tour->pdf_url, 'pdf', $tour->id);
         }
 
@@ -582,8 +582,8 @@ class TourController extends Controller
 
         foreach ($tours as $tour) {
             try {
-                // Collect files to clean up later
-                if ($tour->pdf_url && str_contains($tour->pdf_url, 'r2.dev')) {
+                // Collect files to clean up later (matches old r2.dev and new custom domain)
+                if ($tour->pdf_url && (str_contains($tour->pdf_url, 'r2.dev') || str_contains($tour->pdf_url, 'files.nexttrip.world'))) {
                     $filesToCleanup[] = ['type' => 'r2', 'url' => $tour->pdf_url, 'id' => $tour->id];
                 }
                 if ($tour->cover_image_url && str_contains($tour->cover_image_url, 'imagedelivery.net')) {
@@ -646,11 +646,11 @@ class TourController extends Controller
     protected function deleteR2File(string $url, string $type, int $id): void
     {
         try {
-            // Extract path from R2 URL
-            // Format: https://pub-xxx.r2.dev/pdfs/zg/2026/01/xxx.pdf
-            $r2Url = env('R2_URL');
-            if ($r2Url && str_starts_with($url, $r2Url)) {
-                $path = str_replace(rtrim($r2Url, '/') . '/', '', $url);
+            // Extract the object key from the URL path so we support BOTH the old
+            // r2.dev domain and the new files.nexttrip.world custom domain.
+            // Format: https://<any-r2-domain>/pdfs/zg/2026/01/xxx.pdf → pdfs/zg/2026/01/xxx.pdf
+            $path = ltrim((string) parse_url($url, PHP_URL_PATH), '/');
+            if ($path !== '') {
                 Storage::disk('r2')->delete($path);
                 Log::info("Deleted R2 {$type} file", ['id' => $id, 'path' => $path]);
             }
