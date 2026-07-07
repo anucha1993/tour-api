@@ -182,41 +182,24 @@ class WebBookingController extends Controller
         // Resolve member
         $memberId = null;
         if ($isLoggedIn) {
-            $memberId = $request->user('sanctum')->id;
+            $loggedInMember = $request->user('sanctum');
+            $memberId = $loggedInMember->id;
+            // Backfill missing profile data (e.g. LINE users with null phone or @social.local email)
+            $this->syncMemberProfile($loggedInMember, (string) $request->email, (string) $request->phone);
         } else {
-            try {
-                $normalizedPhone = WebMember::normalizePhone($request->phone);
-                $matchedMember = WebMember::where('first_name', $request->first_name)
-                    ->where('last_name', $request->last_name)
-                    ->where('phone', $normalizedPhone)
-                    ->first();
-                if ($matchedMember) {
-                    $memberId = $matchedMember->id;
-                }
-            } catch (\Exception $e) {
-                // ignore
-            }
-        }
+            $memberId = $this->resolveOrCreateMember(
+                firstName: $request->first_name,
+                lastName: $request->last_name,
+                email: $request->email,
+                rawPhone: $request->phone,
+                phoneVerified: true, // OTP already verified before we reach here
+            );
 
-        // If still no member → create one by phone
-        if (!$memberId) {
-            try {
-                $normalizedPhone = WebMember::normalizePhone($request->phone);
-                $member = WebMember::firstOrCreate(
-                    ['phone' => $normalizedPhone],
-                    [
-                        'first_name' => $request->first_name,
-                        'last_name' => $request->last_name,
-                        'email' => $request->email,
-                        'password' => bcrypt(str()->random(16)),
-                        'phone_verified' => true,
-                        'status' => 'active',
-                    ]
-                );
-                $memberId = $member->id;
-            } catch (\Exception $e) {
-                Log::error('Booking: Failed to create member', ['error' => $e->getMessage()]);
-                return response()->json(['success' => false, 'message' => 'ไม่สามารถสร้างข้อมูลสมาชิกได้'], 500);
+            if ($memberId === null) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'ไม่สามารถสร้างข้อมูลสมาชิกได้ กรุณาลองใหม่',
+                ], 500);
             }
         }
 
@@ -333,6 +316,9 @@ class WebBookingController extends Controller
                 'errors' => $validator->errors(),
             ], 422);
         }
+
+        // Backfill missing profile data (LINE users with null phone or @social.local email)
+        $this->syncMemberProfile($member, (string) $request->email, (string) $request->phone);
 
         // Load flash sale item
         $flashItem = FlashSaleItem::with(['flashSale', 'tour', 'period'])
@@ -608,5 +594,121 @@ class WebBookingController extends Controller
             'success' => true,
             'message' => 'ยกเลิกการจองสำเร็จ',
         ]);
+    }
+
+    /**
+     * Resolve an existing WebMember or create a new one from booking form input.
+     *
+     * Matching precedence (both email and phone are UNIQUE columns):
+     *   1. If member exists with this email  → use it (do not overwrite phone)
+     *   2. Else if member exists with this phone → use it (do not overwrite email)
+     *   3. Else create a new member
+     *
+     * Returns member ID, or null if creation genuinely failed.
+     */
+    protected function resolveOrCreateMember(
+        string $firstName,
+        string $lastName,
+        string $email,
+        string $rawPhone,
+        bool $phoneVerified = false,
+    ): ?int {
+        try {
+            $normalizedPhone = WebMember::normalizePhone($rawPhone);
+        } catch (\Exception $e) {
+            Log::warning('Booking: invalid phone in resolveOrCreateMember', [
+                'phone' => $rawPhone,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
+
+        // 1) Match by email (email is more stable identity than phone)
+        $byEmail = WebMember::where('email', $email)->first();
+        if ($byEmail) {
+            return $byEmail->id;
+        }
+
+        // 2) Match by phone
+        $byPhone = WebMember::where('phone', $normalizedPhone)->first();
+        if ($byPhone) {
+            return $byPhone->id;
+        }
+
+        // 3) Create new member
+        try {
+            $member = WebMember::create([
+                'first_name' => $firstName,
+                'last_name' => $lastName,
+                'email' => $email,
+                'phone' => $normalizedPhone,
+                'password' => bcrypt(str()->random(16)),
+                'phone_verified' => $phoneVerified,
+                'phone_verified_at' => $phoneVerified ? now() : null,
+                'status' => 'active',
+            ]);
+            return $member->id;
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Race condition: another request created a matching row between our lookup and insert.
+            // Retry the lookup one time.
+            $retry = WebMember::where('email', $email)
+                ->orWhere('phone', $normalizedPhone)
+                ->first();
+            if ($retry) {
+                return $retry->id;
+            }
+            Log::error('Booking: Failed to create member', [
+                'error' => $e->getMessage(),
+                'email' => $email,
+                'phone' => $normalizedPhone,
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Sync missing profile fields on a logged-in member using data from a booking form.
+     * Only fills empty/placeholder fields — never overwrites real data.
+     * Safe for LINE/social users whose profile has null phone or fake @social.local email.
+     */
+    protected function syncMemberProfile(WebMember $member, string $email, string $rawPhone): void
+    {
+        $updates = [];
+
+        // Fill phone if member has none, and the desired phone isn't taken by someone else
+        if (empty($member->phone)) {
+            try {
+                $normalizedPhone = WebMember::normalizePhone($rawPhone);
+                $taken = WebMember::where('phone', $normalizedPhone)
+                    ->where('id', '!=', $member->id)
+                    ->exists();
+                if (!$taken) {
+                    $updates['phone'] = $normalizedPhone;
+                }
+            } catch (\Exception $e) {
+                // ignore invalid phone
+            }
+        }
+
+        // Replace placeholder social email (e.g. line_1234@social.local) with real email if available
+        if ($email && $member->email && str_ends_with($member->email, '@social.local')) {
+            $taken = WebMember::where('email', $email)
+                ->where('id', '!=', $member->id)
+                ->exists();
+            if (!$taken) {
+                $updates['email'] = $email;
+            }
+        }
+
+        if (!empty($updates)) {
+            try {
+                $member->update($updates);
+            } catch (\Exception $e) {
+                Log::warning('syncMemberProfile: update failed', [
+                    'member_id' => $member->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
     }
 }
