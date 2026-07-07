@@ -3,6 +3,7 @@
 namespace App\Services\Booking;
 
 use App\Models\Booking;
+use App\Models\BookingEvent;
 use App\Models\BookingPassenger;
 use App\Models\Period;
 use App\Models\WholesalerApiConfig;
@@ -67,6 +68,15 @@ class BookingService
             'provider_status' => 'pending',
         ]);
 
+        BookingEvent::log(
+            $booking->id,
+            'outbound_start',
+            'info',
+            'Sending booking to provider: ' . $config->booking_provider,
+            ['provider' => $config->booking_provider, 'wholesaler_id' => $tour->wholesaler_id],
+            $config->booking_provider,
+        );
+
         try {
             $adapter = AdapterFactory::createBookingAdapter($tour->wholesaler_id);
 
@@ -93,6 +103,15 @@ class BookingService
                 'provider_payload' => array_merge($booking->provider_payload ?? [], ['quote' => $quote->toArray()]),
             ]);
 
+            BookingEvent::log(
+                $booking->id,
+                'quote',
+                'ok',
+                'Quote received (ref: ' . $quote->quoteId . ')',
+                ['quote_id' => $quote->quoteId, 'total_price' => $quote->totalPrice, 'expires_at' => optional($quote->expiresAt)->toIso8601String()],
+                $config->booking_provider,
+            );
+
             // Persist passengers if supplied (overwrites any previous set)
             if (!empty($passengers)) {
                 $this->hold($booking, $passengers);
@@ -114,6 +133,14 @@ class BookingService
                 'booking_id' => $booking->id,
                 'error' => $e->getMessage(),
             ]);
+            BookingEvent::log(
+                $booking->id,
+                'outbound_exception',
+                'failed',
+                $e->getMessage(),
+                ['file' => $e->getFile(), 'line' => $e->getLine()],
+                $config->booking_provider ?? null,
+            );
             $this->markOutboundFailed($booking, 'exception', $e->getMessage(), []);
             return $booking->fresh();
         }
@@ -164,6 +191,15 @@ class BookingService
             'admin_note' => trim(($booking->admin_note ?? '') . "\n[outbound:{$stage}] " . $message),
             'provider_payload' => array_merge($booking->provider_payload ?? [], ["outbound_{$stage}_error" => $detail]),
         ]);
+
+        BookingEvent::log(
+            $booking->id,
+            'outbound_' . $stage,
+            'failed',
+            $message,
+            $detail,
+            $booking->provider,
+        );
     }
 
     /**
@@ -352,6 +388,14 @@ class BookingService
         $this->applyBookingResult($booking, $result, 'submit');
 
         if (!$result->success) {
+            BookingEvent::log(
+                $booking->id,
+                'confirm',
+                'failed',
+                $result->errorMessage ?? 'Booking submission failed',
+                $result->toArray(),
+                $booking->provider,
+            );
             throw new RuntimeException($result->errorMessage ?? 'Booking submission failed');
         }
 
@@ -360,6 +404,15 @@ class BookingService
             'provider_status' => 'confirmed',
             'provider_booking_ref' => $result->bookingRef,
         ]);
+
+        BookingEvent::log(
+            $booking->id,
+            'confirm',
+            'ok',
+            'Confirmed by provider (ref: ' . $result->bookingRef . ')',
+            ['booking_ref' => $result->bookingRef],
+            $booking->provider,
+        );
 
         return $booking->fresh('passengers');
     }

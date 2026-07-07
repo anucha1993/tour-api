@@ -564,6 +564,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('bookings/statistics', [BookingController::class, 'statistics']);
     Route::post('bookings', [BookingController::class, 'store']);
     Route::get('bookings/{id}', [BookingController::class, 'show']);
+    Route::get('bookings/{id}/events', [BookingController::class, 'events']);
     Route::put('bookings/{id}', [BookingController::class, 'update']);
     Route::patch('bookings/{id}/status', [BookingController::class, 'updateStatus']);
     Route::delete('bookings/{id}', [BookingController::class, 'destroy']);

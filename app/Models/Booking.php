@@ -100,6 +100,11 @@ class Booking extends Model
         return $this->hasMany(BookingPassenger::class);
     }
 
+    public function events()
+    {
+        return $this->hasMany(BookingEvent::class)->orderBy('created_at')->orderBy('id');
+    }
+
     public function leadPassenger()
     {
         return $this->hasOne(BookingPassenger::class)->where('is_lead', true);

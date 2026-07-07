@@ -76,6 +76,24 @@ class BookingController extends Controller
     }
 
     /**
+     * List event timeline for a booking (admin)
+     */
+    public function events(int $id)
+    {
+        $booking = Booking::select('id')->find($id);
+        if (!$booking) {
+            return response()->json(['message' => 'ไม่พบข้อมูลการจอง'], 404);
+        }
+
+        $events = $booking->events()->get(['id', 'event_type', 'status', 'source', 'message', 'payload', 'user_id', 'created_at']);
+
+        return response()->json([
+            'success' => true,
+            'data' => $events,
+        ]);
+    }
+
+    /**
      * Update booking status
      */
     public function updateStatus(Request $request, int $id)

@@ -624,14 +624,22 @@ class WebBookingController extends Controller
         }
 
         // 1) Match by email (email is more stable identity than phone)
-        $byEmail = WebMember::where('email', $email)->first();
+        //    Include soft-deleted rows because email/phone are UNIQUE at the DB level
+        //    even for trashed records.
+        $byEmail = WebMember::withTrashed()->where('email', $email)->first();
         if ($byEmail) {
+            if ($byEmail->trashed()) {
+                $byEmail->restore();
+            }
             return $byEmail->id;
         }
 
         // 2) Match by phone
-        $byPhone = WebMember::where('phone', $normalizedPhone)->first();
+        $byPhone = WebMember::withTrashed()->where('phone', $normalizedPhone)->first();
         if ($byPhone) {
+            if ($byPhone->trashed()) {
+                $byPhone->restore();
+            }
             return $byPhone->id;
         }
 
@@ -649,12 +657,16 @@ class WebBookingController extends Controller
             ]);
             return $member->id;
         } catch (\Illuminate\Database\QueryException $e) {
-            // Race condition: another request created a matching row between our lookup and insert.
-            // Retry the lookup one time.
-            $retry = WebMember::where('email', $email)
-                ->orWhere('phone', $normalizedPhone)
+            // Race condition or soft-deleted row we missed above — retry with trashed included.
+            $retry = WebMember::withTrashed()
+                ->where(function ($q) use ($email, $normalizedPhone) {
+                    $q->where('email', $email)->orWhere('phone', $normalizedPhone);
+                })
                 ->first();
             if ($retry) {
+                if ($retry->trashed()) {
+                    $retry->restore();
+                }
                 return $retry->id;
             }
             Log::error('Booking: Failed to create member', [
@@ -679,7 +691,7 @@ class WebBookingController extends Controller
         if (empty($member->phone)) {
             try {
                 $normalizedPhone = WebMember::normalizePhone($rawPhone);
-                $taken = WebMember::where('phone', $normalizedPhone)
+                $taken = WebMember::withTrashed()->where('phone', $normalizedPhone)
                     ->where('id', '!=', $member->id)
                     ->exists();
                 if (!$taken) {
@@ -692,7 +704,7 @@ class WebBookingController extends Controller
 
         // Replace placeholder social email (e.g. line_1234@social.local) with real email if available
         if ($email && $member->email && str_ends_with($member->email, '@social.local')) {
-            $taken = WebMember::where('email', $email)
+            $taken = WebMember::withTrashed()->where('email', $email)
                 ->where('id', '!=', $member->id)
                 ->exists();
             if (!$taken) {
