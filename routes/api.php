@@ -57,8 +57,8 @@ Route::get('/health', function () {
 
 // Public routes (no auth required)
 Route::prefix('auth')->group(function () {
-    Route::post('/register', [AuthController::class, 'register']);
-    Route::post('/login', [AuthController::class, 'login']);
+    Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:10,1');
+    Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
 });
 
 // Dashboard Summary
@@ -159,6 +159,9 @@ Route::get('recommended-tours/public', [RecommendedTourController::class, 'publi
 Route::get('tours/detail/{slug}', [PublicTourController::class, 'show']);
 Route::post('tours/detail/{slug}/view', [PublicTourController::class, 'recordView']);
 Route::get('tours/detail/{slug}/related', [PublicTourController::class, 'relatedTours']);
+
+// Public Sitemap data (for tour-web sitemap.xml)
+Route::get('sitemap', [\App\Http\Controllers\SitemapController::class, 'index']);
 
 // Public Tour Reviews (for tour-web)
 Route::get('reviews/featured', [\App\Http\Controllers\Web\WebTourReviewController::class, 'featured']);
@@ -826,32 +829,45 @@ Route::prefix('web')->group(function () {
         Route::get('/otp-status', [WebAuthController::class, 'getOtpStatus']);
 
         // Registration
-        Route::post('/register/request-otp', [WebAuthController::class, 'requestRegisterOtp']);
-        Route::post('/register', [WebAuthController::class, 'register']);
-        
+        // OTP-sending routes are strictly throttled (each request costs SMS/email).
+        Route::post('/register/request-otp', [WebAuthController::class, 'requestRegisterOtp'])
+            ->middleware('throttle:6,1');
+        Route::post('/register', [WebAuthController::class, 'register'])
+            ->middleware('throttle:10,1');
+
         // Login with password
-        Route::post('/login', [WebAuthController::class, 'login']);
-        
+        Route::post('/login', [WebAuthController::class, 'login'])
+            ->middleware('throttle:10,1');
+
         // Login with OTP
-        Route::post('/login/request-otp', [WebAuthController::class, 'requestLoginOtp']);
-        Route::post('/login/verify-otp', [WebAuthController::class, 'verifyLoginOtp']);
-        
+        Route::post('/login/request-otp', [WebAuthController::class, 'requestLoginOtp'])
+            ->middleware('throttle:6,1');
+        Route::post('/login/verify-otp', [WebAuthController::class, 'verifyLoginOtp'])
+            ->middleware('throttle:10,1');
+
         // Password reset
-        Route::post('/forgot-password', [WebAuthController::class, 'requestPasswordReset']);
-        Route::post('/reset-password', [WebAuthController::class, 'resetPassword']);
+        Route::post('/forgot-password', [WebAuthController::class, 'requestPasswordReset'])
+            ->middleware('throttle:6,1');
+        Route::post('/reset-password', [WebAuthController::class, 'resetPassword'])
+            ->middleware('throttle:10,1');
 
         // Social auth
         Route::get('/social/status', [WebSocialAuthController::class, 'status']);
         Route::post('/social/{provider}/redirect', [WebSocialAuthController::class, 'redirect']);
-        Route::post('/social/{provider}/callback', [WebSocialAuthController::class, 'callback']);
+        Route::post('/social/{provider}/callback', [WebSocialAuthController::class, 'callback'])
+            ->middleware('throttle:20,1');
     });
 
     // Booking routes (public - guest + member)
     Route::prefix('booking')->group(function () {
-        Route::post('/request-otp', [WebBookingController::class, 'requestOtp']);
-        Route::post('/request-email-otp', [WebBookingController::class, 'requestEmailOtp']);
-        Route::post('/verify-otp', [WebBookingController::class, 'verifyOtp']);
-        Route::post('/submit', [WebBookingController::class, 'submit']);
+        Route::post('/request-otp', [WebBookingController::class, 'requestOtp'])
+            ->middleware('throttle:6,1');
+        Route::post('/request-email-otp', [WebBookingController::class, 'requestEmailOtp'])
+            ->middleware('throttle:6,1');
+        Route::post('/verify-otp', [WebBookingController::class, 'verifyOtp'])
+            ->middleware('throttle:10,1');
+        Route::post('/submit', [WebBookingController::class, 'submit'])
+            ->middleware('throttle:15,1');
     });
 
     // Public page content (เงื่อนไขการให้บริการ, เงื่อนไขการชำระเงิน)

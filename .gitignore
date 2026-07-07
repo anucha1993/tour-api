@@ -22,3 +22,6 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Local one-off debug / diagnostic / migration scripts (never deploy to prod)
+/dev-scripts

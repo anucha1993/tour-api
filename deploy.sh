@@ -35,6 +35,8 @@ rsync -avz --delete \
     --exclude='storage/framework/sessions/*' \
     --exclude='storage/framework/views/*' \
     --exclude='.git/' \
+    --exclude='dev-scripts/' \
+    --exclude='tests/' \
     ./ \
     ${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/
 
@@ -43,6 +45,13 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 echo -e "${GREEN}Upload complete!${NC}"
+
+# ===== Step 1b: Purge any legacy debug/test scripts left in the server root =====
+# Older deploys uploaded loose check_*/debug_*/fix_*/test_* etc. scripts that
+# connect straight to the production DB. Remove them so they can't be executed.
+echo -e "${YELLOW}Step 1b: Removing legacy debug scripts on server...${NC}"
+ssh -p ${SSH_PORT} ${SERVER_USER}@${SERVER_HOST} \
+    "cd ${SERVER_PATH} && rm -f _*.php check_*.php cleanup_*.php debug_*.php delete_*.php diag_*.php diagnose_*.php fix_*.php migrate_*.php patch_*.php remove_*.php reset_*.php sync_*.php test_*.php verify_*.php 2>/dev/null; echo '  cleaned legacy root scripts'"
 
 # ===== Step 2: Install deps & optimize on server =====
 echo -e "${YELLOW}Step 2: Installing & optimizing on server...${NC}"
