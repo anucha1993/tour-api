@@ -18,7 +18,8 @@ class BookingController extends Controller
     {
         $query = Booking::with([
             'member:id,first_name,last_name,email,phone',
-            'tour:id,title,slug,tour_code',
+            'tour:id,title,slug,tour_code,wholesaler_id',
+            'tour.wholesaler:id,name,code',
             'period:id,start_date,end_date',
             'flashSaleItem:id,flash_price,discount_percent,flash_sale_id',
         ]);
@@ -62,7 +63,8 @@ class BookingController extends Controller
     {
         $booking = Booking::with([
             'member:id,first_name,last_name,email,phone,avatar',
-            'tour:id,title,slug,tour_code,duration_days,duration_nights',
+            'tour:id,title,slug,tour_code,duration_days,duration_nights,wholesaler_id',
+            'tour.wholesaler:id,name,code',
             'period:id,start_date,end_date,capacity,booked',
             'flashSaleItem:id,flash_price,original_price,discount_percent,flash_sale_id',
             'flashSaleItem.flashSale:id,title',
