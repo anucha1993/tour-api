@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 
 class HeroSlideController extends Controller
 {
@@ -64,10 +65,13 @@ class HeroSlideController extends Controller
 
     /**
      * Get public active slides for homepage
+     * Cached for 10 minutes — bust cache on admin CRUD (see store/update/destroy).
      */
     public function publicList(): JsonResponse
     {
-        $slides = HeroSlide::active()->ordered()->get();
+        $slides = Cache::remember('hero_slides_public_v1', 600, function () {
+            return HeroSlide::active()->ordered()->get();
+        });
 
         return response()->json([
             'success' => true,

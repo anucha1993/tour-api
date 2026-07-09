@@ -59,4 +59,15 @@ class HeroSlide extends Model
             ->ordered()
             ->get();
     }
+
+    /**
+     * Bust the public list cache whenever a slide is created/updated/deleted
+     * so the homepage reflects admin changes immediately.
+     */
+    protected static function booted(): void
+    {
+        $flush = fn () => \Illuminate\Support\Facades\Cache::forget('hero_slides_public_v1');
+        static::saved($flush);
+        static::deleted($flush);
+    }
 }
