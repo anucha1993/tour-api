@@ -123,6 +123,7 @@ class Tour extends Model
         'suitable_for',
         'departure_airports',
         'min_price',
+        'max_price',
         'display_price',
         'price_adult',
         'discount_adult',

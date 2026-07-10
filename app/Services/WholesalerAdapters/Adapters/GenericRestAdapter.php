@@ -116,9 +116,17 @@ class GenericRestAdapter extends BaseAdapter
             // 1. Direct array: [{...}, {...}] (Zego format)
             // 2. Wrapped: { data: [...] } or { tours: [...] } or { items: [...] }
             // 3. Double-wrapped: { data: { data: [...], meta: {...} } } (Laravel-style paginated)
+            // 4. Object with numeric-string keys: { "1": {...}, "2": {...}, ... } (TTN format)
             if (is_array($response) && isset($response[0]) && is_array($response[0])) {
                 // Direct array format (Zego)
                 $tours = $response;
+            } elseif (
+                is_array($response) && !empty($response)
+                && !isset($response['data']) && !isset($response['tours']) && !isset($response['items'])
+                && $this->isNumericStringKeyedObjectOfArrays($response)
+            ) {
+                // Object with numeric-string keys (e.g. TTN: {"1":{...},"2":{...},...})
+                $tours = array_values($response);
             } else {
                 // Wrapped format
                 $tours = $response['data'] ?? $response['tours'] ?? $response['items'] ?? [];
@@ -219,6 +227,22 @@ class GenericRestAdapter extends BaseAdapter
         } catch (\Exception $e) {
             return SyncResult::failed($e->getMessage(), (string) $e->getCode());
         }
+    }
+
+    /**
+     * Detect responses shaped like { "1": {...}, "2": {...}, ... } where the
+     * top-level object uses numeric-string keys (not zero-indexed) and every
+     * value is an array (a tour record). Used to support APIs such as TTN
+     * that return object-of-tours instead of a JSON array.
+     */
+    protected function isNumericStringKeyedObjectOfArrays(array $response): bool
+    {
+        foreach ($response as $key => $value) {
+            if (!ctype_digit((string) $key) || !is_array($value)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
