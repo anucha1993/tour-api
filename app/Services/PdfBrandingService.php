@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use setasign\Fpdi\Fpdi;
@@ -312,28 +311,23 @@ class PdfBrandingService
 
     /**
      * Download PDF to temp file
+     *
+     * FIX: ใช้ cURL แทน Guzzle/Http เพราะบาง wholesaler (เช่น GS) ใช้ชื่อไฟล์
+     * ภาษาไทยที่ percent-encoded อยู่แล้วใน URL → Guzzle จะ double-encode `%`
+     * ทำให้ server คืน 410/404. cURL รักษา URL ไว้เป๊ะตามเดิม
      */
     protected function downloadPdf(string $url): ?string
     {
-        try {
-            $response = Http::timeout(60)->get($url);
-            
-            if (!$response->successful()) {
-                return null;
-            }
-
-            $tempPath = sys_get_temp_dir() . '/pdf_' . uniqid() . '.pdf';
-            file_put_contents($tempPath, $response->body());
-
-            return $tempPath;
-
-        } catch (\Exception $e) {
-            Log::error('PdfBrandingService: Failed to download PDF', [
-                'url' => $url,
-                'error' => $e->getMessage(),
-            ]);
+        $content = $this->rawDownload($url, 60);
+        if ($content === null) {
+            Log::warning('PdfBrandingService: Failed to download PDF', ['url' => $url]);
             return null;
         }
+
+        $tempPath = sys_get_temp_dir() . '/pdf_' . uniqid() . '.pdf';
+        file_put_contents($tempPath, $content);
+
+        return $tempPath;
     }
 
     /**
@@ -341,33 +335,71 @@ class PdfBrandingService
      */
     protected function downloadImage(string $url, string $prefix = 'img'): ?string
     {
+        [$content, $contentType] = $this->rawDownload($url, 30, true);
+        if ($content === null) {
+            Log::warning('PdfBrandingService: Failed to download image', ['url' => $url]);
+            return null;
+        }
+
+        // Determine extension from content type
+        $ext = match ($contentType) {
+            'image/png' => 'png',
+            'image/jpeg', 'image/jpg' => 'jpg',
+            'image/gif' => 'gif',
+            default => 'png',
+        };
+
+        $tempPath = sys_get_temp_dir() . "/{$prefix}_" . uniqid() . ".{$ext}";
+        file_put_contents($tempPath, $content);
+
+        return $tempPath;
+    }
+
+    /**
+     * Low-level download via cURL that preserves the exact URL bytes
+     * (avoids Guzzle/PSR-7 re-encoding of already percent-encoded URLs).
+     *
+     * @return string|array|null  เมื่อ $withContentType=true จะคืน [body, contentType]
+     */
+    protected function rawDownload(string $url, int $timeout = 60, bool $withContentType = false)
+    {
         try {
-            $response = Http::timeout(30)->get($url);
-            
-            if (!$response->successful()) {
-                return null;
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS => 5,
+                CURLOPT_TIMEOUT => $timeout,
+                CURLOPT_CONNECTTIMEOUT => 15,
+                CURLOPT_SSL_VERIFYPEER => true,
+                CURLOPT_USERAGENT => 'NextTrip-PdfBranding/1.0',
+            ]);
+            $body = curl_exec($ch);
+            $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $contentType = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+            $err = curl_error($ch);
+            curl_close($ch);
+
+            if ($body === false || $httpCode < 200 || $httpCode >= 300 || $body === '') {
+                Log::warning('PdfBrandingService: rawDownload failed', [
+                    'url' => $url,
+                    'http_code' => $httpCode,
+                    'curl_error' => $err,
+                ]);
+                return $withContentType ? [null, null] : null;
             }
 
-            // Determine extension from content type
-            $contentType = $response->header('Content-Type');
-            $ext = match ($contentType) {
-                'image/png' => 'png',
-                'image/jpeg', 'image/jpg' => 'jpg',
-                'image/gif' => 'gif',
-                default => 'png',
-            };
+            // strip charset suffix e.g. "image/jpeg; charset=..."
+            $contentType = trim(explode(';', $contentType)[0]);
 
-            $tempPath = sys_get_temp_dir() . "/{$prefix}_" . uniqid() . ".{$ext}";
-            file_put_contents($tempPath, $response->body());
+            return $withContentType ? [$body, $contentType] : $body;
 
-            return $tempPath;
-
-        } catch (\Exception $e) {
-            Log::error('PdfBrandingService: Failed to download image', [
+        } catch (\Throwable $e) {
+            Log::error('PdfBrandingService: rawDownload exception', [
                 'url' => $url,
                 'error' => $e->getMessage(),
             ]);
-            return null;
+            return $withContentType ? [null, null] : null;
         }
     }
 
