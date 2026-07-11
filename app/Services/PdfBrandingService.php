@@ -66,7 +66,33 @@ class PdfBrandingService
             }
 
             // Process PDF with FPDI
-            $outputPath = $this->overlayImages($originalPdfPath);
+            try {
+                $outputPath = $this->overlayImages($originalPdfPath);
+            } catch (\setasign\Fpdi\PdfParser\CrossReference\CrossReferenceException | \setasign\Fpdi\PdfParser\PdfParserException $e) {
+                // FIX: PDF ใช้ compressed xref stream (PDF 1.5+) ที่ free FPDI parser อ่านไม่ได้
+                // → normalize เป็น PDF 1.4 ด้วย Ghostscript แล้ว retry
+                Log::warning('PdfBrandingService: FPDI cannot parse PDF, trying Ghostscript normalize', [
+                    'url' => $pdfUrl,
+                    'error' => $e->getMessage(),
+                ]);
+
+                $normalizedPath = $this->normalizePdf($originalPdfPath);
+                if (!$normalizedPath) {
+                    Log::error('PdfBrandingService: Ghostscript normalize failed (is ghostscript installed?)', [
+                        'url' => $pdfUrl,
+                    ]);
+                    if (file_exists($originalPdfPath)) {
+                        unlink($originalPdfPath);
+                    }
+                    return null;
+                }
+
+                // Retry overlay with normalized PDF
+                $outputPath = $this->overlayImages($normalizedPath);
+                if ($normalizedPath !== $outputPath && file_exists($normalizedPath)) {
+                    unlink($normalizedPath);
+                }
+            }
 
             // Cleanup original if different from output
             if ($originalPdfPath !== $outputPath && file_exists($originalPdfPath)) {
@@ -82,6 +108,76 @@ class PdfBrandingService
             ]);
             return null;
         }
+    }
+
+    /**
+     * Normalize a PDF to version 1.4 using Ghostscript so the free FPDI parser
+     * can import it (decompresses cross-reference / object streams).
+     *
+     * @param string $inputPath Path to the source PDF
+     * @return string|null Path to normalized temp PDF, or null on failure
+     */
+    protected function normalizePdf(string $inputPath): ?string
+    {
+        $gsBinary = $this->findGhostscript();
+        if (!$gsBinary) {
+            return null;
+        }
+
+        $outputPath = sys_get_temp_dir() . '/gs_norm_' . uniqid() . '.pdf';
+
+        $cmd = escapeshellarg($gsBinary)
+            . ' -q -dNOPAUSE -dBATCH -dSAFER'
+            . ' -sDEVICE=pdfwrite'
+            . ' -dCompatibilityLevel=1.4'
+            . ' -dPDFSETTINGS=/prepress'
+            . ' -o ' . escapeshellarg($outputPath)
+            . ' ' . escapeshellarg($inputPath)
+            . ' 2>&1';
+
+        exec($cmd, $out, $exitCode);
+
+        if ($exitCode === 0 && file_exists($outputPath) && filesize($outputPath) > 0) {
+            return $outputPath;
+        }
+
+        Log::error('PdfBrandingService: Ghostscript command failed', [
+            'exit_code' => $exitCode,
+            'output' => implode("\n", array_slice($out, -5)),
+        ]);
+        if (file_exists($outputPath)) {
+            unlink($outputPath);
+        }
+        return null;
+    }
+
+    /**
+     * Locate the Ghostscript binary on the host.
+     */
+    protected function findGhostscript(): ?string
+    {
+        // Allow explicit override via env
+        $configured = env('GHOSTSCRIPT_PATH');
+        if ($configured && @is_executable($configured)) {
+            return $configured;
+        }
+
+        foreach (['gs', 'gswin64c', 'gswin32c'] as $candidate) {
+            $which = @shell_exec('command -v ' . escapeshellarg($candidate) . ' 2>/dev/null');
+            $path = $which ? trim($which) : '';
+            if ($path !== '' && @is_executable($path)) {
+                return $path;
+            }
+        }
+
+        // Common absolute fallbacks
+        foreach (['/usr/bin/gs', '/usr/local/bin/gs', '/opt/homebrew/bin/gs'] as $abs) {
+            if (@is_executable($abs)) {
+                return $abs;
+            }
+        }
+
+        return null;
     }
 
     /**
