@@ -7,6 +7,7 @@ use App\Models\PointRedemption;
 use App\Models\PointRule;
 use App\Models\PointTransaction;
 use App\Models\WebMember;
+use App\Models\Booking;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -132,23 +133,25 @@ class PointService
     }
 
     /**
-     * Admin manual adjustment
+     * Admin manual adjustment (positive = add, negative = deduct)
      */
     public function adjustPoints(
         WebMember $member,
         int $points,
-        string $description,
-        ?int $expireDays = 365
+        ?string $description = null
     ): PointTransaction {
         $rule = PointRule::getByAction('manual');
 
+        // Choose the correct transaction type so history/stats stay consistent
+        $type = $points >= 0 ? 'earn' : 'spend';
+
         return $this->createTransaction(
             member: $member,
-            type: $points >= 0 ? 'earn' : 'adjust',
+            type: $type,
             points: $points,
             ruleId: $rule?->id,
-            description: $description,
-            expireDays: $points > 0 ? $expireDays : null
+            description: $description ?? 'ปรับคะแนนโดยแอดมิน',
+            expireDays: $type === 'earn' ? ($rule?->expire_days ?? 365) : null,
         );
     }
 

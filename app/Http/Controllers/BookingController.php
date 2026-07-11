@@ -4,8 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\Booking;
 use App\Models\Period;
+use App\Models\PointTransaction;
 use App\Services\BookingEmailService;
 use App\Services\Booking\BookingService;
+use App\Services\PointService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -140,6 +142,9 @@ class BookingController extends Controller
             $booking->flashSaleItem?->decrement('quantity_sold');
         }
 
+        // Award member points when payment is confirmed
+        $this->awardBookingPointsIfPaid($booking, $oldStatus);
+
         return response()->json([
             'success' => true,
             'message' => 'อัปเดตสถานะการจองสำเร็จ',
@@ -271,6 +276,9 @@ class BookingController extends Controller
             }
         }
 
+        // Award member points immediately if booking is created as paid
+        $this->awardBookingPointsIfPaid($booking, null);
+
         return response()->json([
             'success' => true,
             'message' => 'สร้างใบจองสำเร็จ',
@@ -345,10 +353,73 @@ class BookingController extends Controller
             $booking->flashSaleItem?->decrement('quantity_sold');
         }
 
+        // Award member points when payment is confirmed
+        $this->awardBookingPointsIfPaid($booking, $oldStatus);
+
         return response()->json([
             'success' => true,
             'message' => 'แก้ไขใบจองสำเร็จ',
             'booking' => $booking->fresh(['member', 'tour', 'period', 'flashSaleItem']),
         ]);
+    }
+
+    /**
+     * Award member points when a booking transitions to "paid".
+     *
+     * - Fires only when current status === 'paid' and oldStatus !== 'paid'
+     * - Idempotent: skipped if a PointTransaction already exists for this booking
+     * - Also updates lifetime_spending (drives auto level upgrade)
+     * - Guest bookings (no web_member_id) are ignored
+     */
+    private function awardBookingPointsIfPaid(Booking $booking, ?string $oldStatus): void
+    {
+        if ($booking->status !== 'paid' || $oldStatus === 'paid') {
+            return;
+        }
+        if (!$booking->web_member_id) {
+            return;
+        }
+
+        $member = \App\Models\WebMember::find($booking->web_member_id);
+        if (!$member) {
+            return;
+        }
+
+        // Idempotency guard: don't award twice for the same booking
+        $already = PointTransaction::where('source_type', Booking::class)
+            ->where('source_id', $booking->id)
+            ->where('type', 'earn')
+            ->exists();
+        if ($already) {
+            return;
+        }
+
+        $amount = (float) $booking->total_amount;
+
+        try {
+            $service = app(PointService::class);
+            // 1) Update lifetime_spending + auto level upgrade
+            $service->recordSpending($member, $amount);
+            // 2) Earn points via `booking` rule (calc_type=percent, 1pt per 100฿)
+            $service->earnPoints(
+                $member,
+                'booking',
+                $amount,
+                Booking::class,
+                $booking->id,
+                "ชำระเงินการจอง {$booking->booking_code}"
+            );
+
+            Log::info('Booking points awarded', [
+                'booking_id' => $booking->id,
+                'member_id'  => $member->id,
+                'amount'     => $amount,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Failed to award booking points', [
+                'booking_id' => $booking->id,
+                'error'      => $e->getMessage(),
+            ]);
+        }
     }
 }

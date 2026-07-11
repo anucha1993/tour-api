@@ -7,6 +7,7 @@ use App\Models\Country;
 use App\Models\City;
 use App\Models\FestivalHoliday;
 use App\Models\SearchKeyword;
+use App\Support\PeriodDisplayFilter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -223,13 +224,13 @@ class SearchController extends Controller
                         'iso2' => strtolower($tour->primaryCountry->iso2 ?? ''),
                     ] : null,
                     'cities' => $tour->cities->pluck('name_th'),
-                    'next_periods' => $tour->periods->map(fn($p) => [
+                    'next_periods' => PeriodDisplayFilter::apply($tour->periods)->map(fn($p) => [
                         'start_date' => $p->start_date?->format('Y-m-d'),
                         'end_date' => $p->end_date?->format('Y-m-d'),
                         'available' => $p->available,
                         'price' => $p->offer ? (float) ($p->offer->price_adult - $p->offer->discount_adult) : null,
                     ]),
-                    'active_promotions' => $tour->periods
+                    'active_promotions' => PeriodDisplayFilter::apply($tour->periods)
                         ->filter(fn($p) => $p->offer && ($p->offer->promo_name || $p->offer->promotion))
                         ->map(function ($p) {
                             $offer = $p->offer;

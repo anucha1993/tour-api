@@ -6,6 +6,7 @@ use App\Models\FlashSale;
 use App\Models\FlashSaleItem;
 use App\Models\Tour;
 use App\Models\Period;
+use App\Support\PeriodDisplayFilter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -404,7 +405,7 @@ class FlashSaleController extends Controller
                 'price_adult' => $tour->price_adult,
                 'max_discount_percent' => $tour->max_discount_percent,
                 'status' => $tour->status,
-                'periods' => $tour->periods->map(function ($period) {
+                'periods' => PeriodDisplayFilter::apply($tour->periods)->map(function ($period) {
                     return [
                         'id' => $period->id,
                         'start_date' => $period->start_date->format('Y-m-d'),

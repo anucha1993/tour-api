@@ -3,12 +3,57 @@
 namespace App\Http\Controllers;
 
 use App\Models\Setting;
+use App\Support\PeriodDisplayFilter;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Storage;
 
 class SettingsController extends Controller
 {
+    /**
+     * Get Period Display settings (Admin)
+     */
+    public function getPeriodDisplay(): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'data' => PeriodDisplayFilter::settings(),
+        ]);
+    }
+
+    /**
+     * Update Period Display settings (Admin)
+     */
+    public function updatePeriodDisplay(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'hide_past' => 'required|boolean',
+            'hide_full' => 'required|boolean',
+        ]);
+
+        PeriodDisplayFilter::save(
+            (bool) $validated['hide_past'],
+            (bool) $validated['hide_full'],
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'บันทึกการตั้งค่ารอบเดินทางสำเร็จ',
+            'data' => PeriodDisplayFilter::settings(),
+        ]);
+    }
+
+    /**
+     * Public endpoint — expose the flags (for tour-web to know current policy)
+     */
+    public function getPeriodDisplayPublic(): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'data' => PeriodDisplayFilter::settings(),
+        ]);
+    }
+
     /**
      * Get all settings (grouped)
      */

@@ -20,6 +20,8 @@ class GroupTourInquiry extends Model
         'details',
         'status',
         'admin_notes',
+        'ip_address',
+        'user_agent',
     ];
 
     protected $casts = [

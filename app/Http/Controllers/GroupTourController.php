@@ -9,6 +9,8 @@ use App\Models\TourReview;
 use App\Services\CloudflareImagesService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 class GroupTourController extends Controller
 {
@@ -467,21 +469,93 @@ class GroupTourController extends Controller
 
     public function publicSubmitInquiry(Request $request): JsonResponse
     {
+        // ─── Anti-spam: honeypot + time-trap (silent reject) ───
+        // If a bot fills the hidden "website" field, silently return success
+        // so the bot thinks it worked but no record is created.
+        if (filled($request->input('website'))) {
+            Log::info('Group inquiry blocked (honeypot)', [
+                'ip' => $request->ip(),
+                'ua' => substr((string) $request->userAgent(), 0, 200),
+                'website' => $request->input('website'),
+            ]);
+            return response()->json(['success' => true, 'message' => 'ส่งข้อมูลสำเร็จ'], 201);
+        }
+
+        // Time-trap: form must have been open at least 3 seconds
+        $loadedAt = (int) $request->input('_ts', 0);
+        if ($loadedAt > 0) {
+            $elapsedMs = (int) (microtime(true) * 1000) - $loadedAt;
+            if ($elapsedMs < 3000) {
+                Log::info('Group inquiry blocked (too fast)', [
+                    'ip' => $request->ip(),
+                    'elapsed_ms' => $elapsedMs,
+                ]);
+                return response()->json(['success' => true, 'message' => 'ส่งข้อมูลสำเร็จ'], 201);
+            }
+        }
+
+        // ─── Strict validation ───
         $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'organization' => 'nullable|string|max:255',
-            'phone' => 'nullable|string|max:50',
-            'email' => 'nullable|string|email|max:255',
-            'line_id' => 'nullable|string|max:100',
-            'group_type' => 'nullable|string|max:100',
-            'group_size' => 'nullable|string|max:100',
-            'destination' => 'nullable|string|max:255',
-            'travel_date_start' => 'nullable|date',
-            'travel_date_end' => 'nullable|date',
-            'details' => 'nullable|string|max:2000',
+            'name'              => ['required', 'string', 'max:120', 'regex:/^[^\r\n\t]+$/u'],
+            'organization'      => ['nullable', 'string', 'max:200'],
+            'phone'             => ['nullable', 'string', 'max:20', 'regex:/^[0-9+\-\s()]{6,20}$/'],
+            'email'             => ['nullable', 'string', 'email:rfc,dns', 'max:200'],
+            'line_id'           => ['nullable', 'string', 'max:100'],
+            'group_type'        => ['nullable', 'string', 'max:100'],
+            'group_size'        => ['nullable', 'string', 'max:100'],
+            'destination'       => ['nullable', 'string', 'max:200'],
+            'travel_date_start' => ['nullable', 'date'],
+            'travel_date_end'   => ['nullable', 'date', 'after_or_equal:travel_date_start'],
+            'details'           => ['nullable', 'string', 'max:2000'],
+        ], [
+            'phone.regex' => 'รูปแบบเบอร์โทรไม่ถูกต้อง',
+            'email.email' => 'อีเมลไม่ถูกต้องหรือโดเมนไม่มีอยู่จริง',
         ]);
 
-        $inquiry = GroupTourInquiry::create($validated);
+        // ─── Require at least email or phone ───
+        if (empty($validated['email'] ?? null) && empty($validated['phone'] ?? null)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'กรุณากรอกเบอร์โทรหรืออีเมลอย่างน้อย 1 ช่องทาง',
+                'errors'  => ['phone' => ['กรุณากรอกเบอร์โทรหรืออีเมล']],
+            ], 422);
+        }
+
+        // ─── Block obvious spam content ───
+        // (URLs in name/organization, too many URLs in details)
+        $hasUrl = fn(string $s) => preg_match('~https?://|www\.|\.com|\.ru|\.cn~i', $s) === 1;
+        if ($hasUrl($validated['name']) || $hasUrl($validated['organization'] ?? '')) {
+            Log::info('Group inquiry blocked (URL in name)', ['ip' => $request->ip(), 'name' => $validated['name']]);
+            return response()->json(['success' => true, 'message' => 'ส่งข้อมูลสำเร็จ'], 201); // silent
+        }
+        if (!empty($validated['details']) && preg_match_all('~https?://~i', $validated['details']) > 2) {
+            Log::info('Group inquiry blocked (too many links)', ['ip' => $request->ip()]);
+            return response()->json(['success' => true, 'message' => 'ส่งข้อมูลสำเร็จ'], 201); // silent
+        }
+
+        // ─── Block empty / suspicious User-Agent ───
+        $ua = (string) $request->userAgent();
+        if ($ua === '' || preg_match('~curl|wget|python|scrapy|libwww|httpclient~i', $ua)) {
+            Log::info('Group inquiry blocked (bad UA)', ['ip' => $request->ip(), 'ua' => $ua]);
+            return response()->json(['success' => true, 'message' => 'ส่งข้อมูลสำเร็จ'], 201); // silent
+        }
+
+        // ─── Per-IP dedupe: same IP + same phone/email within 10 minutes = skip ───
+        $recentKey = 'group_inquiry_recent:' . md5(
+            $request->ip() . '|' . ($validated['phone'] ?? '') . '|' . ($validated['email'] ?? '')
+        );
+        if (Cache::has($recentKey)) {
+            return response()->json([
+                'success' => true,
+                'message' => 'เราได้รับข้อมูลของคุณแล้ว ทีมงานจะติดต่อกลับโดยเร็ว',
+            ], 201);
+        }
+        Cache::put($recentKey, true, now()->addMinutes(10));
+
+        $inquiry = GroupTourInquiry::create($validated + [
+            'ip_address' => $request->ip(),
+            'user_agent' => substr($ua, 0, 500),
+        ]);
 
         return response()->json([
             'success' => true,

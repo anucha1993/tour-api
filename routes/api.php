@@ -134,6 +134,9 @@ Route::get('why-choose-us/public', [SettingsController::class, 'getWhyChooseUsCo
 // Public Contact Popup (for tour-web)
 Route::get('contact-popup/public', [SettingsController::class, 'getContactPopupConfigPublic']);
 
+// Public Period Display policy (server also filters, this is just informational)
+Route::get('period-display/public', [SettingsController::class, 'getPeriodDisplayPublic']);
+
 // Public Subscriber endpoints
 Route::post('subscribers/subscribe', [SubscriberController::class, 'subscribe']);
 Route::get('subscribers/confirm/{token}', [SubscriberController::class, 'confirm']);
@@ -200,7 +203,8 @@ Route::get('tours/packages/{slug}', [TourPackageController::class, 'publicShow']
 
 // Public Group Tours
 Route::get('tours/group', [GroupTourController::class, 'publicPage']);
-Route::post('tours/group/inquiry', [GroupTourController::class, 'publicSubmitInquiry']);
+Route::post('tours/group/inquiry', [GroupTourController::class, 'publicSubmitInquiry'])
+    ->middleware('throttle:5,60'); // max 5 submissions per 60 minutes per IP
 
 // Public Blog
 Route::get('blog/settings', [BlogController::class, 'publicSettings']);
@@ -704,7 +708,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/', [SettingsController::class, 'index']);
         Route::get('/aggregation', [SettingsController::class, 'getAggregationConfig']);
         Route::put('/aggregation', [SettingsController::class, 'updateAggregationConfig']);
-        
+
+        // Period Display (Global: hide past / hide full)
+        Route::get('/period-display', [SettingsController::class, 'getPeriodDisplay']);
+        Route::put('/period-display', [SettingsController::class, 'updatePeriodDisplay']);
+
         // SMTP Settings
         Route::get('/smtp', [SettingsController::class, 'getSmtpConfig']);
         Route::put('/smtp', [SettingsController::class, 'updateSmtpConfig']);
