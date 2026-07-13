@@ -62,8 +62,29 @@
 
 class HeadcodeSuperbholidayzAdapter extends \App\Services\WholesalerAdapters\HeadcodeBaseAdapter
 {
-    /** Default tour IDs to fetch — same as old superbholiday_api() */
-    private const DEFAULT_TOUR_IDS = [21, 29, 28, 23, 25, 24, 18, 2, 3, 17, 1, 19];
+    /**
+     * Default tour "category" IDs to fetch — verified 2026-07-13.
+     * Superb Holidayz groups tours by category (destination), and each id represents
+     * one category. The set here covers every category that currently returns data.
+     *
+     * If the wholesaler adds a new category id in the future, override via
+     * `auth_credentials.tour_ids` in the WholesalerApiConfig, or extend this list.
+     *
+     * Historical: original list [21,29,28,23,25,24,18,2,3,17,1,19] was inherited from
+     * ApiController and missed 31 (KM), 34 (CD), 35 (TAO), 36, 38, 41 (HRB), 43 (GUI)
+     * — causing all tours in those categories to never be synced.
+     */
+    private const DEFAULT_TOUR_IDS = [
+        1, 2, 3, 17, 18, 19,           // Original (Malaysia/Singapore/Brunei group)
+        21, 23, 24, 25, 28, 29,        // Original (China regions: CQ, LYAXIY, CNXX, CN, CNB, CXJ)
+        31,                             // KM   — Kunming (Yunnan)
+        34,                             // CD   — Chengdu (Sichuan)
+        35,                             // TAO  — Qingdao / Shandong
+        36,                             // MD   — miscellaneous
+        38,                             // SINF — Singapore family
+        41,                             // HRB  — Harbin
+        43,                             // GUI  — Guilin
+    ];
 
     /** API base URL */
     private const API_BASE = 'https://superbholidayz.com/superb/apiweb.php';

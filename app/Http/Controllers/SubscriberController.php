@@ -939,7 +939,7 @@ HTML;
       </ul>
 
       <div style="text-align:center;margin:32px 0;">
-        <a href="{$siteUrl}/tours" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:14px 40px;border-radius:8px;font-weight:600;font-size:16px;">
+        <a href="{$siteUrl}/tours/country/all" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:14px 40px;border-radius:8px;font-weight:600;font-size:16px;">
           ดูทัวร์ทั้งหมด
         </a>
       </div>
