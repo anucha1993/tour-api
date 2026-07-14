@@ -31,17 +31,41 @@ class SeoSetting extends Model
         'robots_follow' => 'boolean',
     ];
 
-    // Predefined pages
+    // Predefined pages (must sync with DEFAULT_PAGES in
+    // tour-backend/src/app/dashboard/website/seo/page.tsx AND with
+    // buildMetadata() calls in each tour-web layout.tsx)
     const PAGES = [
-        'global' => 'ตั้งค่า SEO ทั้งเว็บ',
+        // ─── Global ────────────────────────────────────────
+        'global' => 'ตั้งค่า SEO ทั้งเว็บ (Fallback)',
+
+        // ─── Main pages ────────────────────────────────────
         'home' => 'หน้าแรก',
-        'tours' => 'หน้ารวมทัวร์',
-        'tours-international' => 'ทัวร์ต่างประเทศ',
-        'tours-domestic' => 'ทัวร์ในประเทศ',
-        'promotions' => 'โปรโมชั่น',
-        'blog' => 'บล็อก',
         'about' => 'เกี่ยวกับเรา',
         'contact' => 'ติดต่อเรา',
+        'blog' => 'บล็อก',
+        'promotions' => 'โปรโมชั่น',
+        'reviews' => 'รีวิวจากลูกค้า',
+
+        // ─── Tours ─────────────────────────────────────────
+        'tours-international' => 'ทัวร์ต่างประเทศ',
+        'tours-domestic' => 'ทัวร์ในประเทศ',
+        'tours-festival' => 'ทัวร์เทศกาล',
+        'tours-packages' => 'แพ็คเกจทัวร์',
+        'tours-group' => 'รับจัดกรุ๊ปทัวร์',
+
+        // ─── Legal / policy ────────────────────────────────
+        'terms' => 'เงื่อนไขการให้บริการ',
+        'privacy-policy' => 'นโยบายความเป็นส่วนตัว',
+        'cookie-policy' => 'นโยบายคุกกี้',
+        'data-deletion' => 'ขอลบข้อมูล',
+        'payment-channels' => 'ช่องทางการชำระเงิน',
+        'payment-terms' => 'เงื่อนไขการชำระเงิน',
+
+        // ─── Utility / auth (usually noindex) ──────────────
+        'search' => 'ค้นหา',
+        'login' => 'เข้าสู่ระบบ',
+        'register' => 'สมัครสมาชิก',
+        'forgot-password' => 'ลืมรหัสผ่าน',
     ];
 
     public function scopeBySlug($query, string $slug)

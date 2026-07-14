@@ -626,6 +626,12 @@ class SettingsController extends Controller
             'delay_seconds' => 3,
             'show_close_button' => true,
             'show_on_mobile' => true,
+            // Page filter: which pages the popup shows on
+            //   all     = every page (default)
+            //   include = show ONLY on matching pages
+            //   exclude = show on all pages EXCEPT matching ones
+            'page_filter_mode' => 'all',    // all | include | exclude
+            'page_patterns' => [],          // array of glob patterns e.g. ["/", "/tours/**"]
         ];
     }
 
@@ -695,6 +701,9 @@ class SettingsController extends Controller
             'delay_seconds' => 'nullable|integer|min:0|max:60',
             'show_close_button' => 'nullable|boolean',
             'show_on_mobile' => 'nullable|boolean',
+            'page_filter_mode' => 'nullable|in:all,include,exclude',
+            'page_patterns' => 'nullable|array|max:50',
+            'page_patterns.*' => 'string|max:200',
         ]);
 
         $current = array_merge(

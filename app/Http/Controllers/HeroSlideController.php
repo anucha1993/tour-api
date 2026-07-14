@@ -20,6 +20,30 @@ class HeroSlideController extends Controller
     }
 
     /**
+     * Normalize button_link so internal paths get a leading '/'.
+     * Leaves absolute URLs (http/https), protocol-relative (//), mailto, tel,
+     * anchors (#) and empty strings untouched.
+     * Trims leading whitespace to prevent accidental spaces breaking Next.js Link.
+     */
+    private function normalizeButtonLink(string $link): string
+    {
+        $link = trim($link);
+        if ($link === '') {
+            return $link;
+        }
+        // Already absolute or a special scheme — do not touch
+        if (preg_match('~^(https?:)?//~i', $link) || preg_match('~^(mailto:|tel:|#)~i', $link)) {
+            return $link;
+        }
+        // Already starts with '/' — do not touch
+        if ($link[0] === '/') {
+            return $link;
+        }
+        // Internal path missing leading slash — add it
+        return '/' . $link;
+    }
+
+    /**
      * Display a listing of hero slides.
      */
     public function index(Request $request): JsonResponse
@@ -141,7 +165,7 @@ class HeroSlideController extends Controller
             'title' => $validated['title'] ?? null,
             'subtitle' => $validated['subtitle'] ?? null,
             'button_text' => $validated['button_text'] ?? null,
-            'button_link' => $validated['button_link'] ?? null,
+            'button_link' => !empty($validated['button_link']) ? $this->normalizeButtonLink($validated['button_link']) : null,
             'width' => $originalWidth,
             'height' => $originalHeight,
             'file_size' => $file->getSize(),
@@ -181,6 +205,12 @@ class HeroSlideController extends Controller
             'is_active' => 'nullable|boolean',
             'sort_order' => 'nullable|integer|min:0',
         ]);
+
+        // Normalize internal button_link — add leading '/' when missing
+        // (relative URLs break navigation from any non-home page)
+        if (!empty($validated['button_link'])) {
+            $validated['button_link'] = $this->normalizeButtonLink($validated['button_link']);
+        }
 
         $heroSlide->update($validated);
 

@@ -9,6 +9,30 @@ use Illuminate\Http\JsonResponse;
 class MenuController extends Controller
 {
     /**
+     * Normalize menu URL so internal paths get a leading '/'.
+     * Leaves absolute URLs (http/https), protocol-relative (//), mailto, tel,
+     * anchors (#) and empty strings untouched.
+     * Trims whitespace to prevent accidental spaces breaking Next.js Link.
+     */
+    private function normalizeUrl(?string $url): ?string
+    {
+        if ($url === null) {
+            return null;
+        }
+        $url = trim($url);
+        if ($url === '') {
+            return $url;
+        }
+        if (preg_match('~^(https?:)?//~i', $url) || preg_match('~^(mailto:|tel:|#)~i', $url)) {
+            return $url;
+        }
+        if ($url[0] === '/') {
+            return $url;
+        }
+        return '/' . $url;
+    }
+
+    /**
      * List menus by location (admin)
      */
     public function index(Request $request): JsonResponse
@@ -74,6 +98,11 @@ class MenuController extends Controller
                 ->max('sort_order') + 1;
         }
 
+        // Normalize URL (add leading '/' for internal paths)
+        if (array_key_exists('url', $validated)) {
+            $validated['url'] = $this->normalizeUrl($validated['url']);
+        }
+
         $menu = Menu::create($validated);
         $menu->load('allChildren');
 
@@ -113,6 +142,11 @@ class MenuController extends Controller
             'is_active' => 'nullable|boolean',
             'css_class' => 'nullable|string|max:255',
         ]);
+
+        // Normalize URL (add leading '/' for internal paths)
+        if (array_key_exists('url', $validated)) {
+            $validated['url'] = $this->normalizeUrl($validated['url']);
+        }
 
         $menu->update($validated);
         $menu->load('allChildren');
