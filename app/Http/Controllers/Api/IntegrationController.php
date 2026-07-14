@@ -535,6 +535,27 @@ class IntegrationController extends Controller
 
         // Auto-resolve sync schedule conflict (must be 10+ minutes apart)
         $validated = $validator->validated();
+
+        // Guard against invalid HTTP header NAMES in auth_credentials.headers
+        // (RFC 7230 token — reject '@' e.g. emails, spaces, colons; else Guzzle throws
+        // InvalidArgumentException at runtime and breaks every sync/test call)
+        if (isset($validated['auth_credentials']['headers']) && is_array($validated['auth_credentials']['headers'])) {
+            foreach ($validated['auth_credentials']['headers'] as $hName => $hVal) {
+                $hName = (string) $hName;
+                if ($hName === '') {
+                    continue;
+                }
+                if (!preg_match('/^[!#$%&\'*+\-.^_`|~0-9A-Za-z]+$/', $hName)) {
+                    $msg = "ชื่อ HTTP Header ไม่ถูกต้อง: \"{$hName}\" — ห้ามมีอักษร @ ช่องว่าง หรือสัญลักษณ์พิเศษ (อนุญาตเฉพาะ A-Z a-z 0-9 และ ! # \$ % & ' * + - . ^ _ ` | ~) เช่น X-API-Key, Authorization, itravels-secret";
+                    return response()->json([
+                        'success' => false,
+                        'message' => $msg,
+                        'errors' => ['auth_credentials.headers' => [$msg]],
+                    ], 422);
+                }
+            }
+        }
+
         if (!empty($validated['sync_schedule'])) {
             $conflict = $this->validateScheduleConflict($validated['sync_schedule']);
             if ($conflict) {
@@ -672,6 +693,27 @@ class IntegrationController extends Controller
 
         // Validate sync schedule conflict (must be 10+ minutes apart)
         $validated = $validator->validated();
+
+        // Guard against invalid HTTP header NAMES in auth_credentials.headers
+        // (RFC 7230 token — reject '@' e.g. emails, spaces, colons; else Guzzle throws
+        // InvalidArgumentException at runtime and breaks every sync/test call)
+        if (isset($validated['auth_credentials']['headers']) && is_array($validated['auth_credentials']['headers'])) {
+            foreach ($validated['auth_credentials']['headers'] as $hName => $hVal) {
+                $hName = (string) $hName;
+                if ($hName === '') {
+                    continue;
+                }
+                if (!preg_match('/^[!#$%&\'*+\-.^_`|~0-9A-Za-z]+$/', $hName)) {
+                    $msg = "ชื่อ HTTP Header ไม่ถูกต้อง: \"{$hName}\" — ห้ามมีอักษร @ ช่องว่าง หรือสัญลักษณ์พิเศษ (อนุญาตเฉพาะ A-Z a-z 0-9 และ ! # \$ % & ' * + - . ^ _ ` | ~) เช่น X-API-Key, Authorization, itravels-secret";
+                    return response()->json([
+                        'success' => false,
+                        'message' => $msg,
+                        'errors' => ['auth_credentials.headers' => [$msg]],
+                    ], 422);
+                }
+            }
+        }
+
         if (!empty($validated['sync_schedule'])) {
             $conflict = $this->validateScheduleConflict($validated['sync_schedule'], $id);
             if ($conflict) {
