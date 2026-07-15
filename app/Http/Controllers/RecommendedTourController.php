@@ -7,9 +7,9 @@ use App\Models\RecommendedTourSetting;
 use App\Models\Tour;
 use App\Models\Country;
 use App\Models\Wholesaler;
-use App\Support\PeriodDisplayFilter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Support\PeriodDisplayFilter;
 
 class RecommendedTourController extends Controller
 {
@@ -381,7 +381,7 @@ class RecommendedTourController extends Controller
             ? ($airlineTransport->transport?->name ?? $airlineTransport->transport_name)
             : null;
 
-        $openPeriods = PeriodDisplayFilter::apply($tour->periods)
+        $openPeriods = $tour->periods
             ->where('status', 'open')
             ->where('start_date', '>=', now()->toDateString());
         $minDeparture = $openPeriods->min('start_date');
@@ -424,7 +424,7 @@ class RecommendedTourController extends Controller
     {
         $today = now()->toDateString();
 
-        return PeriodDisplayFilter::apply($tour->periods)
+        return $tour->periods
             ->filter(fn($p) => $p->offer && ($p->offer->promo_name || $p->offer->promotion))
             ->map(function ($p) use ($today) {
                 $offer = $p->offer;

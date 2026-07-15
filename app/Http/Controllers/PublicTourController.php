@@ -12,7 +12,6 @@ use App\Models\Country;
 use App\Models\City;
 use App\Models\Transport;
 use App\Models\FestivalHoliday;
-use App\Support\PeriodDisplayFilter;
 use App\Models\BlogPost;
 use App\Models\GroupTourPortfolio;
 use App\Services\PointService;
@@ -285,7 +284,7 @@ class PublicTourController extends Controller
         }
 
         // Format periods with offers
-        $periods = PeriodDisplayFilter::apply($tour->periods)->map(function ($period) {
+        $periods = $tour->periods->map(function ($period) {
             $offer = $period->offer;
             return [
                 'id' => $period->id,
@@ -547,6 +546,7 @@ class PublicTourController extends Controller
         return $videos->map(fn($v) => [
             'id' => $v->id,
             'video_url' => $v->video_url,
+            'orientation' => $v->orientation ?? 'landscape',
             'thumbnail_url' => $v->thumbnail_url,
             'title' => $v->title,
             'description' => $v->description,
@@ -1049,7 +1049,7 @@ class PublicTourController extends Controller
 
         // Periods with offers
         if ($setting->show_periods) {
-            $item['periods'] = PeriodDisplayFilter::apply($tour->periods)->map(function ($period) use ($setting) {
+            $item['periods'] = $tour->periods->map(function ($period) use ($setting) {
                 $periodData = [
                     'id' => $period->id,
                     'start_date' => $period->start_date?->format('Y-m-d'),
@@ -1095,7 +1095,7 @@ class PublicTourController extends Controller
 
         // Collect active promotions from offers for badge display on tour card
         $today = now()->toDateString();
-        $activePromos = PeriodDisplayFilter::apply($tour->periods)
+        $activePromos = $tour->periods
             ->filter(fn($p) => $p->offer && ($p->offer->promo_name || $p->offer->promotion))
             ->map(function ($p) use ($today) {
                 $offer = $p->offer;
@@ -1543,7 +1543,7 @@ class PublicTourController extends Controller
         }
 
         if ($setting->show_periods) {
-            $item['periods'] = PeriodDisplayFilter::apply($tour->periods)->map(function ($period) use ($setting) {
+            $item['periods'] = $tour->periods->map(function ($period) use ($setting) {
                 $periodData = [
                     'id' => $period->id,
                     'start_date' => $period->start_date?->format('Y-m-d'),
@@ -1589,7 +1589,7 @@ class PublicTourController extends Controller
 
         // Collect active promotions from offers for badge display on tour card
         $today = now()->toDateString();
-        $activePromos = PeriodDisplayFilter::apply($tour->periods)
+        $activePromos = $tour->periods
             ->filter(fn($p) => $p->offer && ($p->offer->promo_name || $p->offer->promotion))
             ->map(function ($p) use ($today) {
                 $offer = $p->offer;
@@ -1917,7 +1917,7 @@ class PublicTourController extends Controller
                 ? ($airlineTransport->transport?->name ?? $airlineTransport->transport_name)
                 : null;
 
-            $openPeriods = PeriodDisplayFilter::apply($t->periods)
+            $openPeriods = $t->periods
                 ->where('status', 'open')
                 ->filter(fn($p) => $p->start_date >= now()->toDateString());
             $minDeparture = $openPeriods->min('start_date');
@@ -1925,7 +1925,7 @@ class PublicTourController extends Controller
             $availableSeats = $openPeriods->sum('available');
 
             // Collect active promotions from offers
-            $activePromos = PeriodDisplayFilter::apply($t->periods)
+            $activePromos = $t->periods
                 ->filter(fn($p) => $p->offer && ($p->offer->promo_name || $p->offer->promotion))
                 ->map(function ($p) use ($today) {
                     $offer = $p->offer;

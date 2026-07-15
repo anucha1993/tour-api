@@ -12,6 +12,7 @@ class GalleryVideo extends Model
 
     protected $fillable = [
         'video_url',
+        'orientation',
         'thumbnail_cloudflare_id',
         'thumbnail_url',
         'title',
@@ -28,6 +29,26 @@ class GalleryVideo extends Model
         'is_active' => 'boolean',
         'sort_order' => 'integer',
     ];
+
+    /**
+     * Auto-detect orientation from YouTube URL when not explicitly set.
+     *   /shorts/  → portrait (9:16)
+     *   otherwise → landscape (16:9)
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (self $video) {
+            if (empty($video->orientation) && !empty($video->video_url)) {
+                $video->orientation = self::detectOrientationFromUrl($video->video_url);
+            }
+        });
+    }
+
+    public static function detectOrientationFromUrl(?string $url): string
+    {
+        if (!$url) return 'landscape';
+        return str_contains($url, '/shorts/') ? 'portrait' : 'landscape';
+    }
 
     // ─── Relationships ───
 

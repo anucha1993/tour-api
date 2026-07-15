@@ -6,9 +6,9 @@ use App\Models\TourTab;
 use App\Models\Tour;
 use App\Models\Country;
 use App\Models\Wholesaler;
-use App\Support\PeriodDisplayFilter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Support\PeriodDisplayFilter;
 use Illuminate\Support\Str;
 
 class TourTabController extends Controller
@@ -310,7 +310,7 @@ class TourTabController extends Controller
             : null;
 
         // Get departure date range from open future periods
-        $openPeriods = PeriodDisplayFilter::apply($tour->periods)
+        $openPeriods = $tour->periods
             ->where('status', 'open')
             ->where('start_date', '>=', now()->toDateString());
         $minDeparture = $openPeriods->min('start_date');
@@ -387,7 +387,7 @@ class TourTabController extends Controller
     {
         $today = now()->toDateString();
 
-        $activePromos = PeriodDisplayFilter::apply($tour->periods)
+        $activePromos = $tour->periods
             ->filter(fn($p) => $p->offer && ($p->offer->promo_name || $p->offer->promotion))
             ->map(function ($p) use ($today) {
                 $offer = $p->offer;

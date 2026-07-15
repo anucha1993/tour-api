@@ -8,9 +8,9 @@ use App\Models\Tour;
 use App\Models\City;
 use App\Models\Country;
 use App\Services\CloudflareImagesService;
-use App\Support\PeriodDisplayFilter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Support\PeriodDisplayFilter;
 use Illuminate\Support\Str;
 
 class FestivalHolidayController extends Controller
@@ -473,7 +473,7 @@ class FestivalHolidayController extends Controller
                     'image' => $t->transport->image,
                 ] : null,
             ])->values(),
-            'periods' => PeriodDisplayFilter::apply($tour->periods)->map(function ($period) {
+            'periods' => $tour->periods->map(function ($period) {
                 $data = [
                     'id' => $period->id,
                     'start_date' => $period->start_date?->format('Y-m-d'),
@@ -507,7 +507,7 @@ class FestivalHolidayController extends Controller
 
         // Collect active promotions from offers for badge display on tour card
         $today = now()->toDateString();
-        $activePromos = PeriodDisplayFilter::apply($tour->periods)
+        $activePromos = $tour->periods
             ->filter(fn($p) => $p->offer && ($p->offer->promo_name || $p->offer->promotion))
             ->map(function ($p) use ($today) {
                 $offer = $p->offer;

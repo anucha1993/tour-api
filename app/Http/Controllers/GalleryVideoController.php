@@ -74,6 +74,7 @@ class GalleryVideoController extends Controller
     {
         $validated = $request->validate([
             'video_url' => 'required|url|max:500',
+            'orientation' => 'nullable|in:landscape,portrait',
             'title' => 'required|string|max:255',
             'description' => 'nullable|string|max:1000',
             'thumbnail' => 'nullable|file|mimes:jpeg,jpg,png,gif,webp,bmp|max:10240',
@@ -101,6 +102,7 @@ class GalleryVideoController extends Controller
 
         $video = GalleryVideo::create([
             'video_url' => $validated['video_url'],
+            'orientation' => $validated['orientation'] ?? GalleryVideo::detectOrientationFromUrl($validated['video_url']),
             'thumbnail_cloudflare_id' => $thumbnailCloudflareId,
             'thumbnail_url' => $thumbnailUrl,
             'title' => $validated['title'],
@@ -140,6 +142,7 @@ class GalleryVideoController extends Controller
     {
         $validated = $request->validate([
             'video_url' => 'nullable|url|max:500',
+            'orientation' => 'nullable|in:landscape,portrait',
             'title' => 'nullable|string|max:255',
             'description' => 'nullable|string|max:1000',
             'thumbnail' => 'nullable|file|mimes:jpeg,jpg,png,gif,webp,bmp|max:10240',
