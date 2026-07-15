@@ -1507,6 +1507,52 @@ class TourController extends Controller
     }
 
     /**
+     * Remove the API-synced PDF file.
+     *
+     * Deletes the file from R2 (if hosted there) and clears pdf_url +
+     * pdf_branding_hash. Because the tour no longer has an R2 PDF, the next
+     * sync detects the missing file and ProcessTourMediaJob re-downloads the
+     * PDF from the wholesaler source automatically.
+     */
+    public function removeApiPdf(Tour $tour): JsonResponse
+    {
+        $oldPdfUrl = $tour->pdf_url;
+
+        // Delete the file from R2 only when it lives on our storage
+        // (old r2.dev domain or the custom files.nexttrip.world domain).
+        if ($oldPdfUrl && (str_contains($oldPdfUrl, 'r2.dev') || str_contains($oldPdfUrl, 'files.nexttrip.world'))) {
+            try {
+                // Extract the object key from the URL path (domain-agnostic).
+                $r2Path = ltrim((string) parse_url($oldPdfUrl, PHP_URL_PATH), '/');
+                if ($r2Path && Storage::disk('r2')->exists($r2Path)) {
+                    Storage::disk('r2')->delete($r2Path);
+                }
+            } catch (\Exception $e) {
+                // Log but do not fail — clearing the DB reference is what matters.
+                Log::warning('removeApiPdf: failed to delete R2 file', [
+                    'tour_id' => $tour->id,
+                    'url' => $oldPdfUrl,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        // Clear the API PDF so the next sync re-downloads it from the source.
+        $tour->pdf_url = null;
+        $tour->pdf_branding_hash = null;
+        $tour->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'ลบ PDF จาก API เรียบร้อย ระบบจะซิงค์ PDF ใหม่อัตโนมัติในการซิงค์ครั้งถัดไป',
+            'data' => [
+                'pdf_url' => null,
+                'effective_pdf_url' => $tour->effective_pdf_url,
+            ],
+        ]);
+    }
+
+    /**
      * Generate PDF from tour data using mPDF.
      * Returns PDF binary for real-time preview (inline in browser).
      * Public endpoint — no auth required (used by tour-web when pdf_source='generate').

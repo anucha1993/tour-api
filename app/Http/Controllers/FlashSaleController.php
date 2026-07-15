@@ -60,7 +60,8 @@ class FlashSaleController extends Controller
     public function show(FlashSale $flashSale): JsonResponse
     {
         $flashSale->load([
-            'items.tour:id,title,slug,tour_code,cover_image_url,min_price,price_adult,max_discount_percent,status',
+            'items.tour:id,title,slug,tour_code,wholesaler_id,wholesaler_tour_code,cover_image_url,min_price,price_adult,max_discount_percent,status',
+            'items.tour.wholesaler:id,code,name',
             'items.period:id,tour_id,start_date,end_date,capacity,booked,available,status',
             'items.period.offer:id,period_id,price_adult',
         ]);
@@ -372,23 +373,46 @@ class FlashSaleController extends Controller
 
     public function searchTours(Request $request): JsonResponse
     {
-        $q = $request->input('q', '');
+        $q = trim((string) $request->input('q', ''));
         $query = Tour::where('status', 'active')
-            ->select('id', 'title', 'slug', 'tour_code', 'cover_image_url', 'min_price', 'price_adult', 'max_discount_percent', 'status');
+            ->select(
+                'id',
+                'title',
+                'slug',
+                'tour_code',
+                'wholesaler_id',
+                'wholesaler_tour_code',
+                'cover_image_url',
+                'min_price',
+                'price_adult',
+                'max_discount_percent',
+                'status'
+            );
 
-        if ($q) {
+        if ($q !== '') {
             $query->where(function ($qb) use ($q) {
                 $qb->where('title', 'like', "%{$q}%")
-                    ->orWhere('tour_code', 'like', "%{$q}%");
+                    ->orWhere('tour_code', 'like', "%{$q}%")
+                    ->orWhere('wholesaler_tour_code', 'like', "%{$q}%")
+                    ->orWhereHas('wholesaler', function ($wq) use ($q) {
+                        $wq->where('code', 'like', "%{$q}%")
+                           ->orWhere('name', 'like', "%{$q}%");
+                    });
             });
         }
 
-        $tours = $query->with(['periods' => function ($pq) {
-            $pq->where('status', 'open')
-               ->where('start_date', '>=', now()->toDateString())
-               ->with('offer:id,period_id,price_adult')
-               ->orderBy('start_date');
-        }])
+        $tours = $query->with([
+            'wholesaler:id,code,name',
+            'periods' => function ($pq) {
+                // Include `sold_out` so admins can still add Flash Sale seats that
+                // Nexttrip allocates independently of the wholesaler's remaining
+                // seat count. `closed` periods are truly not sellable so stay excluded.
+                $pq->whereIn('status', [Period::STATUS_OPEN, Period::STATUS_SOLD_OUT])
+                   ->where('start_date', '>=', now()->toDateString())
+                   ->with('offer:id,period_id,price_adult')
+                   ->orderBy('start_date');
+            },
+        ])
         ->orderBy('title')
         ->limit(20)
         ->get();
@@ -400,6 +424,12 @@ class FlashSaleController extends Controller
                 'title' => $tour->title,
                 'slug' => $tour->slug,
                 'tour_code' => $tour->tour_code,
+                'wholesaler_tour_code' => $tour->wholesaler_tour_code,
+                'wholesaler' => $tour->wholesaler ? [
+                    'id' => $tour->wholesaler->id,
+                    'code' => $tour->wholesaler->code,
+                    'name' => $tour->wholesaler->name,
+                ] : null,
                 'cover_image_url' => $tour->cover_image_url,
                 'min_price' => $tour->min_price,
                 'price_adult' => $tour->price_adult,

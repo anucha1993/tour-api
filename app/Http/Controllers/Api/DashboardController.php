@@ -8,6 +8,7 @@ use App\Models\Tour;
 use App\Models\SyncLog;
 use App\Models\Booking;
 use App\Models\WebMember;
+use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -15,11 +16,62 @@ use Carbon\Carbon;
 class DashboardController extends Controller
 {
     /**
+     * Resolve the [from, to] window from the request. Returns null values when
+     * the caller asked for the "all-time" view so the callers can skip the
+     * date filter entirely.
+     *
+     * Supported `period` values: `all` | `day` | `week` | `month` | `custom`.
+     * For `custom`, both `from` and `to` (YYYY-MM-DD) must be provided.
+     */
+    private function resolvePeriod(Request $request): array
+    {
+        $period = $request->input('period', 'all');
+        $now = Carbon::now();
+
+        switch ($period) {
+            case 'day':
+                return [$now->copy()->startOfDay(), $now->copy()->endOfDay(), 'day'];
+            case 'week':
+                return [$now->copy()->subDays(6)->startOfDay(), $now->copy()->endOfDay(), 'week'];
+            case 'month':
+                return [$now->copy()->subDays(29)->startOfDay(), $now->copy()->endOfDay(), 'month'];
+            case 'custom': {
+                $fromStr = $request->input('from');
+                $toStr = $request->input('to');
+                if ($fromStr && $toStr) {
+                    try {
+                        $from = Carbon::parse($fromStr)->startOfDay();
+                        $to = Carbon::parse($toStr)->endOfDay();
+                        if ($from->lte($to)) {
+                            return [$from, $to, 'custom'];
+                        }
+                    } catch (\Throwable) {
+                        // fall through to "all"
+                    }
+                }
+                return [null, null, 'all'];
+            }
+            case 'all':
+            default:
+                return [null, null, 'all'];
+        }
+    }
+
+    /**
      * Get dashboard summary statistics.
      */
-    public function summary(): JsonResponse
+    public function summary(Request $request): JsonResponse
     {
         $now = Carbon::now();
+        [$from, $to, $resolvedPeriod] = $this->resolvePeriod($request);
+        // Closure applied to any Eloquent/DB query that should be date-scoped.
+        // When no window is set (all-time) it's a no-op so callers can share code.
+        $scopeToPeriod = function ($query, string $column = 'created_at') use ($from, $to) {
+            if ($from && $to) {
+                $query->whereBetween($column, [$from, $to]);
+            }
+            return $query;
+        };
 
         // ─── Core counts ───
         $totalWholesalers = Wholesaler::count();
@@ -31,7 +83,12 @@ class DashboardController extends Controller
             ->where('start_date', '>=', $now->toDateString())
             ->count();
         $totalViews = (int) Tour::sum('view_count');
+        $viewsInPeriod = (int) $scopeToPeriod(DB::table('tour_view_logs'), 'viewed_at')->count();
         $totalMembers = WebMember::count();
+        // Members created within the selected period. Falls back to the same
+        // total when no window is set so the frontend can render both values
+        // side-by-side without special-casing.
+        $newMembersInPeriod = $scopeToPeriod(WebMember::query())->count();
 
         // Sync stats
         $todaySyncs = SyncLog::whereDate('started_at', $now->toDateString())->count();
@@ -41,6 +98,8 @@ class DashboardController extends Controller
             ->where('status', 'failed')->count();
 
         // ─── Visitor interest by country (from tour view_count) ───
+        // Note: tours.view_count is a lifetime counter; there is no per-day
+        // breakdown available, so this widget always shows all-time popularity.
         $viewsByCountry = DB::table('tours')
             ->join('countries', 'tours.primary_country_id', '=', 'countries.id')
             ->whereNotNull('tours.primary_country_id')
@@ -64,27 +123,39 @@ class DashboardController extends Controller
                 'tours_count' => (int) $row->tours_count,
             ]);
 
-        // ─── Booking statistics ───
+        // ─── Booking statistics (scoped to the selected period) ───
+        $mkCount = fn(?string $status = null) => (function () use ($scopeToPeriod, $status) {
+            $q = Booking::query();
+            if ($status !== null) $q->where('status', $status);
+            return $scopeToPeriod($q)->count();
+        })();
         $bookingStats = [
-            'total' => Booking::count(),
-            'pending' => Booking::where('status', 'pending')->count(),
-            'confirmed' => Booking::where('status', 'confirmed')->count(),
-            'paid' => Booking::where('status', 'paid')->count(),
-            'completed' => Booking::where('status', 'completed')->count(),
-            'cancelled' => Booking::where('status', 'cancelled')->count(),
+            'total' => $mkCount(),
+            'pending' => $mkCount('pending'),
+            'confirmed' => $mkCount('confirmed'),
+            'paid' => $mkCount('paid'),
+            'completed' => $mkCount('completed'),
+            'cancelled' => $mkCount('cancelled'),
+            // "this_month" stays as calendar-month even under a custom period so
+            // the badge next to the KPI keeps its familiar meaning.
             'this_month' => Booking::whereYear('created_at', $now->year)
                 ->whereMonth('created_at', $now->month)->count(),
-            'revenue' => (float) Booking::whereIn('status', ['confirmed', 'paid', 'completed'])
-                ->sum('total_amount'),
-            'from_website' => Booking::where('source', 'website')->count(),
-            'from_flash_sale' => Booking::where('source', 'flash_sale')->count(),
+            'revenue' => (float) $scopeToPeriod(
+                Booking::whereIn('status', ['confirmed', 'paid', 'completed'])
+            )->sum('total_amount'),
+            'from_website' => $scopeToPeriod(Booking::where('source', 'website'))->count(),
+            'from_flash_sale' => $scopeToPeriod(Booking::where('source', 'flash_sale'))->count(),
         ];
 
-        // ─── Bookings by country ───
-        $bookingsByCountry = DB::table('bookings')
+        // ─── Bookings by country (scoped) ───
+        $bookingsByCountryQuery = DB::table('bookings')
             ->join('tours', 'bookings.tour_id', '=', 'tours.id')
             ->join('countries', 'tours.primary_country_id', '=', 'countries.id')
-            ->whereNotIn('bookings.status', ['cancelled'])
+            ->whereNotIn('bookings.status', ['cancelled']);
+        if ($from && $to) {
+            $bookingsByCountryQuery->whereBetween('bookings.created_at', [$from, $to]);
+        }
+        $bookingsByCountry = $bookingsByCountryQuery
             ->select(
                 'countries.id',
                 'countries.name_th',
@@ -105,7 +176,7 @@ class DashboardController extends Controller
                 'revenue' => (float) $row->revenue,
             ]);
 
-        // ─── Recent bookings ───
+        // ─── Recent bookings (always latest, unfiltered by period) ───
         $recentBookings = Booking::with(['tour:id,title,primary_country_id', 'tour.country:id,name_th,name_en,flag_emoji'])
             ->orderByDesc('created_at')
             ->limit(8)
@@ -164,6 +235,11 @@ class DashboardController extends Controller
         return response()->json([
             'success' => true,
             'data' => [
+                'period' => [
+                    'key' => $resolvedPeriod,
+                    'from' => $from?->toIso8601String(),
+                    'to' => $to?->toIso8601String(),
+                ],
                 'stats' => [
                     'total_wholesalers' => $totalWholesalers,
                     'active_wholesalers' => $activeWholesalers,
@@ -175,7 +251,9 @@ class DashboardController extends Controller
                     'success_syncs' => $successSyncs,
                     'failed_syncs' => $failedSyncs,
                     'total_views' => $totalViews,
+                    'views_in_period' => $viewsInPeriod,
                     'total_members' => $totalMembers,
+                    'new_members_in_period' => $newMembersInPeriod,
                 ],
                 'booking_stats' => $bookingStats,
                 'views_by_country' => $viewsByCountry,

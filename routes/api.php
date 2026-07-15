@@ -334,6 +334,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('tours/{tour}/media-info', [TourController::class, 'getMediaInfo']);
     Route::delete('tours/{tour}/custom-cover-image', [TourController::class, 'removeCustomCoverImage']);
     Route::delete('tours/{tour}/custom-pdf', [TourController::class, 'removeCustomPdf']);
+    Route::delete('tours/{tour}/api-pdf', [TourController::class, 'removeApiPdf']);
     Route::post('tours/mass-delete', [TourController::class, 'massDelete']);
     
     // Tour Manual Override Management (Smart Sync)

@@ -36,7 +36,7 @@ class PublicTourController extends Controller
     }
 
     /**
-     * เนเธชเธ”เธเธเนเธญเธกเธนเธฅเธ—เธฑเธงเธฃเนเธชเธณเธซเธฃเธฑเธ public (เนเธกเนเธ•เนเธญเธ auth)
+     * เน€เธยเน€เธเธเน€เธโ€เน€เธยเน€เธยเน€เธยเน€เธเธเน€เธเธเน€เธเธเน€เธเธ…เน€เธโ€”เน€เธเธ‘เน€เธเธเน€เธเธเน€เธยเน€เธเธเน€เธเธ“เน€เธเธเน€เธเธเน€เธเธ‘เน€เธย public (เน€เธยเน€เธเธเน€เธยเน€เธโ€ขเน€เธยเน€เธเธเน€เธย auth)
      * GET /tours/{slug}
      */
     public function show(string $slug): JsonResponse
@@ -62,7 +62,7 @@ class PublicTourController extends Controller
         if (!$tour) {
             return response()->json([
                 'success' => false,
-                'message' => 'ไม่พบทัวร์ที่ต้องการ',
+                'message' => 'เนเธกเนเธเธเธ—เธฑเธงเธฃเนเธ—เธตเนเธ•เนเธญเธเธเธฒเธฃ',
             ], 404);
         }
 
@@ -73,7 +73,7 @@ class PublicTourController extends Controller
     }
 
     /**
-     * เธเธฑเธเธ—เธถเธเธชเธ–เธดเธ•เธดเธเธฒเธฃเน€เธเนเธฒเธเธก
+     * เน€เธยเน€เธเธ‘เน€เธยเน€เธโ€”เน€เธเธ–เน€เธยเน€เธเธเน€เธโ€“เน€เธเธ”เน€เธโ€ขเน€เธเธ”เน€เธยเน€เธเธ’เน€เธเธเน€เธโฌเน€เธยเน€เธยเน€เธเธ’เน€เธยเน€เธเธ
      * POST /tours/{slug}/view
      */
     public function recordView(Request $request, string $slug): JsonResponse
@@ -90,7 +90,7 @@ class PublicTourController extends Controller
         $userAgent = $request->userAgent();
         $sessionId = $request->input('session_id') ?: $request->ip() . '_' . substr(md5($userAgent ?? ''), 0, 8);
 
-        // เธเนเธญเธเธเธฑเธเธเธฑเธเธเนเธณ โ€” เธ–เนเธฒ session เน€เธ”เธตเธขเธงเธเธฑเธเธ”เธนเธ—เธฑเธงเธฃเนเน€เธ”เธตเธขเธงเธเธฑเธเธ เธฒเธขเนเธ 30 เธเธฒเธ—เธต เนเธกเนเธเธฑเธ
+        // เน€เธยเน€เธยเน€เธเธเน€เธยเน€เธยเน€เธเธ‘เน€เธยเน€เธยเน€เธเธ‘เน€เธยเน€เธยเน€เธยเน€เธเธ“ เนโฌโ€ เน€เธโ€“เน€เธยเน€เธเธ’ session เน€เธโฌเน€เธโ€เน€เธเธ•เน€เธเธเน€เธเธเน€เธยเน€เธเธ‘เน€เธยเน€เธโ€เน€เธเธเน€เธโ€”เน€เธเธ‘เน€เธเธเน€เธเธเน€เธยเน€เธโฌเน€เธโ€เน€เธเธ•เน€เธเธเน€เธเธเน€เธยเน€เธเธ‘เน€เธยเน€เธย เน€เธเธ’เน€เธเธเน€เธยเน€เธย 30 เน€เธยเน€เธเธ’เน€เธโ€”เน€เธเธ• เน€เธยเน€เธเธเน€เธยเน€เธยเน€เธเธ‘เน€เธย
         $recentView = TourView::where('tour_id', $tour->id)
             ->where('session_id', $sessionId)
             ->where('viewed_at', '>=', now()->subMinutes(30))
@@ -128,22 +128,28 @@ class PublicTourController extends Controller
             'viewed_at' => now(),
         ]);
 
-        // เธญเธฑเธเน€เธ”เธ—เธเธณเธเธงเธเน€เธเนเธฒเธเธกเนเธเธ•เธฒเธฃเธฒเธ tours
+        // เน€เธเธเน€เธเธ‘เน€เธยเน€เธโฌเน€เธโ€เน€เธโ€”เน€เธยเน€เธเธ“เน€เธยเน€เธเธเน€เธยเน€เธโฌเน€เธยเน€เธยเน€เธเธ’เน€เธยเน€เธเธเน€เธยเน€เธยเน€เธโ€ขเน€เธเธ’เน€เธเธเน€เธเธ’เน€เธย tours
         $tour->increment('view_count');
 
-        // เนเธซเนเธเธฐเนเธเธเธชเธกเธฒเธเธดเธเธ—เธตเนเธฅเนเธญเธเธญเธดเธเนเธฅเนเธง
+        // บันทึก log สำหรับ dashboard filter by date
+        \DB::table('tour_view_logs')->insert([
+            'tour_id'   => $tour->id,
+            'viewed_at' => now(),
+        ]);
+
+        // เน€เธยเน€เธเธเน€เธยเน€เธยเน€เธเธเน€เธยเน€เธยเน€เธยเน€เธเธเน€เธเธเน€เธเธ’เน€เธยเน€เธเธ”เน€เธยเน€เธโ€”เน€เธเธ•เน€เธยเน€เธเธ…เน€เธยเน€เธเธเน€เธยเน€เธเธเน€เธเธ”เน€เธยเน€เธยเน€เธเธ…เน€เธยเน€เธเธ
         if ($member = $request->user()) {
             try {
                 app(PointService::class)->earnPoints(
                     $member, 'page_view', 0, Tour::class, $tour->id,
-                    "เธ”เธนเธ—เธฑเธงเธฃเน: {$tour->title}"
+                    "เน€เธโ€เน€เธเธเน€เธโ€”เน€เธเธ‘เน€เธเธเน€เธเธเน€เธย: {$tour->title}"
                 );
             } catch (\Throwable $e) {
-                // Silent fail โ€” don't break page view recording
+                // Silent fail เนโฌโ€ don't break page view recording
             }
         }
 
-        // เธญเธฑเธเน€เธ”เธ— daily stats
+        // เน€เธเธเน€เธเธ‘เน€เธยเน€เธโฌเน€เธโ€เน€เธโ€” daily stats
         DB::table('tour_view_daily_stats')->updateOrInsert(
             ['tour_id' => $tour->id, 'date' => now()->toDateString()],
             [
@@ -158,7 +164,7 @@ class PublicTourController extends Controller
     }
 
     /**
-     * เธชเธฃเธธเธเธชเธ–เธดเธ•เธดเธเธฒเธฃเน€เธเนเธฒเธเธก (เธชเธณเธซเธฃเธฑเธ admin)
+     * เน€เธเธเน€เธเธเน€เธเธเน€เธยเน€เธเธเน€เธโ€“เน€เธเธ”เน€เธโ€ขเน€เธเธ”เน€เธยเน€เธเธ’เน€เธเธเน€เธโฌเน€เธยเน€เธยเน€เธเธ’เน€เธยเน€เธเธ (เน€เธเธเน€เธเธ“เน€เธเธเน€เธเธเน€เธเธ‘เน€เธย admin)
      * GET /tours/view-stats/summary
      */
     public function viewStatsSummary(Request $request): JsonResponse
@@ -480,7 +486,7 @@ class PublicTourController extends Controller
             'meta_title' => $tour->meta_title,
             'meta_description' => $tour->meta_description,
 
-            // Booking integration — when true, the booking form is wired
+            // Booking integration โ€” when true, the booking form is wired
             // straight to the wholesaler (e.g. Zego) and confirms instantly.
             'booking_online_enabled' => $bookingOnlineEnabled,
         ];
@@ -540,7 +546,7 @@ class PublicTourController extends Controller
         $videos = GalleryVideo::active()
             ->byTags($allTags)
             ->inRandomOrder()
-            ->limit(3)
+            ->limit(4)
             ->get();
 
         return $videos->map(fn($v) => [
@@ -554,8 +560,8 @@ class PublicTourController extends Controller
     }
 
     /**
-     * เน€เธกเธเธนเธ—เธฑเธงเธฃเนเธ•เนเธฒเธเธเธฃเธฐเน€เธ—เธจ - เนเธชเธ”เธเธเธฃเธฐเน€เธ—เธจ+เน€เธกเธทเธญเธเธ—เธตเนเธกเธตเธ—เธฑเธงเธฃเน เธเธฑเธ”เธเธฅเธธเนเธกเธ•เธฒเธกเธ—เธงเธตเธ
-     * เน€เธเธทเนเธญเธเนเธ: เธ—เธฑเธงเธฃเน status=active + เธกเธต period เธ—เธตเน start_date >= เธงเธฑเธเธเธตเน & status=open
+     * เน€เธโฌเน€เธเธเน€เธยเน€เธเธเน€เธโ€”เน€เธเธ‘เน€เธเธเน€เธเธเน€เธยเน€เธโ€ขเน€เธยเน€เธเธ’เน€เธยเน€เธยเน€เธเธเน€เธเธเน€เธโฌเน€เธโ€”เน€เธเธ - เน€เธยเน€เธเธเน€เธโ€เน€เธยเน€เธยเน€เธเธเน€เธเธเน€เธโฌเน€เธโ€”เน€เธเธ+เน€เธโฌเน€เธเธเน€เธเธ—เน€เธเธเน€เธยเน€เธโ€”เน€เธเธ•เน€เธยเน€เธเธเน€เธเธ•เน€เธโ€”เน€เธเธ‘เน€เธเธเน€เธเธเน€เธย เน€เธยเน€เธเธ‘เน€เธโ€เน€เธยเน€เธเธ…เน€เธเธเน€เธยเน€เธเธเน€เธโ€ขเน€เธเธ’เน€เธเธเน€เธโ€”เน€เธเธเน€เธเธ•เน€เธย
+     * เน€เธโฌเน€เธยเน€เธเธ—เน€เธยเน€เธเธเน€เธยเน€เธยเน€เธย: เน€เธโ€”เน€เธเธ‘เน€เธเธเน€เธเธเน€เธย status=active + เน€เธเธเน€เธเธ• period เน€เธโ€”เน€เธเธ•เน€เธย start_date >= เน€เธเธเน€เธเธ‘เน€เธยเน€เธยเน€เธเธ•เน€เธย & status=open
      * GET /tours/international-menu
      */
     public function internationalMenu(): JsonResponse
@@ -563,7 +569,7 @@ class PublicTourController extends Controller
         $today = now()->toDateString();
         $thailandId = \App\Models\Country::where('slug', 'thailand')->value('id');
 
-        // Sub-query: tour IDs เธ—เธตเน active + เธกเธตเธฃเธญเธเน€เธ”เธดเธเธ—เธฒเธเนเธเธญเธเธฒเธเธ•
+        // Sub-query: tour IDs เน€เธโ€”เน€เธเธ•เน€เธย active + เน€เธเธเน€เธเธ•เน€เธเธเน€เธเธเน€เธยเน€เธโฌเน€เธโ€เน€เธเธ”เน€เธยเน€เธโ€”เน€เธเธ’เน€เธยเน€เธยเน€เธยเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธโ€ข
         $activeTourIds = Tour::where('status', 'active')
             ->whereHas('periods', function ($q) use ($today) {
                 $q->where('status', 'open')
@@ -578,7 +584,7 @@ class PublicTourController extends Controller
             ]);
         }
 
-        // เธ”เธถเธเธเธฃเธฐเน€เธ—เธจ (เนเธกเนเธฃเธงเธกเนเธ—เธข) เธ—เธตเนเธกเธตเธ—เธฑเธงเธฃเน active เธเนเธฒเธ tour_countries pivot
+        // เน€เธโ€เน€เธเธ–เน€เธยเน€เธยเน€เธเธเน€เธเธเน€เธโฌเน€เธโ€”เน€เธเธ (เน€เธยเน€เธเธเน€เธยเน€เธเธเน€เธเธเน€เธเธเน€เธยเน€เธโ€”เน€เธเธ) เน€เธโ€”เน€เธเธ•เน€เธยเน€เธเธเน€เธเธ•เน€เธโ€”เน€เธเธ‘เน€เธเธเน€เธเธเน€เธย active เน€เธยเน€เธยเน€เธเธ’เน€เธย tour_countries pivot
         $countries = \App\Models\Country::active()
             ->when($thailandId, fn($q) => $q->where('id', '!=', $thailandId))
             ->whereHas('tours', function ($q) use ($activeTourIds) {
@@ -600,7 +606,7 @@ class PublicTourController extends Controller
             ->orderBy('name_th')
             ->get();
 
-        // เนเธเธฅเธเน€เธเนเธ flat array เน€เธฃเธตเธขเธเธ•เธฒเธกเธเธณเธเธงเธเธ—เธฑเธงเธฃเนเธกเธฒเธเธชเธธเธ” + เน€เธกเธทเธญเธเธกเธฒเธเธชเธธเธ”
+        // เน€เธยเน€เธยเน€เธเธ…เน€เธยเน€เธโฌเน€เธยเน€เธยเน€เธย flat array เน€เธโฌเน€เธเธเน€เธเธ•เน€เธเธเน€เธยเน€เธโ€ขเน€เธเธ’เน€เธเธเน€เธยเน€เธเธ“เน€เธยเน€เธเธเน€เธยเน€เธโ€”เน€เธเธ‘เน€เธเธเน€เธเธเน€เธยเน€เธเธเน€เธเธ’เน€เธยเน€เธเธเน€เธเธเน€เธโ€ + เน€เธโฌเน€เธเธเน€เธเธ—เน€เธเธเน€เธยเน€เธเธเน€เธเธ’เน€เธยเน€เธเธเน€เธเธเน€เธโ€
         $result = $countries->map(function ($country) {
             return [
                 'id' => $country->id,
@@ -627,7 +633,7 @@ class PublicTourController extends Controller
     }
 
     /**
-     * เธฃเธฒเธขเธเธฒเธฃเธ—เธฑเธงเธฃเนเธ•เนเธฒเธเธเธฃเธฐเน€เธ—เธจ - เธเธฃเนเธญเธก filter, pagination, periods
+     * เน€เธเธเน€เธเธ’เน€เธเธเน€เธยเน€เธเธ’เน€เธเธเน€เธโ€”เน€เธเธ‘เน€เธเธเน€เธเธเน€เธยเน€เธโ€ขเน€เธยเน€เธเธ’เน€เธยเน€เธยเน€เธเธเน€เธเธเน€เธโฌเน€เธโ€”เน€เธเธ - เน€เธยเน€เธเธเน€เธยเน€เธเธเน€เธเธ filter, pagination, periods
      * GET /tours/international
      */
     public function internationalTours(Request $request): JsonResponse
@@ -699,7 +705,7 @@ class PublicTourController extends Controller
             $pinnedTourCodes = array_filter(array_map('trim', explode(',', $countryCover->pinned_tour_codes)));
         }
 
-        // Skip pinning when user has narrowing filters active — otherwise pinned tours
+        // Skip pinning when user has narrowing filters active โ€” otherwise pinned tours
         // would override the filter and show non-matching results at the top
         $hasNarrowingFilter = !empty($filters['search'])
             || !empty($filters['airline_id'])
@@ -817,10 +823,10 @@ class PublicTourController extends Controller
                 'sidebar_show_popular_tours' => (bool) ($setting->sidebar_show_popular_tours ?? true),
                 'sidebar_show_contact' => (bool) ($setting->sidebar_show_contact ?? true),
                 'sidebar_show_portfolios' => (bool) ($setting->sidebar_show_portfolios ?? false),
-                'sidebar_blog_posts_title' => $setting->sidebar_blog_posts_title ?? 'บทความท่องเที่ยว',
-                'sidebar_popular_tours_title' => $setting->sidebar_popular_tours_title ?? 'ทัวร์ยอดนิยม',
-                'sidebar_contact_title' => $setting->sidebar_contact_title ?? 'ติดต่อสอบถาม',
-                'sidebar_portfolios_title' => $setting->sidebar_portfolios_title ?? 'ผลงานที่ผ่านมา',
+                'sidebar_blog_posts_title' => $setting->sidebar_blog_posts_title ?? 'เธเธ—เธเธงเธฒเธกเธ—เนเธญเธเน€เธ—เธตเนเธขเธง',
+                'sidebar_popular_tours_title' => $setting->sidebar_popular_tours_title ?? 'เธ—เธฑเธงเธฃเนเธขเธญเธ”เธเธดเธขเธก',
+                'sidebar_contact_title' => $setting->sidebar_contact_title ?? 'เธ•เธดเธ”เธ•เนเธญเธชเธญเธเธ–เธฒเธก',
+                'sidebar_portfolios_title' => $setting->sidebar_portfolios_title ?? 'เธเธฅเธเธฒเธเธ—เธตเนเธเนเธฒเธเธกเธฒ',
             ],
             'sidebar' => $sidebar,
             'active_filters' => $skipFilters ? null : [
@@ -899,7 +905,7 @@ class PublicTourController extends Controller
                     $orderExpr = 'FIELD(tour_code,' . implode(',', array_map(fn ($c) => "'" . addslashes($c) . "'", $codes)) . ')';
                     $toursQuery->orderByRaw($orderExpr);
                 } else {
-                    // No codes provided — return empty list
+                    // No codes provided โ€” return empty list
                     $toursQuery->whereRaw('1=0');
                 }
             } else {
@@ -934,7 +940,7 @@ class PublicTourController extends Controller
         // Contact info
         if ($setting->sidebar_show_contact) {
             $payload['contact'] = [
-                'title' => $setting->sidebar_contact_title ?? 'ติดต่อสอบถาม',
+                'title' => $setting->sidebar_contact_title ?? 'เธ•เธดเธ”เธ•เนเธญเธชเธญเธเธ–เธฒเธก',
                 'phone' => $setting->sidebar_contact_phone,
                 'line' => $setting->sidebar_contact_line,
                 'text' => $setting->sidebar_contact_text,
@@ -1301,7 +1307,7 @@ class PublicTourController extends Controller
     // ===================== Domestic Tours =====================
 
     /**
-     * เน€เธกเธเธนเธ—เธฑเธงเธฃเนเนเธเธเธฃเธฐเน€เธ—เธจ - เธเธฑเธเธซเธงเธฑเธ”/เน€เธกเธทเธญเธเธ—เธตเนเธกเธตเธ—เธฑเธงเธฃเน
+     * เน€เธโฌเน€เธเธเน€เธยเน€เธเธเน€เธโ€”เน€เธเธ‘เน€เธเธเน€เธเธเน€เธยเน€เธยเน€เธยเน€เธยเน€เธเธเน€เธเธเน€เธโฌเน€เธโ€”เน€เธเธ - เน€เธยเน€เธเธ‘เน€เธยเน€เธเธเน€เธเธเน€เธเธ‘เน€เธโ€/เน€เธโฌเน€เธเธเน€เธเธ—เน€เธเธเน€เธยเน€เธโ€”เน€เธเธ•เน€เธยเน€เธเธเน€เธเธ•เน€เธโ€”เน€เธเธ‘เน€เธเธเน€เธเธเน€เธย
      * GET /tours/domestic-menu
      */
     public function domesticMenu(): JsonResponse
@@ -1325,7 +1331,7 @@ class PublicTourController extends Controller
             ]);
         }
 
-        // เธ”เธถเธเน€เธกเธทเธญเธเนเธเนเธ—เธขเธ—เธตเนเธกเธตเธ—เธฑเธงเธฃเน active
+        // เน€เธโ€เน€เธเธ–เน€เธยเน€เธโฌเน€เธเธเน€เธเธ—เน€เธเธเน€เธยเน€เธยเน€เธยเน€เธยเน€เธโ€”เน€เธเธเน€เธโ€”เน€เธเธ•เน€เธยเน€เธเธเน€เธเธ•เน€เธโ€”เน€เธเธ‘เน€เธเธเน€เธเธเน€เธย active
         $cities = City::active()
             ->where('country_id', $thailandId)
             ->whereHas('tours', function ($q) use ($activeTourIds) {
@@ -1354,7 +1360,7 @@ class PublicTourController extends Controller
     }
 
     /**
-     * เธฃเธฒเธขเธเธฒเธฃเธ—เธฑเธงเธฃเนเนเธเธเธฃเธฐเน€เธ—เธจ (เนเธ—เธข) โ€” เธเธฃเนเธญเธก filter, pagination, periods
+     * เน€เธเธเน€เธเธ’เน€เธเธเน€เธยเน€เธเธ’เน€เธเธเน€เธโ€”เน€เธเธ‘เน€เธเธเน€เธเธเน€เธยเน€เธยเน€เธยเน€เธยเน€เธเธเน€เธเธเน€เธโฌเน€เธโ€”เน€เธเธ (เน€เธยเน€เธโ€”เน€เธเธ) เนโฌโ€ เน€เธยเน€เธเธเน€เธยเน€เธเธเน€เธเธ filter, pagination, periods
      * GET /tours/domestic
      */
     public function domesticTours(Request $request): JsonResponse
@@ -1651,7 +1657,7 @@ class PublicTourController extends Controller
                     'id' => $c->id,
                     'name_th' => $c->name_th,
                     'country_id' => $c->country_id,
-                    'country_name' => 'เธเธฃเธฐเน€เธ—เธจเนเธ—เธข',
+                    'country_name' => 'เน€เธยเน€เธเธเน€เธเธเน€เธโฌเน€เธโ€”เน€เธเธเน€เธยเน€เธโ€”เน€เธเธ',
                     'tour_count' => $c->tours_count,
                 ]);
         }
@@ -1774,10 +1780,10 @@ class PublicTourController extends Controller
     private function formatThaiMonth(string $yearMonth): string
     {
         $thaiMonths = [
-            '01' => 'เธกเธเธฃเธฒเธเธก', '02' => 'เธเธธเธกเธ เธฒเธเธฑเธเธเน', '03' => 'เธกเธตเธเธฒเธเธก',
-            '04' => 'เน€เธกเธฉเธฒเธขเธ', '05' => 'เธเธคเธฉเธ เธฒเธเธก', '06' => 'เธกเธดเธ–เธธเธเธฒเธขเธ',
-            '07' => 'เธเธฃเธเธเธฒเธเธก', '08' => 'เธชเธดเธเธซเธฒเธเธก', '09' => 'เธเธฑเธเธขเธฒเธขเธ',
-            '10' => 'เธ•เธธเธฅเธฒเธเธก', '11' => 'เธเธคเธจเธเธดเธเธฒเธขเธ', '12' => 'เธเธฑเธเธงเธฒเธเธก',
+            '01' => 'เน€เธเธเน€เธยเน€เธเธเน€เธเธ’เน€เธยเน€เธเธ', '02' => 'เน€เธยเน€เธเธเน€เธเธเน€เธย เน€เธเธ’เน€เธยเน€เธเธ‘เน€เธยเน€เธยเน€เธย', '03' => 'เน€เธเธเน€เธเธ•เน€เธยเน€เธเธ’เน€เธยเน€เธเธ',
+            '04' => 'เน€เธโฌเน€เธเธเน€เธเธเน€เธเธ’เน€เธเธเน€เธย', '05' => 'เน€เธยเน€เธเธเน€เธเธเน€เธย เน€เธเธ’เน€เธยเน€เธเธ', '06' => 'เน€เธเธเน€เธเธ”เน€เธโ€“เน€เธเธเน€เธยเน€เธเธ’เน€เธเธเน€เธย',
+            '07' => 'เน€เธยเน€เธเธเน€เธยเน€เธยเน€เธเธ’เน€เธยเน€เธเธ', '08' => 'เน€เธเธเน€เธเธ”เน€เธยเน€เธเธเน€เธเธ’เน€เธยเน€เธเธ', '09' => 'เน€เธยเน€เธเธ‘เน€เธยเน€เธเธเน€เธเธ’เน€เธเธเน€เธย',
+            '10' => 'เน€เธโ€ขเน€เธเธเน€เธเธ…เน€เธเธ’เน€เธยเน€เธเธ', '11' => 'เน€เธยเน€เธเธเน€เธเธเน€เธยเน€เธเธ”เน€เธยเน€เธเธ’เน€เธเธเน€เธย', '12' => 'เน€เธยเน€เธเธ‘เน€เธยเน€เธเธเน€เธเธ’เน€เธยเน€เธเธ',
         ];
         
         [$year, $month] = explode('-', $yearMonth);
