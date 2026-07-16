@@ -54,7 +54,11 @@ return [
 
         'stack' => [
             'driver' => 'stack',
-            'channels' => explode(',', (string) env('LOG_STACK', 'single')),
+            // FIX (2026-07-16): default to `daily` (rotating) instead of `single`.
+            // Previous `single` channel wrote to one file with no rotation, growing
+            // to 2.66 GB in production before we noticed. `daily` keeps N days of
+            // laravel-YYYY-MM-DD.log files (see LOG_DAILY_DAYS env, default 14).
+            'channels' => explode(',', (string) env('LOG_STACK', 'daily')),
             'ignore_exceptions' => false,
         ],
 

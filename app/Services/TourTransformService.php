@@ -336,6 +336,13 @@ class TourTransformService
                 return (string) ($func === 'max' ? max($nums) : min($nums));
             }, $expr);
 
+            // FIX (2026-07-16): Production log shows 2,239 warnings/day for
+            // expressions like "abs({period_rate_adult_sgl} * {period_promotion_group.discount} / 100)".
+            // abs() was never pre-processed so the resolved expression ("abs(27388 * 2.5 / 100)")
+            // failed the numeric-only regex below. Now we evaluate abs() the same way
+            // as max/min: recursively resolve inner expression first, then compute.
+            $expr = $this->preprocessAbs($expr);
+
             // Security: only allow numbers, operators, spaces, parentheses, decimal points
             if (!preg_match('/^[\d\s+\-*\/().]+$/', $expr)) {
                 Log::warning('TourTransformService: Invalid formula expression', ['expression' => $expression, 'resolved' => $expr]);
@@ -351,6 +358,49 @@ class TourTransformService
             ]);
             return null;
         }
+    }
+
+    /**
+     * Replace `abs( <numeric-expression> )` occurrences with their computed
+     * absolute value. Handles nested parentheses by walking the string.
+     */
+    protected function preprocessAbs(string $expr): string
+    {
+        while (($pos = stripos($expr, 'abs(')) !== false) {
+            // Walk forward from the opening '(' to find its matching ')'
+            $start = $pos + 4; // char after '('
+            $depth = 1;
+            $len = strlen($expr);
+            $end = $start;
+            while ($end < $len && $depth > 0) {
+                $c = $expr[$end];
+                if ($c === '(') $depth++;
+                elseif ($c === ')') $depth--;
+                if ($depth === 0) break;
+                $end++;
+            }
+            if ($depth !== 0) {
+                // unbalanced parens — bail out; downstream regex will reject
+                break;
+            }
+
+            $inner = substr($expr, $start, $end - $start);
+
+            // Only evaluate if inner is a pure numeric expression
+            if (!preg_match('/^[\d\s+\-*\/().]+$/', $inner)) {
+                break;
+            }
+
+            // Safe: inner matches the same restricted charset used by the outer eval.
+            $value = @eval("return ({$inner});");
+            if (!is_numeric($value)) {
+                break;
+            }
+
+            $replacement = (string) abs((float) $value);
+            $expr = substr($expr, 0, $pos) . $replacement . substr($expr, $end + 1);
+        }
+        return $expr;
     }
 
     /**

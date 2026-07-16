@@ -447,8 +447,36 @@ abstract class BaseAdapter implements AdapterInterface
                     );
                 }
 
-                // Retryable errors (5xx, etc.)
+                // Retryable errors (5xx, 429, etc.)
                 $lastException = new \Exception("HTTP {$response->status()}: " . $response->body());
+
+                // FIX (2026-07-16): production log for 2026-07-15 showed 56
+                // SyncPeriodsJob + 48 wholesaler search errors caused by HTTP 429.
+                // Respect the Retry-After header (seconds or HTTP-date) so we back
+                // off long enough for the wholesaler's rate limit window to reset
+                // instead of retrying every 2-4-8s and getting throttled again.
+                if ($response->status() === 429) {
+                    $retryAfter = $response->header('Retry-After');
+                    if ($retryAfter !== null && $retryAfter !== '') {
+                        $waitSeconds = is_numeric($retryAfter)
+                            ? (int) $retryAfter
+                            : max(0, strtotime($retryAfter) - time());
+                        // Cap 429 backoff at 5 minutes so a misbehaving upstream
+                        // can't stall a queue worker forever.
+                        $waitSeconds = min(300, max(1, $waitSeconds));
+                        Log::warning('Wholesaler API 429 rate-limited, honoring Retry-After', [
+                            'wholesaler_id' => $this->wholesalerId,
+                            'attempt' => $attempts,
+                            'retry_after_header' => $retryAfter,
+                            'wait_seconds' => $waitSeconds,
+                            'endpoint' => $endpoint,
+                        ]);
+                        if ($attempts < $maxAttempts) {
+                            sleep($waitSeconds);
+                            continue; // skip the generic exponential backoff below
+                        }
+                    }
+                }
 
             } catch (\Illuminate\Http\Client\ConnectionException $e) {
                 $lastException = $e;

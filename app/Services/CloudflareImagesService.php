@@ -82,6 +82,13 @@ class CloudflareImagesService
                 ->withHeaders([
                     'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
                     'Accept' => 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                    // FIX (2026-07-16): production log shows 25/day
+                    // "cURL error 61: Unrecognized content encoding type" for
+                    // media.lnwtiao.com images. That CDN advertises a
+                    // Content-Encoding value libcurl doesn't know. Asking for
+                    // `identity` tells the origin to return the raw bytes so
+                    // libcurl never has to decode anything.
+                    'Accept-Encoding' => 'identity',
                     'Referer' => parse_url($url, PHP_URL_SCHEME) . '://' . parse_url($url, PHP_URL_HOST) . '/',
                 ])
                 ->get($url);

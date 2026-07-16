@@ -872,28 +872,40 @@ class SyncPeriodsJob implements ShouldQueue
                     $itinData['day_number'] = $dayNumber;
                 }
                 
-                TourItinerary::create([
-                    'tour_id' => $tour->id,
-                    'data_source' => 'api',
-                    'day_number' => $itinData['day_number'] ?? $dayNumber,
-                    'title' => mb_substr($itinData['title'] ?? "Day {$dayNumber}", 0, 250),
-                    'description' => is_array($itinData['description'] ?? null) 
-                        ? json_encode($itinData['description'], JSON_UNESCAPED_UNICODE) 
-                        : ($itinData['description'] ?? null),
-                    'places' => is_array($itinData['places'] ?? null) 
-                        ? json_encode($itinData['places'], JSON_UNESCAPED_UNICODE) 
-                        : ($itinData['places'] ?? null),
-                    'has_breakfast' => $this->parseMealFlag($itinData['has_breakfast'] ?? null, 'breakfast'),
-                    'has_lunch' => $this->parseMealFlag($itinData['has_lunch'] ?? null, 'lunch'),
-                    'has_dinner' => $this->parseMealFlag($itinData['has_dinner'] ?? null, 'dinner'),
-                    'meals_note' => $itinData['meals_note'] ?? null,
-                    'accommodation' => mb_substr($itinData['accommodation'] ?? '', 0, 250) ?: null,
-                    'hotel_star' => $itinData['hotel_star'] ?? null,
-                    'images' => is_array($itinData['images'] ?? null) 
-                        ? json_encode($itinData['images'], JSON_UNESCAPED_UNICODE) 
-                        : ($itinData['images'] ?? null),
-                    'sort_order' => $dayNumber,
-                ]);
+                // FIX (2026-07-16): swap create() -> updateOrCreate() keyed on
+                // (tour_id, day_number). The unique index tour_itineraries_tour_id_day_no_unique
+                // was triggering 147 SQLSTATE 23000 duplicates/day in production when either
+                //   (a) the API returned two items with the same day_number in one payload, or
+                //   (b) a data_source='manual' row already existed for that day.
+                // updateOrCreate now overwrites the existing row with the fresh API payload
+                // instead of throwing.
+                $resolvedDayNumber = (int) ($itinData['day_number'] ?? $dayNumber);
+                TourItinerary::updateOrCreate(
+                    [
+                        'tour_id'     => $tour->id,
+                        'day_number'  => $resolvedDayNumber,
+                    ],
+                    [
+                        'data_source' => 'api',
+                        'title' => mb_substr($itinData['title'] ?? "Day {$dayNumber}", 0, 1000),
+                        'description' => is_array($itinData['description'] ?? null) 
+                            ? json_encode($itinData['description'], JSON_UNESCAPED_UNICODE) 
+                            : ($itinData['description'] ?? null),
+                        'places' => is_array($itinData['places'] ?? null) 
+                            ? json_encode($itinData['places'], JSON_UNESCAPED_UNICODE) 
+                            : ($itinData['places'] ?? null),
+                        'has_breakfast' => $this->parseMealFlag($itinData['has_breakfast'] ?? null, 'breakfast'),
+                        'has_lunch' => $this->parseMealFlag($itinData['has_lunch'] ?? null, 'lunch'),
+                        'has_dinner' => $this->parseMealFlag($itinData['has_dinner'] ?? null, 'dinner'),
+                        'meals_note' => $itinData['meals_note'] ?? null,
+                        'accommodation' => mb_substr($itinData['accommodation'] ?? '', 0, 250) ?: null,
+                        'hotel_star' => $itinData['hotel_star'] ?? null,
+                        'images' => is_array($itinData['images'] ?? null) 
+                            ? json_encode($itinData['images'], JSON_UNESCAPED_UNICODE) 
+                            : ($itinData['images'] ?? null),
+                        'sort_order' => $dayNumber,
+                    ]
+                );
                 
                 $stats['created']++;
                 $dayNumber++;

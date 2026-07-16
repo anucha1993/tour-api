@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use setasign\Fpdi\Fpdi;
@@ -70,16 +71,16 @@ class PdfBrandingService
             } catch (\setasign\Fpdi\PdfParser\CrossReference\CrossReferenceException | \setasign\Fpdi\PdfParser\PdfParserException $e) {
                 // FIX: PDF ใช้ compressed xref stream (PDF 1.5+) ที่ free FPDI parser อ่านไม่ได้
                 // → normalize เป็น PDF 1.4 ด้วย Ghostscript แล้ว retry
-                Log::warning('PdfBrandingService: FPDI cannot parse PDF, trying Ghostscript normalize', [
-                    'url' => $pdfUrl,
-                    'error' => $e->getMessage(),
-                ]);
-
-                $normalizedPath = $this->normalizePdf($originalPdfPath);
-                if (!$normalizedPath) {
-                    Log::error('PdfBrandingService: Ghostscript normalize failed (is ghostscript installed?)', [
+                $this->logOncePerDay('fpdi_parse:' . $pdfUrl, 'info',
+                    'PdfBrandingService: FPDI cannot parse PDF, trying Ghostscript normalize', [
                         'url' => $pdfUrl,
+                        'error' => $e->getMessage(),
                     ]);
+
+                $normalizedPath = $this->normalizePdf($originalPdfPath, $pdfUrl);
+                if (!$normalizedPath) {
+                    // normalizePdf already logged (deduped). No second ERROR line here —
+                    // caller (ProcessTourMediaJob) will fall back to direct upload.
                     if (file_exists($originalPdfPath)) {
                         unlink($originalPdfPath);
                     }
@@ -114,12 +115,15 @@ class PdfBrandingService
      * can import it (decompresses cross-reference / object streams).
      *
      * @param string $inputPath Path to the source PDF
+     * @param string|null $sourceUrl Original PDF URL (for log dedupe key)
      * @return string|null Path to normalized temp PDF, or null on failure
      */
-    protected function normalizePdf(string $inputPath): ?string
+    protected function normalizePdf(string $inputPath, ?string $sourceUrl = null): ?string
     {
         $gsBinary = $this->findGhostscript();
         if (!$gsBinary) {
+            $this->logOncePerDay('gs_missing', 'error',
+                'PdfBrandingService: Ghostscript binary not found (install ghostscript)', []);
             return null;
         }
 
@@ -140,14 +144,39 @@ class PdfBrandingService
             return $outputPath;
         }
 
-        Log::error('PdfBrandingService: Ghostscript command failed', [
-            'exit_code' => $exitCode,
-            'output' => implode("\n", array_slice($out, -5)),
-        ]);
+        // Dedupe per URL — production hit this 714x/day for the same handful of URLs.
+        // Downgraded from error→warning because caller falls back to direct upload.
+        $dedupeKey = 'gs_fail:' . ($sourceUrl ?? $inputPath);
+        $this->logOncePerDay($dedupeKey, 'warning',
+            'PdfBrandingService: Ghostscript command failed (falling back to direct upload)', [
+                'url' => $sourceUrl,
+                'exit_code' => $exitCode,
+                // Only keep the LAST line of GS output — the noisy dictionary/stack dump adds ~2KB per event
+                'output' => trim((string) end($out)),
+            ]);
+
         if (file_exists($outputPath)) {
             unlink($outputPath);
         }
         return null;
+    }
+
+    /**
+     * Emit a log line at most once per day per key. Uses the cache to dedupe across
+     * queue workers so repeated failures for the same PDF don't flood laravel.log.
+     */
+    protected function logOncePerDay(string $dedupeKey, string $level, string $message, array $context): void
+    {
+        $cacheKey = 'pdfbrand_log:' . sha1($dedupeKey);
+        try {
+            // Cache::add returns true only if the key was NOT already present.
+            if (!Cache::add($cacheKey, 1, now()->endOfDay())) {
+                return;
+            }
+        } catch (\Throwable $e) {
+            // Cache backend down — fall through and log anyway (better noisy than silent)
+        }
+        Log::log($level, $message, $context);
     }
 
     /**
@@ -320,7 +349,8 @@ class PdfBrandingService
     {
         $content = $this->rawDownload($url, 60);
         if ($content === null) {
-            Log::warning('PdfBrandingService: Failed to download PDF', ['url' => $url]);
+            $this->logOncePerDay('pdf_dl_fail:' . $url, 'warning',
+                'PdfBrandingService: Failed to download PDF', ['url' => $url]);
             return null;
         }
 
@@ -337,7 +367,8 @@ class PdfBrandingService
     {
         [$content, $contentType] = $this->rawDownload($url, 30, true);
         if ($content === null) {
-            Log::warning('PdfBrandingService: Failed to download image', ['url' => $url]);
+            $this->logOncePerDay('img_dl_fail:' . $url, 'warning',
+                'PdfBrandingService: Failed to download image', ['url' => $url]);
             return null;
         }
 
@@ -373,6 +404,12 @@ class PdfBrandingService
                 CURLOPT_CONNECTTIMEOUT => 15,
                 CURLOPT_SSL_VERIFYPEER => true,
                 CURLOPT_USERAGENT => 'NextTrip-PdfBranding/1.0',
+                // FIX (2026-07-16): let libcurl advertise ONLY the encodings it can
+                // decode. Some CDNs return non-standard Content-Encoding values
+                // (cURL error 61: "Unrecognized content encoding type") when
+                // Accept-Encoding is unset. Passing '' opts into automatic
+                // decompression for the encodings this build of curl supports.
+                CURLOPT_ENCODING => '',
             ]);
             $body = curl_exec($ch);
             $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -381,11 +418,12 @@ class PdfBrandingService
             curl_close($ch);
 
             if ($body === false || $httpCode < 200 || $httpCode >= 300 || $body === '') {
-                Log::warning('PdfBrandingService: rawDownload failed', [
-                    'url' => $url,
-                    'http_code' => $httpCode,
-                    'curl_error' => $err,
-                ]);
+                $this->logOncePerDay('raw_dl_fail:' . $url, 'warning',
+                    'PdfBrandingService: rawDownload failed', [
+                        'url' => $url,
+                        'http_code' => $httpCode,
+                        'curl_error' => $err,
+                    ]);
                 return $withContentType ? [null, null] : null;
             }
 
