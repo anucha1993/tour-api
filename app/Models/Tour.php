@@ -439,9 +439,17 @@ class Tour extends Model
             'display_price' => $displayPrice ?? $this->display_price,
             'discount_amount' => $totalDiscount > 0 ? $totalDiscount : null,
             'discount_label' => $discountLabel,
-            'next_departure_date' => $openPeriods->min('start_date') ?? $this->next_departure_date,
-            'total_departures' => $openPeriods->count() ?: ($this->total_departures ?? 0),
-            'available_seats' => $openPeriods->sum('available') ?: ($this->available_seats ?? 0),
+            // Bug fix (2026-07-16): removed the `?? $this->...` / `?: $this->...`
+            // stale-value fallbacks below. Those fallbacks silently preserved
+            // outdated aggregates when a tour ran out of upcoming open periods
+            // (e.g. all periods became past-dated without an admin editing
+            // anything). That caused stale next_departure_date / available_seats
+            // to keep the tour visible or sortable with wrong values. When
+            // there are no future+open periods, these fields must reflect that
+            // (null / 0) so downstream filters behave correctly.
+            'next_departure_date' => $openPeriods->min('start_date'),
+            'total_departures' => $openPeriods->count(),
+            'available_seats' => $openPeriods->sum('available'),
             'has_promotion' => $totalDiscount > 0,
             'hotel_star' => $hotelStar ?? $this->hotel_star,
             'hotel_star_min' => $hotelStars->min() ?? $this->hotel_star_min,

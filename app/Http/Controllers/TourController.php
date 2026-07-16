@@ -4,7 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\Tour;
 use App\Models\Country;
+use App\Models\WholesalerApiConfig;
 use App\Services\CloudflareImagesService;
+use App\Services\PdfBrandingService;
 use App\Services\SlugService;
 use App\Services\TourPdfGenerator;
 use Illuminate\Http\Request;
@@ -1332,6 +1334,19 @@ class TourController extends Controller
 
     /**
      * Upload custom PDF that overrides API-synced PDF.
+     *
+     * When the tour is linked to a wholesaler that has PDF branding
+     * (header/footer) configured on its WholesalerApiConfig, the uploaded
+     * file is passed through PdfBrandingService FIRST so the resulting PDF
+     * matches the branded output produced by the automatic sync flow.
+     *
+     * Behaviour:
+     *  - Tour has wholesaler with branding config → overlay header/footer,
+     *    upload branded result to R2.
+     *  - Tour has no wholesaler OR wholesaler has no branding config → upload
+     *    the file directly (existing behaviour, no branding).
+     *  - Branding fails (unparseable PDF, GS missing, etc.) → fall back to
+     *    direct upload so the user's file is never lost.
      */
     public function uploadCustomPdf(Request $request, Tour $tour): JsonResponse
     {
@@ -1344,36 +1359,73 @@ class TourController extends Controller
         ]);
 
         $file = $request->file('pdf');
-        $filename = Str::slug($tour->tour_code) . '-custom-' . time() . '.pdf';
-        $path = "tours/pdf/custom/{$filename}";
+        $localPath = $file->getRealPath();
 
-        try {
-            Storage::disk('r2')->put($path, file_get_contents($file->getRealPath()), [
-                'visibility' => 'public',
-                'ContentType' => 'application/pdf',
-            ]);
+        // Try branding first (only if the tour's wholesaler has header/footer configured).
+        $pdfUrl = null;
+        $branded = false;
 
-            $pdfUrl = config('filesystems.disks.r2.url') . '/' . $path;
+        $config = $tour->wholesaler_id
+            ? WholesalerApiConfig::where('wholesaler_id', $tour->wholesaler_id)->first()
+            : null;
 
-            $tour->custom_pdf_url = $pdfUrl;
-            $tour->pdf_source = 'custom';
-            $tour->save();
+        if ($config && ($config->pdf_header_image || $config->pdf_footer_image)) {
+            $branding = new PdfBrandingService();
+            $branding->setHeader($config->pdf_header_image, $config->pdf_header_height);
+            $branding->setFooter($config->pdf_footer_image, $config->pdf_footer_height);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'อัปโหลด PDF Custom สำเร็จ',
-                'data' => [
-                    'custom_pdf_url' => $tour->custom_pdf_url,
-                    'pdf_source' => $tour->pdf_source,
-                    'effective_pdf_url' => $tour->effective_pdf_url,
-                ],
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'อัปโหลด PDF ล้มเหลว: ' . $e->getMessage(),
-            ], 500);
+            $wholesalerCode = $tour->wholesaler?->code ?? 'default';
+            $baseFilename = Str::slug($tour->tour_code) . '-custom';
+
+            try {
+                $pdfUrl = $branding->processAndUploadLocal($localPath, $wholesalerCode, $baseFilename);
+                if ($pdfUrl) {
+                    $branded = true;
+                } else {
+                    Log::warning('TourController::uploadCustomPdf: Branding failed, falling back to direct upload', [
+                        'tour_id' => $tour->id,
+                    ]);
+                }
+            } finally {
+                $branding->cleanup();
+            }
         }
+
+        // Fallback: direct upload when no branding was configured or branding failed.
+        if (!$pdfUrl) {
+            $filename = Str::slug($tour->tour_code) . '-custom-' . time() . '.pdf';
+            $path = "tours/pdf/custom/{$filename}";
+
+            try {
+                Storage::disk('r2')->put($path, file_get_contents($localPath), [
+                    'visibility' => 'public',
+                    'ContentType' => 'application/pdf',
+                ]);
+                $pdfUrl = config('filesystems.disks.r2.url') . '/' . $path;
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'อัปโหลด PDF ล้มเหลว: ' . $e->getMessage(),
+                ], 500);
+            }
+        }
+
+        $tour->custom_pdf_url = $pdfUrl;
+        $tour->pdf_source = 'custom';
+        $tour->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => $branded
+                ? 'อัปโหลด PDF Custom สำเร็จ (แทรก branding แล้ว)'
+                : 'อัปโหลด PDF Custom สำเร็จ',
+            'data' => [
+                'custom_pdf_url' => $tour->custom_pdf_url,
+                'pdf_source' => $tour->pdf_source,
+                'effective_pdf_url' => $tour->effective_pdf_url,
+                'branded' => $branded,
+            ],
+        ]);
     }
 
     /**

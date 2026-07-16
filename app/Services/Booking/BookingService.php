@@ -405,6 +405,24 @@ class BookingService
             'provider_booking_ref' => $result->bookingRef,
         ]);
 
+        // If the provider returned an expiry timestamp (e.g. Zego's
+        // bookingExpireDate — the cut-off deadline before the seat is
+        // released), record it so admins can see how long they have to pay.
+        $expiresAt = $result->metadata['expires_at'] ?? null;
+        if ($expiresAt) {
+            try {
+                $booking->update([
+                    'hold_expires_at' => \Carbon\Carbon::parse($expiresAt),
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning('Failed to parse provider expires_at', [
+                    'booking_id' => $booking->id,
+                    'expires_at' => $expiresAt,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
         BookingEvent::log(
             $booking->id,
             'confirm',

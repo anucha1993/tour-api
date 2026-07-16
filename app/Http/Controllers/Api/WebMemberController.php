@@ -21,13 +21,33 @@ class WebMemberController extends Controller
     {
         $query = WebMember::with('level');
 
-        // Search by name, email, phone
+        // Search by name, email, phone.
+        // Bug fix (2026-07-16): previously we only did `first_name LIKE %q%`
+        // and `last_name LIKE %q%`, so typing the full name "Jeerapron Banklee"
+        // returned nothing because neither column alone contains the space.
+        // Now we also match against the concatenated full name and against the
+        // normalized phone (strip non-digits, and convert Thai 0xxxxxxxxx to
+        // the MSISDN 66xxxxxxxxx form that is actually stored in the DB).
         if ($search = $request->input('search')) {
             $query->where(function ($q) use ($search) {
                 $q->where('first_name', 'like', "%{$search}%")
                     ->orWhere('last_name', 'like', "%{$search}%")
+                    ->orWhereRaw(
+                        "CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, '')) LIKE ?",
+                        ["%{$search}%"]
+                    )
                     ->orWhere('email', 'like', "%{$search}%")
                     ->orWhere('phone', 'like', "%{$search}%");
+
+                // Extra match on the digits-only form so "0830868988",
+                // "66830868988", or "830 868 988" all hit the same record.
+                $digits = preg_replace('/\D/', '', (string) $search);
+                if ($digits !== '' && strlen($digits) >= 4) {
+                    $q->orWhere('phone', 'like', "%{$digits}%");
+                    if (str_starts_with($digits, '0') && strlen($digits) >= 10) {
+                        $q->orWhere('phone', 'like', '%66' . substr($digits, 1) . '%');
+                    }
+                }
             });
         }
 
@@ -215,13 +235,26 @@ class WebMemberController extends Controller
     {
         $query = WebMember::query();
 
-        // Apply same filters as index
+        // Apply same filters as index (see index() for the full-name / phone
+        // normalization rationale).
         if ($search = $request->input('search')) {
             $query->where(function ($q) use ($search) {
                 $q->where('first_name', 'like', "%{$search}%")
                     ->orWhere('last_name', 'like', "%{$search}%")
+                    ->orWhereRaw(
+                        "CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, '')) LIKE ?",
+                        ["%{$search}%"]
+                    )
                     ->orWhere('email', 'like', "%{$search}%")
                     ->orWhere('phone', 'like', "%{$search}%");
+
+                $digits = preg_replace('/\D/', '', (string) $search);
+                if ($digits !== '' && strlen($digits) >= 4) {
+                    $q->orWhere('phone', 'like', "%{$digits}%");
+                    if (str_starts_with($digits, '0') && strlen($digits) >= 10) {
+                        $q->orWhere('phone', 'like', '%66' . substr($digits, 1) . '%');
+                    }
+                }
             });
         }
 

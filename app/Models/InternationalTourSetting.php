@@ -170,8 +170,17 @@ class InternationalTourSetting extends Model
                 'status', 'view_count', 'created_at', 'updated_at',
             ])
             ->where('status', 'active')
-            ->whereNotNull('next_departure_date')
-            ->where('next_departure_date', '>=', now()->toDateString())
+            // Bug fix (2026-07-16): use live whereHas() instead of relying on the
+            // cached `next_departure_date` column. The cached value can become
+            // stale for manual tours because there is no daily sync job to
+            // re-run recalculateAggregates() — so periods that used to be
+            // "upcoming" gradually become past-dated without triggering a
+            // refresh, which hides the tour even though it still has valid
+            // future open periods.
+            ->whereHas('periods', function ($q) {
+                $q->where('status', 'open')
+                  ->where('start_date', '>=', now()->toDateString());
+            })
             // Exclude domestic tours (Thailand id=8)
             ->where(function ($q) {
                 $q->where('primary_country_id', '!=', 8)

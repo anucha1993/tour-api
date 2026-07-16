@@ -267,15 +267,37 @@ class ZegoBookingAdapter extends BaseBookingAdapter
         Cache::forget("booking_quote:{$quoteId}");
 
         $data = $body['data'] ?? [];
-        // Try multiple field names Zego may use for the booking reference.
+        // As of Zego API v1.5 (2026-07 update) the successful booking-submit
+        // response nests booking metadata under `data.booking`. Older/other
+        // shapes flatten the fields onto `data` directly. Support both.
+        $bookingBlock = is_array($data['booking'] ?? null) ? $data['booking'] : [];
+
         $bookingRef = (string) (
-            $data['bookingId']
+            $bookingBlock['id']
+            ?? $bookingBlock['bookingId']
+            ?? $bookingBlock['number']
+            ?? $bookingBlock['bookingNo']
+            ?? $data['bookingId']
             ?? $data['bookingNo']
             ?? $data['booking_id']
             ?? $data['booking_no']
             ?? $data['id']
             ?? ''
         );
+
+        $confirmationNumber = $bookingBlock['number']
+            ?? $bookingBlock['bookingNo']
+            ?? $data['bookingNo']
+            ?? $data['booking_no']
+            ?? null;
+
+        // ISO-8601 timestamps returned by Zego (UTC, e.g. "2026-07-09T10:05:53.000Z")
+        $bookingDate = $bookingBlock['bookingDate']
+            ?? $data['bookingDate']
+            ?? null;
+        $expiresAt = $bookingBlock['bookingExpireDate']
+            ?? $data['bookingExpireDate']
+            ?? null;
 
         // Zego sometimes does NOT return bookingId/bookingNo in the submit
         // response — look it up via the audit API by customer phone.
@@ -286,12 +308,15 @@ class ZegoBookingAdapter extends BaseBookingAdapter
             );
             if ($auditLookup) {
                 $bookingRef = (string) ($auditLookup['bookingNo'] ?? $auditLookup['bookingId'] ?? '');
+                $confirmationNumber = $confirmationNumber ?? ($auditLookup['bookingNo'] ?? null);
             }
         }
 
         Log::info('Zego booking-submit success', [
             'http_status' => $res->status(),
             'booking_ref' => $bookingRef,
+            'confirmation_number' => $confirmationNumber,
+            'expires_at' => $expiresAt,
             'data' => $data,
             'raw_body' => $body,
             'audit_lookup' => $auditLookup,
@@ -299,9 +324,11 @@ class ZegoBookingAdapter extends BaseBookingAdapter
 
         return BookingResult::success(
             bookingRef: $bookingRef,
-            confirmationNumber: $data['bookingNo'] ?? $data['booking_no'] ?? ($auditLookup['bookingNo'] ?? null),
+            confirmationNumber: $confirmationNumber,
             status: 'confirmed',
             metadata: array_merge($data, [
+                'booking_date' => $bookingDate,
+                'expires_at' => $expiresAt,
                 'raw_response' => $body,
                 'audit_lookup' => $auditLookup,
             ]),

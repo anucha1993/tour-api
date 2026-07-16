@@ -576,6 +576,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('bookings/{id}', [BookingController::class, 'update']);
     Route::patch('bookings/{id}/status', [BookingController::class, 'updateStatus']);
     Route::delete('bookings/{id}', [BookingController::class, 'destroy']);
+    Route::post('bookings/{id}/outbound/retry', [BookingController::class, 'retryOutbound']);
 
     // Outbound booking lifecycle (quote → hold → confirm → cancel)
     Route::post('bookings/outbound/quote', [\App\Http\Controllers\Api\BookingController::class, 'quote']);

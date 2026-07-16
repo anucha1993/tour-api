@@ -217,8 +217,7 @@ class PdfBrandingService
      */
     public function processAndUpload(string $pdfUrl, ?string $wholesalerCode = null): ?string
     {
-        $processedPath = $this->process($pdfUrl);
-        
+        $processedPath = $this->process($pdfUrl);        
         if (!$processedPath) {
             return null;
         }
@@ -256,6 +255,132 @@ class PdfBrandingService
             Log::error('PdfBrandingService: Failed to upload PDF to R2', [
                 'error' => $e->getMessage(),
             ]);
+            return null;
+        }
+    }
+
+    /**
+     * Apply header/footer overlay to a PDF that already lives on the local
+     * filesystem (e.g. uploaded via multipart/form-data). Unlike process(),
+     * this does NOT download from a URL.
+     *
+     * The source file is left untouched — a NEW temp file is returned so the
+     * caller doesn't accidentally lose their upload if branding is skipped.
+     *
+     * @param string $localPath Absolute path to the source PDF on disk
+     * @return string|null Path to processed PDF (local temp file) or null on failure
+     */
+    public function processLocalFile(string $localPath): ?string
+    {
+        try {
+            if (!file_exists($localPath)) {
+                Log::warning('PdfBrandingService: Local PDF not found', ['path' => $localPath]);
+                return null;
+            }
+
+            // Copy source to a temp file first — overlayImages() may replace it
+            // and we don't want to mutate the caller's upload.
+            $workingPath = sys_get_temp_dir() . '/pdf_local_' . uniqid() . '.pdf';
+            if (!@copy($localPath, $workingPath)) {
+                Log::warning('PdfBrandingService: Failed to copy local PDF to temp', [
+                    'src' => $localPath,
+                ]);
+                return null;
+            }
+
+            // If no header and no footer, no overlay work needed — return the copy.
+            if (!$this->headerImagePath && !$this->footerImagePath) {
+                return $workingPath;
+            }
+
+            // Process PDF with FPDI (same fallback ladder as process())
+            try {
+                $outputPath = $this->overlayImages($workingPath);
+            } catch (\setasign\Fpdi\PdfParser\CrossReference\CrossReferenceException | \setasign\Fpdi\PdfParser\PdfParserException $e) {
+                $this->logOncePerDay('fpdi_parse:local', 'info',
+                    'PdfBrandingService: FPDI cannot parse local PDF, trying Ghostscript normalize', [
+                        'error' => $e->getMessage(),
+                    ]);
+
+                $normalizedPath = $this->normalizePdf($workingPath, null);
+                if (!$normalizedPath) {
+                    if (file_exists($workingPath)) {
+                        unlink($workingPath);
+                    }
+                    return null;
+                }
+
+                $outputPath = $this->overlayImages($normalizedPath);
+                if ($normalizedPath !== $outputPath && file_exists($normalizedPath)) {
+                    unlink($normalizedPath);
+                }
+            }
+
+            // Cleanup working copy if a new output was produced
+            if ($workingPath !== $outputPath && file_exists($workingPath)) {
+                unlink($workingPath);
+            }
+
+            return $outputPath;
+        } catch (\Exception $e) {
+            Log::error('PdfBrandingService: Failed to process local PDF', [
+                'path' => $localPath,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Apply branding to a local PDF and upload the result to R2. Mirrors
+     * processAndUpload() but for manually-uploaded files (not fetched by URL).
+     *
+     * @param string $localPath Absolute path to the source PDF on disk
+     * @param string|null $wholesalerCode Wholesaler code for R2 folder organization
+     * @param string|null $baseFilename Optional base name (before the unique suffix)
+     * @return string|null Public URL of the branded PDF on R2, or null on failure
+     */
+    public function processAndUploadLocal(
+        string $localPath,
+        ?string $wholesalerCode = null,
+        ?string $baseFilename = null,
+    ): ?string {
+        $processedPath = $this->processLocalFile($localPath);
+
+        if (!$processedPath) {
+            return null;
+        }
+
+        try {
+            $wholesalerFolder = $wholesalerCode ? strtolower($wholesalerCode) : 'default';
+            $yearMonth = date('Y/m');
+
+            $base = $baseFilename ?: (pathinfo($localPath, PATHINFO_FILENAME) ?: 'manual');
+            $safeBase = preg_replace('/[^a-zA-Z0-9_-]/', '_', $base);
+            $filename = $safeBase . '_' . uniqid() . '.pdf';
+
+            $r2Path = "pdfs/{$wholesalerFolder}/{$yearMonth}/{$filename}";
+
+            $disk = Storage::disk('r2');
+            $disk->put($r2Path, file_get_contents($processedPath), 'public');
+
+            if (file_exists($processedPath)) {
+                unlink($processedPath);
+            }
+
+            $r2Url = env('R2_URL');
+            if ($r2Url) {
+                return rtrim($r2Url, '/') . '/' . $r2Path;
+            }
+
+            return $disk->url($r2Path);
+        } catch (\Exception $e) {
+            Log::error('PdfBrandingService: Failed to upload local PDF to R2', [
+                'error' => $e->getMessage(),
+            ]);
+            if (isset($processedPath) && file_exists($processedPath)) {
+                @unlink($processedPath);
+            }
             return null;
         }
     }

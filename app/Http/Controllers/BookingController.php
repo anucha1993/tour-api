@@ -183,6 +183,61 @@ class BookingController extends Controller
     }
 
     /**
+     * Re-run the outbound (wholesaler API) booking flow for a booking that
+     * previously failed. Idempotent — safe to call multiple times. Returns
+     * the refreshed booking so the UI can inspect the new provider_status.
+     */
+    public function retryOutbound(int $id)
+    {
+        $booking = Booking::with('period')->find($id);
+        if (!$booking) {
+            return response()->json(['message' => 'ไม่พบข้อมูลการจอง'], 404);
+        }
+
+        $period = $booking->period;
+        if (!$period || !BookingService::isOutboundEnabledForPeriod($period)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ทัวร์นี้ไม่ได้เปิดใช้งาน Outbound Booking API',
+            ], 422);
+        }
+
+        // Only allow retry from a terminal/pending state — don't clobber an
+        // in-flight or already-confirmed provider booking.
+        if (in_array($booking->provider_status, ['confirmed'], true) && $booking->provider_booking_ref) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ใบจองนี้ยืนยันกับ provider แล้ว (ref: ' . $booking->provider_booking_ref . ')',
+            ], 422);
+        }
+
+        try {
+            $bookingService = app(BookingService::class);
+            $booking = $bookingService->runOutboundForBooking($booking);
+        } catch (\Throwable $e) {
+            Log::error('Retry outbound booking failed', [
+                'booking_id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'ยิง API ไม่สำเร็จ: ' . $e->getMessage(),
+            ], 500);
+        }
+
+        $confirmed = $booking->provider_status === 'confirmed' && $booking->provider_booking_ref;
+
+        return response()->json([
+            'success' => true,
+            'message' => $confirmed
+                ? 'ยิง API สำเร็จ (ref: ' . $booking->provider_booking_ref . ')'
+                : 'ยิง API แล้ว — สถานะ: ' . ($booking->provider_status ?? 'unknown'),
+            'is_confirmed_by_provider' => $confirmed,
+            'booking' => $booking->fresh(['member', 'tour', 'period', 'flashSaleItem']),
+        ]);
+    }
+
+    /**
      * Get booking statistics
      */
     public function statistics()
@@ -207,6 +262,7 @@ class BookingController extends Controller
         $validated = $request->validate([
             'tour_id' => 'required|exists:tours,id',
             'period_id' => 'required|exists:tour_periods,id',
+            'web_member_id' => 'nullable|integer|exists:web_members,id',
             'first_name' => 'required|string|max:100',
             'last_name' => 'required|string|max:100',
             'email' => 'required|email|max:100',
@@ -235,6 +291,7 @@ class BookingController extends Controller
             'booking_code' => Booking::generateBookingCode(),
             'tour_id' => $validated['tour_id'],
             'period_id' => $validated['period_id'],
+            'web_member_id' => $validated['web_member_id'] ?? null,
             'first_name' => $validated['first_name'],
             'last_name' => $validated['last_name'],
             'email' => $validated['email'],
