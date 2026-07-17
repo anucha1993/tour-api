@@ -845,6 +845,38 @@ class SyncToursJob implements ShouldQueue
                     $skipZero = ($stringTransform['formulaSkipZero'] ?? true) !== false;
                     
                     return $this->evaluateFormulaExpression($expression, $rawData, $skipZero);
+
+                case 'custom':
+                    // Custom operations dispatched by config.operation
+                    if ($value === null || !is_scalar($value)) return null;
+                    switch ($config['operation'] ?? null) {
+                        case 'regex_extract':
+                            $pattern = $config['pattern'] ?? null;
+                            if (!$pattern) return $value;
+                            $group = $config['group'] ?? 1;
+                            if (@preg_match('/' . $pattern . '/u', (string) $value, $m) && isset($m[$group])) {
+                                $extracted = $m[$group];
+                                return match ($config['cast'] ?? null) {
+                                    'int' => (int) $extracted,
+                                    'float' => (float) $extracted,
+                                    default => $extracted,
+                                };
+                            }
+                            return null;
+
+                        case 'date_range':
+                            $part = ($config['part'] ?? 'start') === 'end' ? 'end' : 'start';
+                            $normalized = str_replace(["\u{2013}", "\u{2014}"], '-', trim((string) $value));
+                            $segments = preg_split('/\s+(?:-|to|ถึง)\s+/u', $normalized) ?: [];
+                            $segments = array_values(array_filter(array_map('trim', $segments), fn($s) => $s !== ''));
+                            if (empty($segments)) return null;
+                            $selected = $part === 'end' ? end($segments) : $segments[0];
+                            $ts = strtotime($selected);
+                            return $ts ? date('Y-m-d', $ts) : null;
+
+                        default:
+                            return $value;
+                    }
                     
                 default:
                     return $value;

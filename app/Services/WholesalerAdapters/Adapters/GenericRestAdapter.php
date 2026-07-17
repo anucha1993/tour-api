@@ -222,11 +222,55 @@ class GenericRestAdapter extends BaseAdapter
                     break;
             }
 
+            // Optional: group flat rows into (tour + periods[]) structure.
+            // Configured via auth_credentials.group_by:
+            //   {
+            //     "key": "mainid",           // field that identifies the tour
+            //     "periods_field": "periods" // (optional) target array name, default "periods"
+            //   }
+            // Use this when the API returns flat rows where each row represents
+            // one departure-period of a tour and multiple rows share the same
+            // grouping key (e.g. Unique Interwholesale, SuperbHolidayz-style APIs).
+            $groupBy = $credentials['group_by'] ?? null;
+            if (is_array($groupBy) && !empty($groupBy['key']) && is_array($tours) && !empty($tours)) {
+                $tours = $this->groupFlatRows($tours, $groupBy);
+            }
+
             return SyncResult::success($tours, $nextCursor, $hasMore, $responsePage, $responseLastPage ? (int) $responseLastPage : null, $responsePerPage);
 
         } catch (\Exception $e) {
             return SyncResult::failed($e->getMessage(), (string) $e->getCode());
         }
+    }
+
+    /**
+     * Group flat API rows into nested tour+periods structure.
+     *
+     * Input:  [ {mainid:1, Date:'2026-01-01', Adult:10000}, {mainid:1, Date:'2026-02-01', Adult:10000}, {mainid:2, ...} ]
+     * Output: [ {mainid:1, Date:'2026-01-01', Adult:10000, periods:[{...},{...}]}, {mainid:2, ..., periods:[{...}]} ]
+     *
+     * The first row per group is used as the tour-level source; ALL rows
+     * (including the first) are also placed into the `periods_field` array.
+     */
+    protected function groupFlatRows(array $rows, array $groupBy): array
+    {
+        $key          = $groupBy['key'];
+        $periodsField = $groupBy['periods_field'] ?? 'periods';
+
+        $groups = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) continue;
+            $groupKey = $row[$key] ?? null;
+            if ($groupKey === null || $groupKey === '') continue;
+            $groupKey = (string) $groupKey;
+            if (!isset($groups[$groupKey])) {
+                // Seed tour-level data from the first row
+                $groups[$groupKey] = $row;
+                $groups[$groupKey][$periodsField] = [];
+            }
+            $groups[$groupKey][$periodsField][] = $row;
+        }
+        return array_values($groups);
     }
 
     /**

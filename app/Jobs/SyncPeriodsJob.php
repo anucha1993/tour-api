@@ -468,6 +468,16 @@ class SyncPeriodsJob implements ShouldQueue
                 return date('Y-m-d', strtotime($value));
             case 'datetime':
                 return date('Y-m-d H:i:s', strtotime($value));
+            case 'custom':
+                // Custom operations dispatched by config.operation
+                switch ($config['operation'] ?? null) {
+                    case 'date_range':
+                        return $this->extractDateRangePart((string) $value, $config);
+                    case 'regex_extract':
+                        return $this->extractByRegex((string) $value, $config);
+                    default:
+                        return $value;
+                }
             case 'number':
                 return is_numeric($value) ? (float) $value : 0;
             case 'integer':
@@ -480,6 +490,56 @@ class SyncPeriodsJob implements ShouldQueue
             default:
                 return $value;
         }
+    }
+
+    /**
+     * Extract the start or end date from a range string.
+     * e.g. "2027-03-21 - 2027-03-24" with part=start -> "2027-03-21"
+     * Handles hyphen/en-dash/em-dash and "to"/"ถึง" separators.
+     */
+    protected function extractDateRangePart(string $value, ?array $config): ?string
+    {
+        $part = ($config['part'] ?? 'start') === 'end' ? 'end' : 'start';
+        $normalized = str_replace(["\u{2013}", "\u{2014}"], '-', trim($value));
+
+        // Split on a hyphen (or "to"/"ถึง") surrounded by whitespace so the
+        // hyphens inside the ISO dates (2027-03-21) are left intact.
+        $segments = preg_split('/\s+(?:-|to|ถึง)\s+/u', $normalized) ?: [];
+        $segments = array_values(array_filter(array_map('trim', $segments), fn($s) => $s !== ''));
+
+        if (empty($segments)) {
+            return null;
+        }
+
+        $selected = $part === 'end' ? end($segments) : $segments[0];
+        $ts = strtotime($selected);
+
+        return $ts ? date('Y-m-d', $ts) : null;
+    }
+
+    /**
+     * Extract a substring via regex pattern.
+     * config: { pattern: "(\\d+)D", group: 1, cast: "int"|"float"|null }
+     */
+    protected function extractByRegex(string $value, ?array $config): mixed
+    {
+        $pattern = $config['pattern'] ?? null;
+        if (!$pattern) {
+            return $value;
+        }
+
+        $group = $config['group'] ?? 1;
+
+        if (@preg_match('/' . $pattern . '/u', $value, $m) && isset($m[$group])) {
+            $extracted = $m[$group];
+            return match ($config['cast'] ?? null) {
+                'int' => (int) $extracted,
+                'float' => (float) $extracted,
+                default => $extracted,
+            };
+        }
+
+        return null;
     }
 
     /**

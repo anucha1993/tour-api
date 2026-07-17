@@ -532,7 +532,10 @@ abstract class BaseAdapter implements AdapterInterface
 
         /** @var Response $response */
         $response = match (strtoupper($method)) {
-            'GET' => $client->get($url, $data),
+            // Laravel's Http::get($url, []) STRIPS the URL's existing query
+            // string. When we have no additional params, call ->get($url) with
+            // a single argument so a base URL like "foo.php?user=x" survives.
+            'GET' => empty($data) ? $client->get($url) : $client->get($url, $data),
             'POST' => $client->post($url, $data),
             'PUT' => $client->put($url, $data),
             'PATCH' => $client->patch($url, $data),
