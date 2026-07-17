@@ -304,4 +304,56 @@ class GalleryVideoController extends Controller
             'message' => 'เปลี่ยนภาพปกสำเร็จ',
         ]);
     }
+
+    /**
+     * Remove the custom thumbnail image (falls back to auto-derived YouTube
+     * thumbnail on the frontend). Deletes the file from Cloudflare Images and
+     * clears the DB columns.
+     *
+     * Safety note (2026-07-17): the DB reference is cleared ONLY after the
+     * Cloudflare delete succeeds. If Cloudflare fails we abort with a 500
+     * error and keep `thumbnail_cloudflare_id` in the DB so the admin can
+     * retry — clearing it would orphan the file forever (we'd no longer know
+     * the id to delete). Exception: if Cloudflare isn't configured at all,
+     * we clear the DB anyway because the reference is unreachable regardless.
+     */
+    public function removeThumbnail(GalleryVideo $galleryVideo): JsonResponse
+    {
+        if ($galleryVideo->thumbnail_cloudflare_id) {
+            if ($this->cloudflare->isConfigured()) {
+                $deleted = $this->cloudflare->delete($galleryVideo->thumbnail_cloudflare_id);
+                if (!$deleted) {
+                    // Keep DB reference intact so the admin can retry. Without
+                    // the id we couldn't reach the orphaned file on Cloudflare.
+                    Log::warning('removeThumbnail: Cloudflare delete failed, aborting DB update', [
+                        'gallery_video_id' => $galleryVideo->id,
+                        'cloudflare_id' => $galleryVideo->thumbnail_cloudflare_id,
+                    ]);
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'ลบไฟล์ภาพจาก Cloudflare ไม่สำเร็จ (ยังไม่ได้ลบข้อมูลใน DB) — โปรดลองใหม่อีกครั้ง',
+                    ], 500);
+                }
+            } else {
+                // No Cloudflare config — the reference in DB is already dead.
+                // Clearing it is safe (nothing to orphan).
+                Log::info('removeThumbnail: Cloudflare not configured, clearing DB reference only', [
+                    'gallery_video_id' => $galleryVideo->id,
+                ]);
+            }
+        }
+
+        $galleryVideo->update([
+            'thumbnail_cloudflare_id' => null,
+            'thumbnail_url' => null,
+        ]);
+
+        $galleryVideo->load(['country:id,iso2,name_en,name_th', 'city:id,name_en,name_th']);
+
+        return response()->json([
+            'success' => true,
+            'data' => $galleryVideo,
+            'message' => 'ลบภาพปกสำเร็จ',
+        ]);
+    }
 }

@@ -1506,4 +1506,119 @@ HTML;
             'message' => 'Social Auth configuration updated successfully',
         ]);
     }
+
+    // ═══════════════════════════════════════════
+    //  TRACKING / ANALYTICS CONFIG
+    //  (Google Tag Manager, GA4, Facebook Pixel, TikTok Pixel)
+    // ═══════════════════════════════════════════
+
+    /**
+     * Default shape returned when nothing is stored yet.
+     */
+    private function trackingDefaults(): array
+    {
+        return [
+            'gtm_id'          => '',   // GTM-XXXXXXX (Google Tag Manager container)
+            'ga4_id'          => '',   // G-XXXXXXXXXX (Google Analytics 4)
+            'fb_pixel_id'     => '',   // Facebook / Meta Pixel numeric id
+            'tiktok_pixel_id' => '',   // TikTok Pixel id (optional)
+            'enabled'         => true, // Master switch — turn everything off with one toggle
+            // Advanced: raw HTML/script snippets pasted by admin. Injected as-is
+            // WITHOUT consent gating (admin's responsibility to comply). Use these
+            // when you want to install GTM/Pixel snippets exactly as vendor provides.
+            'custom_head_html' => '',  // Injected inside <head>
+            'custom_body_html' => '',  // Injected right after <body> (for GTM <noscript>)
+        ];
+    }
+
+    /**
+     * Get tracking config (admin).
+     */
+    public function getTrackingConfig(): JsonResponse
+    {
+        $config = array_merge(
+            $this->trackingDefaults(),
+            Setting::get('tracking_config', []) ?? []
+        );
+
+        return response()->json([
+            'success' => true,
+            'data' => $config,
+        ]);
+    }
+
+    /**
+     * Update tracking config (admin).
+     */
+    public function updateTrackingConfig(Request $request): JsonResponse
+    {
+        // Format helpers — light validation. We accept empty strings to disable a tracker.
+        $validated = $request->validate([
+            'gtm_id'          => 'nullable|string|max:50|regex:/^(GTM-[A-Z0-9]+)?$/i',
+            'ga4_id'          => 'nullable|string|max:50|regex:/^(G-[A-Z0-9]+|UA-\d+-\d+)?$/i',
+            'fb_pixel_id'     => 'nullable|string|max:50|regex:/^\d*$/',
+            'tiktok_pixel_id' => 'nullable|string|max:50',
+            'enabled'         => 'sometimes|boolean',
+            // Raw snippets: cap size to prevent abuse, but accept any HTML/JS.
+            'custom_head_html' => 'nullable|string|max:20000',
+            'custom_body_html' => 'nullable|string|max:20000',
+        ], [
+            'gtm_id.regex'      => 'GTM ID ต้องขึ้นต้นด้วย "GTM-" (เช่น GTM-ABC1234)',
+            'ga4_id.regex'      => 'GA4 ID ต้องขึ้นต้นด้วย "G-" (เช่น G-ABC1234567)',
+            'fb_pixel_id.regex' => 'Facebook Pixel ID ต้องเป็นตัวเลขเท่านั้น',
+        ]);
+
+        $config = array_merge($this->trackingDefaults(), [
+            'gtm_id'          => trim((string) ($validated['gtm_id'] ?? '')),
+            'ga4_id'          => trim((string) ($validated['ga4_id'] ?? '')),
+            'fb_pixel_id'     => trim((string) ($validated['fb_pixel_id'] ?? '')),
+            'tiktok_pixel_id' => trim((string) ($validated['tiktok_pixel_id'] ?? '')),
+            'enabled'         => (bool) ($validated['enabled'] ?? true),
+            'custom_head_html' => (string) ($validated['custom_head_html'] ?? ''),
+            'custom_body_html' => (string) ($validated['custom_body_html'] ?? ''),
+        ]);
+
+        Setting::set('tracking_config', $config, 'tracking', 'json');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'บันทึกการตั้งค่า Tracking สำเร็จ',
+            'data' => $config,
+        ]);
+    }
+
+    /**
+     * Public endpoint — returns the tracking IDs so tour-web can inject the
+     * matching scripts. Returns empty strings for disabled trackers.
+     */
+    public function getTrackingConfigPublic(): JsonResponse
+    {
+        $config = array_merge(
+            $this->trackingDefaults(),
+            Setting::get('tracking_config', []) ?? []
+        );
+
+        // Master switch off → return everything empty so tour-web injects nothing.
+        if (empty($config['enabled'])) {
+            $config['gtm_id']          = '';
+            $config['ga4_id']          = '';
+            $config['fb_pixel_id']     = '';
+            $config['tiktok_pixel_id'] = '';
+            $config['custom_head_html'] = '';
+            $config['custom_body_html'] = '';
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'gtm_id'          => $config['gtm_id'],
+                'ga4_id'          => $config['ga4_id'],
+                'fb_pixel_id'     => $config['fb_pixel_id'],
+                'tiktok_pixel_id' => $config['tiktok_pixel_id'],
+                'enabled'         => (bool) $config['enabled'],
+                'custom_head_html' => $config['custom_head_html'],
+                'custom_body_html' => $config['custom_body_html'],
+            ],
+        ]);
+    }
 }

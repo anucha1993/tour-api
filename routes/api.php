@@ -137,6 +137,10 @@ Route::get('contact-popup/public', [SettingsController::class, 'getContactPopupC
 // Public Period Display policy (server also filters, this is just informational)
 Route::get('period-display/public', [SettingsController::class, 'getPeriodDisplayPublic']);
 
+// Public Tracking config (Google Tag / GA4 / Facebook Pixel / TikTok)
+// tour-web calls this to inject the matching scripts.
+Route::get('tracking/public', [SettingsController::class, 'getTrackingConfigPublic']);
+
 // Public Subscriber endpoints
 Route::post('subscribers/subscribe', [SubscriberController::class, 'subscribe']);
 Route::get('subscribers/confirm/{token}', [SubscriberController::class, 'confirm']);
@@ -335,6 +339,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('tours/{tour}/custom-cover-image', [TourController::class, 'removeCustomCoverImage']);
     Route::delete('tours/{tour}/custom-pdf', [TourController::class, 'removeCustomPdf']);
     Route::delete('tours/{tour}/api-pdf', [TourController::class, 'removeApiPdf']);
+    Route::delete('tours/{tour}/api-cover-image', [TourController::class, 'removeApiCoverImage']);
     Route::post('tours/mass-delete', [TourController::class, 'massDelete']);
     
     // Tour Manual Override Management (Smart Sync)
@@ -597,6 +602,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('gallery-videos/statistics', [GalleryVideoController::class, 'statistics']);
     Route::patch('gallery-videos/{galleryVideo}/toggle-status', [GalleryVideoController::class, 'toggleStatus']);
     Route::post('gallery-videos/{galleryVideo}/replace-thumbnail', [GalleryVideoController::class, 'replaceThumbnail']);
+    Route::delete('gallery-videos/{galleryVideo}/thumbnail', [GalleryVideoController::class, 'removeThumbnail']);
     Route::apiResource('gallery-videos', GalleryVideoController::class);
 
     // Hero Slides CRUD
@@ -734,6 +740,10 @@ Route::middleware('auth:sanctum')->group(function () {
         // Social Auth Settings
         Route::get('/social-auth', [SettingsController::class, 'getSocialAuthConfig']);
         Route::put('/social-auth', [SettingsController::class, 'updateSocialAuthConfig']);
+
+        // Tracking / Analytics Settings (GTM / GA4 / Facebook Pixel / TikTok)
+        Route::get('/tracking', [SettingsController::class, 'getTrackingConfig']);
+        Route::put('/tracking', [SettingsController::class, 'updateTrackingConfig']);
 
         // Footer Settings
         Route::get('/footer', [SettingsController::class, 'getFooterConfig']);

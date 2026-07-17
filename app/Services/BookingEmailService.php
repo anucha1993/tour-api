@@ -124,6 +124,32 @@ class BookingEmailService
                 'status'       => $booking->status,
             ]);
 
+            // Also notify admin(s) — same pattern as sendBookingConfirmation().
+            // Previously status updates (including cancellations) went ONLY to
+            // the customer, so Nexttrip had no way to know a booking had been
+            // cancelled without opening the dashboard. Reading the template's
+            // send_to_admin / admin_emails settings keeps this configurable.
+            if (!empty($template['send_to_admin']) && !empty($template['admin_emails'])) {
+                $adminEmails = array_filter(array_map('trim', explode(',', $template['admin_emails'])));
+
+                foreach ($adminEmails as $adminEmail) {
+                    if (filter_var($adminEmail, FILTER_VALIDATE_EMAIL)) {
+                        $adminMail = (new Email())
+                            ->from(new Address($smtpConfig['from_address'], $smtpConfig['from_name']))
+                            ->to($adminEmail)
+                            ->subject('[Admin] ' . $subject)
+                            ->html($body);
+
+                        $mailer->send($adminMail);
+
+                        Log::info('BookingEmail: Admin status update sent to ' . $adminEmail, [
+                            'booking_code' => $booking->booking_code,
+                            'status'       => $booking->status,
+                        ]);
+                    }
+                }
+            }
+
         } catch (\Exception $e) {
             Log::error('BookingEmail: Failed to send status update', [
                 'booking_id' => $booking->id ?? null,

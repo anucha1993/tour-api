@@ -140,8 +140,13 @@ class ContactController extends Controller
     public function deleteHeroImage(): JsonResponse
     {
         $settings = ContactPageSetting::getSettings();
-        if ($settings->hero_image_cf_id) {
-            try { $this->cloudflare->delete($settings->hero_image_cf_id); } catch (\Exception $e) { Log::warning('CF delete failed: ' . $e->getMessage()); }
+        // Safety (2026-07-17): abort if Cloudflare delete fails so we don't orphan the file.
+        if ($settings->hero_image_cf_id && $this->cloudflare->isConfigured()) {
+            $deleted = $this->cloudflare->delete($settings->hero_image_cf_id);
+            if (!$deleted) {
+                Log::warning('ContactController::deleteHeroImage: Cloudflare delete failed, aborting', ['cf_id' => $settings->hero_image_cf_id]);
+                return response()->json(['success' => false, 'message' => 'ลบไฟล์จาก Cloudflare ไม่สำเร็จ — โปรดลองใหม่อีกครั้ง'], 500);
+            }
         }
         $settings->update(['hero_image_url' => null, 'hero_image_cf_id' => null]);
         return response()->json(['success' => true, 'data' => $settings->fresh()]);

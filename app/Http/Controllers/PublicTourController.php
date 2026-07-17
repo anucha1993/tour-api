@@ -530,26 +530,87 @@ class PublicTourController extends Controller
      */
     private function getGalleryVideosForTour(Tour $tour): array
     {
-        // Collect all possible matching tags: hashtags + city names + country name
+        // Bug fix (2026-07-17): previous version merged country/city NAMES into
+        // the tag list and matched with `byTags` (JSON_SEARCH). That returned
+        // videos from unrelated cities (and even wrong countries when a video
+        // was mistagged with the country name), because the structured FK
+        // columns `gallery_videos.country_id` and `city_id` were ignored.
+        //
+        // New priority (mirrors GalleryImage::getForTour):
+        //   1) Country-scope. If the tour has a country, ALL results must be
+        //      videos from those countries (via the FK). This alone kills the
+        //      wrong-country cases.
+        //   2) Within scope: prefer city match (city_id FK) — most specific.
+        //   3) Then hashtag match on the video's `tags` JSON — still useful
+        //      for topical relevance within the country.
+        //   4) Finally fill with any remaining country-scoped videos so we
+        //      don't return an empty section when the tour has few tags.
+        $tour->loadMissing(['cities', 'countries']);
+
         $hashtags = $this->ensureArray($tour->hashtags);
-        $cityNames = $tour->cities->pluck('name_th')->filter()->values()->toArray();
-        $countryName = $tour->primaryCountry?->name_th;
+        $cityIds = $tour->cities->pluck('id')->filter()->unique()->values()->all();
 
-        $allTags = array_values(array_unique(array_filter(
-            array_merge($hashtags, $cityNames, $countryName ? [$countryName] : [])
-        )));
-
-        if (empty($allTags)) {
-            return [];
+        $countryIds = $tour->countries->pluck('id')->filter()->unique()->values()->all();
+        if ($tour->primary_country_id && !in_array($tour->primary_country_id, $countryIds, true)) {
+            $countryIds[] = $tour->primary_country_id;
         }
 
-        $videos = GalleryVideo::active()
-            ->byTags($allTags)
-            ->inRandomOrder()
-            ->limit(4)
-            ->get();
+        $limit = 4;
+        $videos = collect();
 
-        return $videos->map(fn($v) => [
+        // Base query — constrain to the tour's countries when we know them
+        $base = function () use ($countryIds) {
+            $q = GalleryVideo::active();
+            if (!empty($countryIds)) {
+                $q->whereIn('country_id', $countryIds);
+            }
+            return $q;
+        };
+
+        // 1. Same city
+        if (!empty($cityIds)) {
+            $cityMatch = $base()
+                ->whereIn('city_id', $cityIds)
+                ->inRandomOrder()
+                ->limit($limit)
+                ->get();
+            $videos = $videos->merge($cityMatch);
+        }
+
+        // 2. Same country, matches a tour hashtag (topical relevance)
+        if ($videos->count() < $limit && !empty($hashtags)) {
+            $need = $limit - $videos->count();
+            $tagMatch = $base()
+                ->byTags($hashtags)
+                ->whereNotIn('id', $videos->pluck('id')->all())
+                ->inRandomOrder()
+                ->limit($need)
+                ->get();
+            $videos = $videos->merge($tagMatch);
+        }
+
+        // 3. Fallback: any remaining country-scoped video
+        if ($videos->count() < $limit && !empty($countryIds)) {
+            $need = $limit - $videos->count();
+            $countryMatch = $base()
+                ->whereNotIn('id', $videos->pluck('id')->all())
+                ->inRandomOrder()
+                ->limit($need)
+                ->get();
+            $videos = $videos->merge($countryMatch);
+        }
+
+        // 4. Ultra-fallback: tour has no country at all (unusual — e.g. draft
+        //    manual tour). Match by hashtag alone rather than returning nothing.
+        if ($videos->isEmpty() && empty($countryIds) && !empty($hashtags)) {
+            $videos = GalleryVideo::active()
+                ->byTags($hashtags)
+                ->inRandomOrder()
+                ->limit($limit)
+                ->get();
+        }
+
+        return $videos->take($limit)->map(fn($v) => [
             'id' => $v->id,
             'video_url' => $v->video_url,
             'orientation' => $v->orientation ?? 'landscape',

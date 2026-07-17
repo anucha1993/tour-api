@@ -9,10 +9,60 @@ use App\Services\BookingEmailService;
 use App\Services\Booking\BookingService;
 use App\Services\PointService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
 class BookingController extends Controller
 {
+    /**
+     * Apply visibility filter based on the current user's role.
+     *
+     * Business rule (2026-07-17):
+     *   role = 'sale' → see ONLY bookings assigned to them (bookings.sale_code
+     *                   equals their name) OR bookings with no sale assigned
+     *                   yet (sale_code IS NULL or empty).
+     *   role = 'admin' / 'it' / anything else → no filter (see everything).
+     *
+     * NOTE: `sale_code` currently stores the sale user's NAME (string), not an
+     * FK to users.id. See docs/proposals/2026-07-13-member-promotion-addon-sales.md
+     * for the future migration plan to a proper foreign key.
+     */
+    protected function applySaleVisibilityFilter($query): void
+    {
+        $user = Auth::user();
+        if (!$user) return; // Unauth: rely on route middleware
+        if (($user->role ?? null) !== 'sale') return; // admin/it: no restriction
+
+        $saleName = trim((string) ($user->name ?? ''));
+
+        $query->where(function ($q) use ($saleName) {
+            // Bookings not yet assigned to any sale
+            $q->whereNull('sale_code')
+              ->orWhere('sale_code', '');
+            if ($saleName !== '') {
+                // Bookings assigned to this sale (exact-match on name)
+                $q->orWhere('sale_code', $saleName);
+            }
+        });
+    }
+
+    /**
+     * Whether the current user is allowed to access the given booking. Same
+     * rule as applySaleVisibilityFilter() but for a single-row check.
+     */
+    protected function currentUserCanAccessBooking(Booking $booking): bool
+    {
+        $user = Auth::user();
+        if (!$user) return false;
+        if (($user->role ?? null) !== 'sale') return true; // admin/it
+
+        $saleName = trim((string) ($user->name ?? ''));
+        $bookingSale = trim((string) ($booking->sale_code ?? ''));
+
+        // Unassigned or matches the sale's own name
+        return $bookingSale === '' || ($saleName !== '' && $bookingSale === $saleName);
+    }
+
     /**
      * List all bookings (admin)
      */
@@ -25,6 +75,9 @@ class BookingController extends Controller
             'period:id,start_date,end_date',
             'flashSaleItem:id,flash_price,discount_percent,flash_sale_id',
         ]);
+
+        // Role-based visibility (sales only see own + unassigned)
+        $this->applySaleVisibilityFilter($query);
 
         // Filter by status
         if ($request->filled('status')) {
@@ -73,6 +126,12 @@ class BookingController extends Controller
         ])->find($id);
 
         if (!$booking) {
+            return response()->json(['message' => 'ไม่พบข้อมูลการจอง'], 404);
+        }
+
+        // Role-based access: sales can only view own + unassigned bookings.
+        // Return 404 (not 403) so sales don't learn the booking exists.
+        if (!$this->currentUserCanAccessBooking($booking)) {
             return response()->json(['message' => 'ไม่พบข้อมูลการจอง'], 404);
         }
 
@@ -242,15 +301,20 @@ class BookingController extends Controller
      */
     public function statistics()
     {
+        // Role-based visibility — wrap each count in the same visibility
+        // filter so the counters shown on the dashboard match what the user
+        // actually sees in the list.
+        $scoped = fn () => tap(Booking::query(), fn ($q) => $this->applySaleVisibilityFilter($q));
+
         return response()->json([
-            'total' => Booking::count(),
-            'pending' => Booking::where('status', 'pending')->count(),
-            'confirmed' => Booking::where('status', 'confirmed')->count(),
-            'paid' => Booking::where('status', 'paid')->count(),
-            'cancelled' => Booking::where('status', 'cancelled')->count(),
-            'completed' => Booking::where('status', 'completed')->count(),
-            'from_flash_sale' => Booking::where('source', 'flash_sale')->count(),
-            'from_website' => Booking::where('source', 'website')->count(),
+            'total'           => $scoped()->count(),
+            'pending'         => $scoped()->where('status', 'pending')->count(),
+            'confirmed'       => $scoped()->where('status', 'confirmed')->count(),
+            'paid'            => $scoped()->where('status', 'paid')->count(),
+            'cancelled'       => $scoped()->where('status', 'cancelled')->count(),
+            'completed'       => $scoped()->where('status', 'completed')->count(),
+            'from_flash_sale' => $scoped()->where('source', 'flash_sale')->count(),
+            'from_website'    => $scoped()->where('source', 'website')->count(),
         ]);
     }
 

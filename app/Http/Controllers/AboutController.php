@@ -114,8 +114,13 @@ class AboutController extends Controller
     public function deleteHeroImage(): JsonResponse
     {
         $settings = AboutPageSetting::getSettings();
-        if ($settings->hero_image_cf_id) {
-            try { $this->cloudflare->delete($settings->hero_image_cf_id); } catch (\Exception $e) { Log::warning('CF delete failed: ' . $e->getMessage()); }
+        // Safety (2026-07-17): abort if Cloudflare delete fails so we don't orphan the file.
+        if ($settings->hero_image_cf_id && $this->cloudflare->isConfigured()) {
+            $deleted = $this->cloudflare->delete($settings->hero_image_cf_id);
+            if (!$deleted) {
+                Log::warning('deleteHeroImage: Cloudflare delete failed, aborting', ['cf_id' => $settings->hero_image_cf_id]);
+                return response()->json(['success' => false, 'message' => 'ลบไฟล์จาก Cloudflare ไม่สำเร็จ — โปรดลองใหม่อีกครั้ง'], 500);
+            }
         }
         $settings->update(['hero_image_url' => null, 'hero_image_cf_id' => null]);
         return response()->json(['success' => true, 'data' => $settings->fresh()]);
@@ -143,8 +148,12 @@ class AboutController extends Controller
     public function deleteLicenseImage(): JsonResponse
     {
         $settings = AboutPageSetting::getSettings();
-        if ($settings->license_image_cf_id) {
-            try { $this->cloudflare->delete($settings->license_image_cf_id); } catch (\Exception $e) { Log::warning('CF delete failed: ' . $e->getMessage()); }
+        if ($settings->license_image_cf_id && $this->cloudflare->isConfigured()) {
+            $deleted = $this->cloudflare->delete($settings->license_image_cf_id);
+            if (!$deleted) {
+                Log::warning('deleteLicenseImage: Cloudflare delete failed, aborting', ['cf_id' => $settings->license_image_cf_id]);
+                return response()->json(['success' => false, 'message' => 'ลบไฟล์จาก Cloudflare ไม่สำเร็จ — โปรดลองใหม่อีกครั้ง'], 500);
+            }
         }
         $settings->update(['license_image_url' => null, 'license_image_cf_id' => null]);
         return response()->json(['success' => true, 'data' => $settings->fresh()]);
@@ -181,8 +190,12 @@ class AboutController extends Controller
     public function destroyAssociation($id): JsonResponse
     {
         $item = AboutAssociation::findOrFail($id);
-        if ($item->logo_cf_id) {
-            try { $this->cloudflare->delete($item->logo_cf_id); } catch (\Exception $e) { Log::warning('CF delete failed: ' . $e->getMessage()); }
+        if ($item->logo_cf_id && $this->cloudflare->isConfigured()) {
+            $deleted = $this->cloudflare->delete($item->logo_cf_id);
+            if (!$deleted) {
+                Log::warning('destroyAssociation: Cloudflare delete failed, aborting', ['id' => $id, 'cf_id' => $item->logo_cf_id]);
+                return response()->json(['success' => false, 'message' => 'ลบไฟล์จาก Cloudflare ไม่สำเร็จ — โปรดลองใหม่อีกครั้ง'], 500);
+            }
         }
         $item->delete();
         return response()->json(['success' => true]);
@@ -289,8 +302,12 @@ class AboutController extends Controller
     public function destroyCustomerGroup($id): JsonResponse
     {
         $item = AboutCustomerGroup::findOrFail($id);
-        if ($item->image_cf_id) {
-            try { $this->cloudflare->delete($item->image_cf_id); } catch (\Exception $e) { Log::warning('CF delete failed: ' . $e->getMessage()); }
+        if ($item->image_cf_id && $this->cloudflare->isConfigured()) {
+            $deleted = $this->cloudflare->delete($item->image_cf_id);
+            if (!$deleted) {
+                Log::warning('destroyCustomerGroup: Cloudflare delete failed, aborting', ['id' => $id, 'cf_id' => $item->image_cf_id]);
+                return response()->json(['success' => false, 'message' => 'ลบไฟล์จาก Cloudflare ไม่สำเร็จ — โปรดลองใหม่อีกครั้ง'], 500);
+            }
         }
         $item->delete();
         return response()->json(['success' => true]);
@@ -354,8 +371,12 @@ class AboutController extends Controller
     public function destroyAward($id): JsonResponse
     {
         $item = AboutAward::findOrFail($id);
-        if ($item->image_cf_id) {
-            try { $this->cloudflare->delete($item->image_cf_id); } catch (\Exception $e) { Log::warning('CF delete failed: ' . $e->getMessage()); }
+        if ($item->image_cf_id && $this->cloudflare->isConfigured()) {
+            $deleted = $this->cloudflare->delete($item->image_cf_id);
+            if (!$deleted) {
+                Log::warning('destroyAward: Cloudflare delete failed, aborting', ['id' => $id, 'cf_id' => $item->image_cf_id]);
+                return response()->json(['success' => false, 'message' => 'ลบไฟล์จาก Cloudflare ไม่สำเร็จ — โปรดลองใหม่อีกครั้ง'], 500);
+            }
         }
         $item->delete();
         return response()->json(['success' => true]);

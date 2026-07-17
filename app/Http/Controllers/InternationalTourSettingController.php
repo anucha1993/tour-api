@@ -192,9 +192,16 @@ class InternationalTourSettingController extends Controller
      */
     public function destroy(InternationalTourSetting $internationalTourSetting)
     {
-        // ลบภาพ cover จาก Cloudflare ถ้ามี
-        if ($internationalTourSetting->cover_image_cf_id) {
-            $this->cloudflare->delete($internationalTourSetting->cover_image_cf_id);
+        // Safety (2026-07-17): abort if Cloudflare delete fails so we don't orphan the file.
+        if ($internationalTourSetting->cover_image_cf_id && $this->cloudflare->isConfigured()) {
+            $deleted = $this->cloudflare->delete($internationalTourSetting->cover_image_cf_id);
+            if (!$deleted) {
+                \Illuminate\Support\Facades\Log::warning('InternationalTourSettingController::destroy: Cloudflare delete failed, aborting', [
+                    'setting_id' => $internationalTourSetting->id,
+                    'cf_id' => $internationalTourSetting->cover_image_cf_id,
+                ]);
+                return response()->json(['success' => false, 'message' => 'ลบไฟล์รูปจาก Cloudflare ไม่สำเร็จ — โปรดลองใหม่อีกครั้ง'], 500);
+            }
         }
 
         $internationalTourSetting->delete();
@@ -255,8 +262,16 @@ class InternationalTourSettingController extends Controller
      */
     public function deleteCoverImage(InternationalTourSetting $internationalTourSetting)
     {
-        if ($internationalTourSetting->cover_image_cf_id) {
-            $this->cloudflare->delete($internationalTourSetting->cover_image_cf_id);
+        // Safety (2026-07-17): abort if Cloudflare delete fails so we don't orphan the file.
+        if ($internationalTourSetting->cover_image_cf_id && $this->cloudflare->isConfigured()) {
+            $deleted = $this->cloudflare->delete($internationalTourSetting->cover_image_cf_id);
+            if (!$deleted) {
+                \Illuminate\Support\Facades\Log::warning('InternationalTourSettingController::deleteCoverImage: Cloudflare delete failed, aborting', [
+                    'setting_id' => $internationalTourSetting->id,
+                    'cf_id' => $internationalTourSetting->cover_image_cf_id,
+                ]);
+                return response()->json(['success' => false, 'message' => 'ลบไฟล์รูปจาก Cloudflare ไม่สำเร็จ — โปรดลองใหม่อีกครั้ง'], 500);
+            }
         }
 
         $internationalTourSetting->update([
@@ -347,8 +362,15 @@ class InternationalTourSettingController extends Controller
             ], 404);
         }
 
-        if ($cover->cloudflare_id) {
-            $this->cloudflare->delete($cover->cloudflare_id);
+        if ($cover->cloudflare_id && $this->cloudflare->isConfigured()) {
+            $deleted = $this->cloudflare->delete($cover->cloudflare_id);
+            if (!$deleted) {
+                \Illuminate\Support\Facades\Log::warning('InternationalTourSettingController::deleteCountryCover: Cloudflare delete failed, aborting', [
+                    'cover_id' => $cover->id,
+                    'cf_id' => $cover->cloudflare_id,
+                ]);
+                return response()->json(['success' => false, 'message' => 'ลบไฟล์รูปจาก Cloudflare ไม่สำเร็จ — โปรดลองใหม่อีกครั้ง'], 500);
+            }
         }
 
         $cover->delete();

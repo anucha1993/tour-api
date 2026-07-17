@@ -1510,17 +1510,39 @@ class TourController extends Controller
 
     /**
      * Remove custom cover image and reset source to API.
+     *
+     * Safety (2026-07-17): if the Cloudflare delete FAILS, abort with 500 and
+     * keep the DB reference intact. Otherwise the file becomes an orphaned
+     * asset on Cloudflare (we lose the image id needed to reach it) and the
+     * customer is billed for storage forever.
      */
     public function removeCustomCoverImage(Tour $tour): JsonResponse
     {
-        // Delete from Cloudflare if exists
         $oldImageUrl = $tour->custom_cover_image_url;
+
         if ($oldImageUrl && str_contains($oldImageUrl, 'imagedelivery.net')) {
-            $parts = explode('/', $oldImageUrl);
-            if (count($parts) >= 5) {
-                $oldImageId = $parts[count($parts) - 2];
-                $this->cloudflare->delete($oldImageId);
+            // Cloudflare image URL:
+            //   https://imagedelivery.net/{accountHash}/{imageId}/{variant}
+            // → grab the second-to-last path segment as the image id.
+            $parts = explode('/', trim(parse_url($oldImageUrl, PHP_URL_PATH) ?? '', '/'));
+            $imageId = count($parts) >= 2 ? $parts[count($parts) - 2] : null;
+
+            if ($imageId && $this->cloudflare->isConfigured()) {
+                $deleted = $this->cloudflare->delete($imageId);
+                if (!$deleted) {
+                    Log::warning('removeCustomCoverImage: Cloudflare delete failed, aborting DB update', [
+                        'tour_id' => $tour->id,
+                        'url' => $oldImageUrl,
+                        'image_id' => $imageId,
+                    ]);
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'ลบไฟล์รูปจาก Cloudflare ไม่สำเร็จ (ยังไม่ได้ลบข้อมูลใน DB) — โปรดลองใหม่อีกครั้ง',
+                    ], 500);
+                }
             }
+            // If we can't parse the id OR Cloudflare not configured → the DB
+            // reference is unreachable anyway, so clearing it is safe.
         }
 
         $tour->custom_cover_image_url = null;
@@ -1541,9 +1563,51 @@ class TourController extends Controller
 
     /**
      * Remove custom PDF and reset source to API.
+     *
+     * Bug fix (2026-07-17): previously this method only cleared the DB row
+     * and left the PDF file lying on R2 forever — every custom PDF upload
+     * that later got removed became an orphaned billable file. Now we delete
+     * the file from R2 first and only clear the DB if that succeeds.
      */
     public function removeCustomPdf(Tour $tour): JsonResponse
     {
+        $oldPdfUrl = $tour->custom_pdf_url;
+
+        // Only try to delete files that live on our storage (any variant of
+        // the R2 public domain we've used historically).
+        if ($oldPdfUrl && (str_contains($oldPdfUrl, 'r2.dev') || str_contains($oldPdfUrl, 'files.nexttrip.world'))) {
+            $r2Path = ltrim((string) parse_url($oldPdfUrl, PHP_URL_PATH), '/');
+            if ($r2Path) {
+                try {
+                    $disk = Storage::disk('r2');
+                    if ($disk->exists($r2Path)) {
+                        $deleted = $disk->delete($r2Path);
+                        if (!$deleted) {
+                            Log::warning('removeCustomPdf: R2 delete returned false, aborting DB update', [
+                                'tour_id' => $tour->id,
+                                'path' => $r2Path,
+                            ]);
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'ลบไฟล์ PDF จาก R2 ไม่สำเร็จ (ยังไม่ได้ลบข้อมูลใน DB) — โปรดลองใหม่อีกครั้ง',
+                            ], 500);
+                        }
+                    }
+                    // exists() = false → file already gone; safe to clear DB.
+                } catch (\Exception $e) {
+                    Log::warning('removeCustomPdf: failed to delete R2 file, aborting DB update', [
+                        'tour_id' => $tour->id,
+                        'url' => $oldPdfUrl,
+                        'error' => $e->getMessage(),
+                    ]);
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'ลบไฟล์ PDF จาก R2 ไม่สำเร็จ: ' . $e->getMessage(),
+                    ], 500);
+                }
+            }
+        }
+
         $tour->custom_pdf_url = null;
         $tour->pdf_source = 'api';
         $tour->save();
@@ -1566,26 +1630,46 @@ class TourController extends Controller
      * sync detects the missing file and ProcessTourMediaJob re-downloads the
      * PDF from the wholesaler source automatically.
      */
-    public function removeApiPdf(Tour $tour): JsonResponse
-    {
+    public function removeApiPdf(Tour $tour): JsonResponse    {
         $oldPdfUrl = $tour->pdf_url;
 
         // Delete the file from R2 only when it lives on our storage
         // (old r2.dev domain or the custom files.nexttrip.world domain).
+        //
+        // Safety (2026-07-17): if the R2 delete FAILS, abort and keep the DB
+        // reference intact. Otherwise the file becomes orphaned on R2 and we
+        // lose the object key needed to retry the deletion.
         if ($oldPdfUrl && (str_contains($oldPdfUrl, 'r2.dev') || str_contains($oldPdfUrl, 'files.nexttrip.world'))) {
-            try {
-                // Extract the object key from the URL path (domain-agnostic).
-                $r2Path = ltrim((string) parse_url($oldPdfUrl, PHP_URL_PATH), '/');
-                if ($r2Path && Storage::disk('r2')->exists($r2Path)) {
-                    Storage::disk('r2')->delete($r2Path);
+            $r2Path = ltrim((string) parse_url($oldPdfUrl, PHP_URL_PATH), '/');
+            if ($r2Path) {
+                try {
+                    $disk = Storage::disk('r2');
+                    if ($disk->exists($r2Path)) {
+                        $deleted = $disk->delete($r2Path);
+                        if (!$deleted) {
+                            Log::warning('removeApiPdf: R2 delete returned false, aborting DB update', [
+                                'tour_id' => $tour->id,
+                                'path' => $r2Path,
+                            ]);
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'ลบไฟล์ PDF จาก R2 ไม่สำเร็จ (ยังไม่ได้ลบข้อมูลใน DB) — โปรดลองใหม่อีกครั้ง',
+                            ], 500);
+                        }
+                    }
+                    // exists() = false → file already gone; safe to clear DB.
+                } catch (\Exception $e) {
+                    // Real error (network / permission) — don't clear DB.
+                    Log::warning('removeApiPdf: failed to delete R2 file, aborting DB update', [
+                        'tour_id' => $tour->id,
+                        'url' => $oldPdfUrl,
+                        'error' => $e->getMessage(),
+                    ]);
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'ลบไฟล์ PDF จาก R2 ไม่สำเร็จ: ' . $e->getMessage(),
+                    ], 500);
                 }
-            } catch (\Exception $e) {
-                // Log but do not fail — clearing the DB reference is what matters.
-                Log::warning('removeApiPdf: failed to delete R2 file', [
-                    'tour_id' => $tour->id,
-                    'url' => $oldPdfUrl,
-                    'error' => $e->getMessage(),
-                ]);
             }
         }
 
@@ -1600,6 +1684,71 @@ class TourController extends Controller
             'data' => [
                 'pdf_url' => null,
                 'effective_pdf_url' => $tour->effective_pdf_url,
+            ],
+        ]);
+    }
+
+    /**
+     * Remove the API-synced cover image.
+     *
+     * Deletes the image from Cloudflare Images (if hosted there) and clears
+     * cover_image_url + cover_image_alt. Because the tour no longer has a
+     * Cloudflare URL, the next sync detects the missing image and
+     * ProcessTourMediaJob re-uploads it from the wholesaler source
+     * automatically (see SyncToursJob::processMediaBeforeTransaction —
+     * `$alreadyOnCf = str_contains($existingCover, 'imagedelivery.net')` is
+     * false after this delete, so the media job dispatches).
+     */
+    public function removeApiCoverImage(Tour $tour): JsonResponse
+    {
+        $oldImageUrl = $tour->cover_image_url;
+
+        // Delete from Cloudflare Images only when the URL is actually a
+        // Cloudflare-hosted image (imagedelivery.net). Wholesaler direct URLs
+        // (e.g. https://godlikecenter.com/...) aren't on Cloudflare so there
+        // is nothing to delete — we just clear the DB reference.
+        //
+        // Safety (2026-07-17): if the Cloudflare delete FAILS, abort and keep
+        // the DB reference so the admin can retry. Clearing it would orphan
+        // the file (we'd no longer have the image id to reach it with).
+        if ($oldImageUrl && str_contains($oldImageUrl, 'imagedelivery.net')) {
+            // Cloudflare image URL shape:
+            //   https://imagedelivery.net/{accountHash}/{imageId}/{variant}
+            // → grab the second-to-last path segment as the image id.
+            $parts = explode('/', trim(parse_url($oldImageUrl, PHP_URL_PATH) ?? '', '/'));
+            $imageId = count($parts) >= 2 ? $parts[count($parts) - 2] : null;
+
+            if ($imageId && $this->cloudflare->isConfigured()) {
+                $deleted = $this->cloudflare->delete($imageId);
+                if (!$deleted) {
+                    Log::warning('removeApiCoverImage: Cloudflare delete failed, aborting DB update', [
+                        'tour_id' => $tour->id,
+                        'url' => $oldImageUrl,
+                        'image_id' => $imageId,
+                    ]);
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'ลบไฟล์รูปจาก Cloudflare ไม่สำเร็จ (ยังไม่ได้ลบข้อมูลใน DB) — โปรดลองใหม่อีกครั้ง',
+                    ], 500);
+                }
+            }
+            // No image_id parse OR Cloudflare not configured → nothing to
+            // orphan, safe to clear DB.
+        }
+
+        // Clear the API cover so the next sync re-uploads it from the source.
+        $tour->cover_image_url = null;
+        $tour->cover_image_alt = null;
+        $tour->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'ลบรูปปกจาก API เรียบร้อย ระบบจะซิงค์รูปใหม่อัตโนมัติในการซิงค์ครั้งถัดไป',
+            'data' => [
+                'cover_image_url' => null,
+                'cover_image_alt' => null,
+                'effective_cover_image_url' => $tour->effective_cover_image_url,
+                'effective_cover_image_alt' => $tour->effective_cover_image_alt,
             ],
         ]);
     }

@@ -444,8 +444,21 @@ class BlogController extends Controller
 
     public function destroyPost(BlogPost $post): JsonResponse
     {
-        if ($post->cover_image_cf_id) {
-            try { $this->cloudflare->delete($post->cover_image_cf_id); } catch (\Exception $e) {}
+        // Safety (2026-07-17): if the Cloudflare delete fails, abort so we
+        // don't orphan the file. The post row will be deleted only after the
+        // image is actually gone (or was never on Cloudflare).
+        if ($post->cover_image_cf_id && $this->cloudflare->isConfigured()) {
+            $deleted = $this->cloudflare->delete($post->cover_image_cf_id);
+            if (!$deleted) {
+                Log::warning('destroyPost: Cloudflare delete failed, aborting', [
+                    'post_id' => $post->id,
+                    'cf_id' => $post->cover_image_cf_id,
+                ]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'ลบรูปปกจาก Cloudflare ไม่สำเร็จ — โปรดลองใหม่อีกครั้ง',
+                ], 500);
+            }
         }
 
         $post->delete();

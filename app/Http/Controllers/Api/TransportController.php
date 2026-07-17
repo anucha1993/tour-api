@@ -7,6 +7,7 @@ use App\Models\Transport;
 use App\Services\CloudflareImagesService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
 class TransportController extends Controller
@@ -141,11 +142,23 @@ class TransportController extends Controller
     public function destroy(Transport $transport): JsonResponse
     {
         // ลบรูปจาก Cloudflare ถ้ามี
+        // Safety (2026-07-17): abort if Cloudflare delete fails so we don't orphan the file.
         if ($transport->image && str_contains($transport->image, 'imagedelivery.net')) {
             // Extract image ID from URL
             preg_match('/\/([^\/]+)\/public$/', $transport->image, $matches);
-            if (!empty($matches[1])) {
-                $this->cloudflare->delete("transports/{$matches[1]}");
+            if (!empty($matches[1]) && $this->cloudflare->isConfigured()) {
+                $imageId = "transports/{$matches[1]}";
+                $deleted = $this->cloudflare->delete($imageId);
+                if (!$deleted) {
+                    Log::warning('TransportController::destroy: Cloudflare delete failed, aborting', [
+                        'transport_id' => $transport->id,
+                        'image_id' => $imageId,
+                    ]);
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'ลบไฟล์รูปจาก Cloudflare ไม่สำเร็จ — โปรดลองใหม่อีกครั้ง',
+                    ], 500);
+                }
             }
         }
 

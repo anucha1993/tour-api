@@ -10,6 +10,7 @@ use App\Models\Transport;
 use App\Models\Wholesaler;
 use App\Services\CloudflareImagesService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class DomesticTourSettingController extends Controller
@@ -148,8 +149,19 @@ class DomesticTourSettingController extends Controller
      */
     public function destroy(DomesticTourSetting $domesticTourSetting)
     {
-        if ($domesticTourSetting->cover_image_cf_id) {
-            $this->cloudflare->delete($domesticTourSetting->cover_image_cf_id);
+        // Safety (2026-07-17): abort if Cloudflare delete fails so we don't orphan the file.
+        if ($domesticTourSetting->cover_image_cf_id && $this->cloudflare->isConfigured()) {
+            $deleted = $this->cloudflare->delete($domesticTourSetting->cover_image_cf_id);
+            if (!$deleted) {
+                Log::warning('DomesticTourSettingController::destroy: Cloudflare delete failed, aborting', [
+                    'setting_id' => $domesticTourSetting->id,
+                    'cf_id' => $domesticTourSetting->cover_image_cf_id,
+                ]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'ลบไฟล์รูปจาก Cloudflare ไม่สำเร็จ — โปรดลองใหม่อีกครั้ง',
+                ], 500);
+            }
         }
 
         $domesticTourSetting->delete();
