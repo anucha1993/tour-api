@@ -487,6 +487,21 @@ class SyncPeriodsJob implements ShouldQueue
             case 'map':
                 $mapping = $config['mapping'] ?? [];
                 return $mapping[$value] ?? $value;
+            case 'value_map':
+                // Same enum as SyncToursJob — supports both dict and list formats
+                $map = $config['map'] ?? null;
+                if ($map === null && isset($config['value_map']) && is_array($config['value_map'])) {
+                    $map = [];
+                    foreach ($config['value_map'] as $item) {
+                        $from = $item['from'] ?? null;
+                        if ($from === '__EMPTY__') $from = '';
+                        if ($from !== null) $map[$from] = $item['to'] ?? null;
+                    }
+                }
+                if (!is_array($map)) return $value;
+                $lookupKey = ($value === '' || $value === null) ? '' : $value;
+                if (array_key_exists($lookupKey, $map)) return $map[$lookupKey];
+                return $config['default'] ?? $value;
             default:
                 return $value;
         }
