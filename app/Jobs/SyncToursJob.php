@@ -1964,12 +1964,41 @@ class SyncToursJob implements ShouldQueue
             $tourFields['tour_code'] = $this->generateTourCode($config->wholesaler_id);
         }
         
-        // Parse Thai duration text like "10 วัน 8 คืน" → duration_days=10, duration_nights=8
-        if (!empty($tourFields['duration_days']) && is_string($tourFields['duration_days']) && !is_numeric($tourFields['duration_days'])) {
-            $durationText = $tourFields['duration_days'];
-            $tourFields['duration_days'] = preg_match('/(\d+)\s*วัน/', $durationText, $dm) ? (int) $dm[1] : 0;
-            if (preg_match('/(\d+)\s*คืน/', $durationText, $nm)) {
-                $tourFields['duration_nights'] = (int) $nm[1];
+        // Parse duration text into integers. Values may arrive as Thai ("10 วัน 8 คืน"),
+        // English ("4D3N", "4 Days 3 Nights") or plain numbers. Both duration_days and
+        // duration_nights may be mapped to the SAME raw string, so normalize each
+        // independently and NEVER leave non-numeric text (which truncates the tinyint column).
+        $parseDuration = function ($value, string $unit): ?int {
+            if (is_int($value)) return $value;
+            if (is_numeric($value)) return (int) $value;
+            if (!is_string($value) || trim($value) === '') return null;
+            $patterns = $unit === 'day'
+                ? ['/(\d+)\s*วัน/u', '/(\d+)\s*d(?:ays?)?/i']
+                : ['/(\d+)\s*คืน/u', '/(\d+)\s*n(?:ights?)?/i'];
+            foreach ($patterns as $p) {
+                if (preg_match($p, $value, $m)) return (int) $m[1];
+            }
+            return null;
+        };
+
+        $durationDaysRaw = $tourFields['duration_days'] ?? null;
+        if (array_key_exists('duration_days', $tourFields)) {
+            $d = $parseDuration($tourFields['duration_days'], 'day');
+            if ($d !== null) {
+                $tourFields['duration_days'] = $d;
+            } else {
+                unset($tourFields['duration_days']);
+            }
+        }
+        if (array_key_exists('duration_nights', $tourFields)) {
+            $n = $parseDuration($tourFields['duration_nights'], 'night');
+            if ($n === null && $durationDaysRaw !== null) {
+                $n = $parseDuration($durationDaysRaw, 'night'); // recover nights from the days string
+            }
+            if ($n !== null) {
+                $tourFields['duration_nights'] = $n;
+            } else {
+                unset($tourFields['duration_nights']);
             }
         }
         
@@ -2677,9 +2706,44 @@ class SyncToursJob implements ShouldQueue
         if (empty($itinFields['description']) && empty($itinerary->description)) {
             $itinFields['description'] = $itinFields['title'] ?? 'Day ' . ($itinFields['day_number'] ?? '');
         }
-        
+
+        // Coerce boolean meal flags to tinyint. Some wholesalers send the meal
+        // DESCRIPTION text (e.g. "ชาบูหม้อไฟ + ไวน์แดง") instead of a 0/1 flag; pushing
+        // that text into a tinyint(1) column throws SQLSTATE[22007]. Treat any
+        // meaningful non-empty text as "meal included" (1) and empty/false-ish as 0.
+        foreach (['has_breakfast', 'has_lunch', 'has_dinner'] as $boolField) {
+            if (array_key_exists($boolField, $itinFields)) {
+                $itinFields[$boolField] = $this->coerceMealFlag($itinFields[$boolField]);
+            }
+        }
+
         $itinerary->fill($itinFields);
         $itinerary->save();
+    }
+
+    /**
+     * Coerce a meal flag value to tinyint (0/1).
+     * Accepts booleans, numeric flags, or descriptive meal text.
+     */
+    protected function coerceMealFlag($value): int
+    {
+        if (is_bool($value)) {
+            return $value ? 1 : 0;
+        }
+        if (is_numeric($value)) {
+            return (int) $value !== 0 ? 1 : 0;
+        }
+        if (is_string($value)) {
+            $normalized = mb_strtolower(trim($value));
+            if ($normalized === '') {
+                return 0;
+            }
+            if (in_array($normalized, ['0', 'false', 'no', 'n', '-', 'none', 'ไม่มี', 'อิสระ'], true)) {
+                return 0;
+            }
+            return 1;
+        }
+        return $value ? 1 : 0;
     }
 
     /**
