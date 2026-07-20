@@ -878,6 +878,8 @@ class PublicTourController extends Controller
                 'cover_image_url' => $countryCover?->image_url ?? $setting->cover_image_url,
                 'cover_image_position' => $countryCover?->image_position ?? $setting->cover_image_position ?? 'center',
                 'hero_text' => $countryCover?->hero_text ?? $setting->hero_text,
+                // Per-country long SEO description (only when a country cover exists)
+                'country_intro' => $countryCover?->intro_html,
                 'pagination_mode' => $setting->pagination_mode ?? 'page',
                 'show_sidebar' => (bool) ($setting->show_sidebar ?? true),
                 'sidebar_show_blog_posts' => (bool) ($setting->sidebar_show_blog_posts ?? true),

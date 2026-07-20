@@ -15,6 +15,7 @@ class InternationalTourCountryCover extends Model
         'image_position',
         'alt_text',
         'hero_text',
+        'intro_html',
         'pinned_tour_codes',
         'sort_order',
     ];
