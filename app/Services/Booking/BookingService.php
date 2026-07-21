@@ -2,6 +2,7 @@
 
 namespace App\Services\Booking;
 
+use App\Jobs\SendBookingToInvoice;
 use App\Models\Booking;
 use App\Models\BookingEvent;
 use App\Models\BookingPassenger;
@@ -431,6 +432,10 @@ class BookingService
             ['booking_ref' => $result->bookingRef],
             $booking->provider,
         );
+
+        // Notify the invoice app so it can auto-create a quotation (INBOUND flow).
+        // Queued + idempotent on the invoice side, so a failure here never blocks confirmation.
+        SendBookingToInvoice::dispatch($booking->id);
 
         return $booking->fresh('passengers');
     }

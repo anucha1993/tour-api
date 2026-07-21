@@ -1,0 +1,10 @@
+$c = \App\Models\WholesalerApiConfig::find(25);
+$base = $c->api_base_url;
+$headers = ($c->auth_credentials['headers']??[]);
+$http = \Illuminate\Support\Facades\Http::withHeaders($headers)->timeout(60);
+$j = $http->get($base)->json();
+$data = $j['data'];
+echo "data count=".count($data)." is_list=".var_export(array_is_list($data),true).PHP_EOL;
+echo "status=".($j['status']??'')." message=".($j['message']??'').PHP_EOL;
+echo PHP_EOL."full data (first 2000 chars):".PHP_EOL;
+echo mb_substr(json_encode($data, JSON_UNESCAPED_UNICODE), 0, 2000).PHP_EOL;

@@ -46,4 +46,11 @@ return [
         'api_secret' => env('THAIBULKSMS_API_SECRET'),
     ],
 
+    // nexttrip-invoice service (outbound webhook when a booking is confirmed)
+    'invoice' => [
+        'url' => env('INVOICE_URL'),
+        'webhook_secret' => env('INVOICE_WEBHOOK_SECRET'),
+        'timeout' => (int) env('INVOICE_WEBHOOK_TIMEOUT', 15),
+    ],
+
 ];
