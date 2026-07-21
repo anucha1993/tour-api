@@ -447,8 +447,12 @@ class Tour extends Model
             // to keep the tour visible or sortable with wrong values. When
             // there are no future+open periods, these fields must reflect that
             // (null / 0) so downstream filters behave correctly.
-            'next_departure_date' => $openPeriods->min('start_date'),
-            'total_departures' => $openPeriods->count(),
+            // Show upcoming departures even when fully booked, so a sold-out-but-
+            // future tour still advertises a departure date + count on listings.
+            // available_seats stays based on OPEN (bookable) periods so a full
+            // tour correctly reports 0 seats.
+            'next_departure_date' => $allFuturePeriods->min('start_date'),
+            'total_departures' => $allFuturePeriods->count(),
             'available_seats' => $openPeriods->sum('available'),
             'has_promotion' => $totalDiscount > 0,
             'hotel_star' => $hotelStar ?? $this->hotel_star,

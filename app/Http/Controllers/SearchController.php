@@ -186,7 +186,7 @@ class SearchController extends Controller
                     'primaryCountry:id,name_th,name_en,iso2',
                     'cities:id,name_th',
                     'periods' => function ($q) {
-                        $q->where('status', 'open')
+                        $q->displayable()
                           ->where('is_visible', true)
                           ->where('start_date', '>=', now()->toDateString())
                           ->orderBy('start_date')

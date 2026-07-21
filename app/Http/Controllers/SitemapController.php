@@ -23,7 +23,7 @@ class SitemapController extends Controller
         $tours = Tour::query()
             ->where('status', 'active')
             ->whereNotNull('slug')
-            ->whereHas('periods', fn ($q) => $q->where('status', 'open')->where('start_date', '>=', $today))
+            ->whereHas('periods', fn ($q) => $q->displayable()->where('start_date', '>=', $today))
             ->select('slug', 'updated_at')
             ->orderByDesc('updated_at')
             ->limit(5000)

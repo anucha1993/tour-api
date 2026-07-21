@@ -29,7 +29,7 @@ class TourPdfGenerator
                 'transports.transport:id,code,name,type,image',
                 'periods' => function ($query) {
                     $query->where('start_date', '>=', now()->toDateString())
-                          ->where('status', 'open')
+                          ->displayable()
                           ->orderBy('start_date')
                           ->limit(20)
                           ->with('offer.promotions');

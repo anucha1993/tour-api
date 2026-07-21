@@ -212,9 +212,10 @@ class PopularCountrySetting extends Model
             }
         }
 
-        // MANDATORY: Only tours with upcoming open periods (excludes tours without periods or already departed)
+        // MANDATORY: Only tours with upcoming displayable periods (open or full);
+        // excludes tours without periods or already departed
         $query->whereHas('periods', function ($q) {
-            $q->where('status', 'open')
+            $q->displayable()
               ->where('start_date', '>=', now()->toDateString());
         });
 
@@ -230,7 +231,7 @@ class PopularCountrySetting extends Model
 
             if ($hasAdditionalPeriodFilters) {
                 $query->whereHas('periods', function ($q) use ($conditions) {
-                    $q->where('status', 'open')
+                    $q->displayable()
                       ->where('start_date', '>=', now()->toDateString());
 
                     // Filter by travel month

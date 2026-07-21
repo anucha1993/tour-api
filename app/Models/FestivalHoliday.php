@@ -97,7 +97,7 @@ class FestivalHoliday extends Model
     {
         return Tour::where('status', 'active')
             ->whereHas('periods', function ($q) {
-                $q->where('status', 'open')
+                $q->displayable()
                   ->where('is_visible', true)
                   ->where('start_date', '>=', $this->start_date->toDateString())
                   ->where('start_date', '<=', $this->end_date->toDateString());
@@ -113,7 +113,7 @@ class FestivalHoliday extends Model
         $query = Tour::query()
             ->where('status', 'active')
             ->whereHas('periods', function ($q) {
-                $q->where('status', 'open')
+                $q->displayable()
                   ->where('is_visible', true)
                   ->where('start_date', '>=', $this->start_date->toDateString())
                   ->where('start_date', '<=', $this->end_date->toDateString());
@@ -156,7 +156,7 @@ class FestivalHoliday extends Model
         if (!empty($filters['departure_month'])) {
             $month = $filters['departure_month'];
             $query->whereHas('periods', function ($q) use ($month) {
-                $q->where('status', 'open')
+                $q->displayable()
                   ->where('is_visible', true)
                   ->whereRaw("DATE_FORMAT(start_date, '%Y-%m') = ?", [$month]);
             });
@@ -164,7 +164,7 @@ class FestivalHoliday extends Model
 
         if (!empty($filters['departure_date_from'])) {
             $query->whereHas('periods', function ($q) use ($filters) {
-                $q->where('status', 'open')
+                $q->displayable()
                   ->where('is_visible', true)
                   ->where('start_date', '>=', $filters['departure_date_from']);
             });
@@ -172,7 +172,7 @@ class FestivalHoliday extends Model
 
         if (!empty($filters['departure_date_to'])) {
             $query->whereHas('periods', function ($q) use ($filters) {
-                $q->where('status', 'open')
+                $q->displayable()
                   ->where('is_visible', true)
                   ->where('start_date', '<=', $filters['departure_date_to']);
             });

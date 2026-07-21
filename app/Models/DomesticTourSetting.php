@@ -142,7 +142,7 @@ class DomesticTourSetting extends Model
             // the full explanation — manual tours never get their aggregate
             // refreshed by the sync job, so the cached value can be stale.
             ->whereHas('periods', function ($q) {
-                $q->where('status', 'open')
+                $q->displayable()
                   ->where('start_date', '>=', now()->toDateString());
             })
             // Only Thailand
@@ -292,7 +292,7 @@ class DomesticTourSetting extends Model
         if (!empty($filters['departure_month'])) {
             $month = $filters['departure_month'];
             $query->whereHas('periods', function ($q) use ($month) {
-                $q->where('status', 'open')
+                $q->displayable()
                   ->whereRaw("DATE_FORMAT(start_date, '%Y-%m') = ?", [$month]);
             });
         }
@@ -302,7 +302,7 @@ class DomesticTourSetting extends Model
             $dateFrom = $filters['departure_date_from'] ?? null;
             $dateTo = $filters['departure_date_to'] ?? null;
             $query->whereHas('periods', function ($q) use ($dateFrom, $dateTo) {
-                $q->where('status', 'open');
+                $q->displayable();
                 if ($dateFrom) {
                     $q->where('start_date', '>=', $dateFrom);
                 }
@@ -316,7 +316,7 @@ class DomesticTourSetting extends Model
         if (!empty($filters['return_date'])) {
             $returnDate = $filters['return_date'];
             $query->whereHas('periods', function ($q) use ($returnDate) {
-                $q->where('status', 'open')
+                $q->displayable()
                   ->where('end_date', $returnDate);
             });
         }

@@ -23,6 +23,21 @@ class Period extends Model
         self::STATUS_CANCELLED => 'ยกเลิก',
     ];
 
+    /**
+     * Statuses that still appear on the PUBLIC website.
+     *
+     * A "sold_out" (เต็ม) departure is NOT closed — an upcoming-but-full tour
+     * must stay visible so customers can still see the real price, confirm it
+     * is genuinely full, and browse the itinerary. Only "closed" (ปิดจอง) and
+     * "cancelled" (ยกเลิก) departures are hidden.
+     *
+     * ⚠️ SINGLE SOURCE OF TRUTH for period visibility. Do NOT hardcode
+     *    ->where('status', 'open') in public listing/search/menu queries — use
+     *    the ->displayable() scope instead, otherwise a sold-out-but-upcoming
+     *    tour silently disappears from the whole site (see Period::displayable).
+     */
+    public const DISPLAY_STATUSES = [self::STATUS_OPEN, self::STATUS_SOLD_OUT];
+
     // Sale Status constants
     public const SALE_AVAILABLE = 'available';
     public const SALE_BOOKING = 'booking';
@@ -71,6 +86,31 @@ class Period extends Model
     public function scopeOpen($query)
     {
         return $query->where('status', self::STATUS_OPEN);
+    }
+
+    /**
+     * Statuses shown publicly right now, honouring the period_display.hide_full
+     * setting. Defaults to open + sold_out (hide_full = false).
+     */
+    public static function displayableStatuses(): array
+    {
+        return \App\Support\PeriodDisplayFilter::settings()['hide_full']
+            ? [self::STATUS_OPEN]
+            : self::DISPLAY_STATUSES;
+    }
+
+    /**
+     * Constrain a period query to the statuses shown on the public site
+     * (open + sold_out, unless hide_full is enabled).
+     *
+     * Drop-in replacement for ->where('status', 'open') anywhere a query
+     * decides tour/period VISIBILITY (listings, search, menus, sitemap). Keep
+     * using ->open() only where you specifically need bookable-now periods
+     * (available seats, current price).
+     */
+    public function scopeDisplayable($query)
+    {
+        return $query->whereIn('status', self::displayableStatuses());
     }
 
     public function scopeUpcoming($query)

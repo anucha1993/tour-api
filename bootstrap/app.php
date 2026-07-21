@@ -9,6 +9,7 @@ use Illuminate\Console\Scheduling\Schedule;
 
 // Helper: check if schedule string is due now
 // Supports both time-list format ("03:55" or "09:00,21:00") and cron expressions ("55 3 * * *")
+if (!function_exists('isScheduleDue')) {
 function isScheduleDue(string $schedule): bool
 {
     $schedule = trim($schedule);
@@ -42,6 +43,7 @@ function isScheduleDue(string $schedule): bool
         }
         return false;
     }
+}
 }
 
 return Application::configure(basePath: dirname(__DIR__))

@@ -633,7 +633,7 @@ class PublicTourController extends Controller
         // Sub-query: tour IDs เน€เธโ€”เน€เธเธ•เน€เธย active + เน€เธเธเน€เธเธ•เน€เธเธเน€เธเธเน€เธยเน€เธโฌเน€เธโ€เน€เธเธ”เน€เธยเน€เธโ€”เน€เธเธ’เน€เธยเน€เธยเน€เธยเน€เธเธเน€เธยเน€เธเธ’เน€เธยเน€เธโ€ข
         $activeTourIds = Tour::where('status', 'active')
             ->whereHas('periods', function ($q) use ($today) {
-                $q->where('status', 'open')
+                $q->displayable()
                   ->where('start_date', '>=', $today);
             })
             ->pluck('id');
@@ -1204,7 +1204,7 @@ class PublicTourController extends Controller
                 $q->where('primary_country_id', '!=', $thailandId)
                   ->orWhereNull('primary_country_id');
             })
-            ->whereHas('periods', fn($q) => $q->where('status', 'open')->where('start_date', '>=', $today));
+            ->whereHas('periods', fn($q) => $q->displayable()->where('start_date', '>=', $today));
 
         // All active tour IDs (for country/city lists - always show all)
         $allActiveTourIds = (clone $activeTourQuery)->pluck('id');
@@ -1382,7 +1382,7 @@ class PublicTourController extends Controller
         $activeTourIds = Tour::where('status', 'active')
             ->where('primary_country_id', $thailandId)
             ->whereHas('periods', function ($q) use ($today) {
-                $q->where('status', 'open')
+                $q->displayable()
                   ->where('start_date', '>=', $today);
             })
             ->pluck('id');
@@ -1695,7 +1695,7 @@ class PublicTourController extends Controller
         // Active domestic tour IDs
         $activeTourQuery = Tour::where('status', 'active')
             ->where('primary_country_id', $thailandId)
-            ->whereHas('periods', fn($q) => $q->where('status', 'open')->where('start_date', '>=', $today));
+            ->whereHas('periods', fn($q) => $q->displayable()->where('start_date', '>=', $today));
 
         // All active IDs (for city list - always show all)
         $allActiveTourIds = (clone $activeTourQuery)->pluck('id');
