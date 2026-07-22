@@ -44,9 +44,9 @@ class PublicTourController extends Controller
         $tour = Tour::where('slug', $slug)
             ->where('status', 'active')
             ->with([
-                'primaryCountry:id,iso2,name_en,name_th,flag_emoji',
-                'countries:id,iso2,name_en,name_th,flag_emoji',
-                'cities:id,name_en,name_th,country_id',
+                'primaryCountry:id,iso2,name_en,name_th,flag_emoji,slug',
+                'countries:id,iso2,name_en,name_th,flag_emoji,slug',
+                'cities:id,name_en,name_th,country_id,slug',
                 'locations.city:id,name_en,name_th',
                 'gallery',
                 'transports.transport:id,code,name,type,image',
@@ -384,6 +384,7 @@ class PublicTourController extends Controller
             'name_en' => $c->name_en,
             'iso2' => strtolower($c->iso2 ?? ''),
             'flag_emoji' => $c->flag_emoji,
+            'slug' => $c->slug,
         ]);
 
         $cities = $tour->cities->map(fn($c) => [
@@ -391,6 +392,7 @@ class PublicTourController extends Controller
             'name' => $c->name_th ?? $c->name_en,
             'name_en' => $c->name_en,
             'country_id' => $c->pivot->country_id ?? $c->country_id,
+            'slug' => $c->slug,
         ]);
 
         // Locations
@@ -414,7 +416,11 @@ class PublicTourController extends Controller
                 'name' => $tour->primaryCountry->name_th ?? $tour->primaryCountry->name_en,
                 'iso2' => strtolower($tour->primaryCountry->iso2 ?? ''),
                 'flag_emoji' => $tour->primaryCountry->flag_emoji,
+                'slug' => $tour->primaryCountry->slug,
             ] : null,
+            // Flat slugs for building the /tour/{country}/{city}/{slug} URL
+            'country_slug' => $tour->primaryCountry?->slug,
+            'city_slug' => $tour->cities->first()?->slug,
             'countries' => $countries,
             'cities' => $cities,
             'locations' => $locations,
@@ -1040,6 +1046,8 @@ class PublicTourController extends Controller
         $item = [
             'id' => $tour->id,
             'slug' => $tour->slug,
+            'country_slug' => $tour->primaryCountry?->slug,
+            'city_slug' => $tour->cities->first()?->slug,
             'tour_code' => $tour->tour_code,
             'title' => $tour->title,
             'tour_type' => $tour->tour_type,
@@ -1538,6 +1546,8 @@ class PublicTourController extends Controller
         $item = [
             'id' => $tour->id,
             'slug' => $tour->slug,
+            'country_slug' => $tour->primaryCountry?->slug,
+            'city_slug' => $tour->cities->first()?->slug,
             'tour_code' => $tour->tour_code,
             'title' => $tour->title,
             'tour_type' => $tour->tour_type,

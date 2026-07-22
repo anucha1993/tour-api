@@ -210,7 +210,7 @@ class InternationalTourSetting extends Model
         $perPage = $perPage ?? $this->per_page;
 
         $eagerLoads = [
-            'primaryCountry:id,name_th,name_en,iso2,flag_emoji',
+            'primaryCountry:id,name_th,name_en,iso2,flag_emoji,slug',
             'cities:id,name_th,name_en,slug',
             'transports' => function ($q) {
                 $q->orderBy('sort_order');

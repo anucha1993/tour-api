@@ -24,10 +24,17 @@ class SitemapController extends Controller
             ->where('status', 'active')
             ->whereNotNull('slug')
             ->whereHas('periods', fn ($q) => $q->displayable()->where('start_date', '>=', $today))
-            ->select('slug', 'updated_at')
+            ->with(['primaryCountry:id,slug', 'cities:id,slug'])
+            ->select('id', 'slug', 'primary_country_id', 'updated_at')
             ->orderByDesc('updated_at')
             ->limit(5000)
-            ->get();
+            ->get()
+            ->map(fn ($t) => [
+                'slug' => $t->slug,
+                'country_slug' => $t->primaryCountry?->slug,
+                'city_slug' => $t->cities->first()?->slug,
+                'updated_at' => $t->updated_at,
+            ]);
 
         // Published blog posts.
         $blogs = BlogPost::query()

@@ -183,8 +183,8 @@ class SearchController extends Controller
                           });
                 })
                 ->with([
-                    'primaryCountry:id,name_th,name_en,iso2',
-                    'cities:id,name_th',
+                    'primaryCountry:id,name_th,name_en,iso2,slug',
+                    'cities:id,name_th,slug',
                     'periods' => function ($q) {
                         $q->displayable()
                           ->where('is_visible', true)
@@ -223,6 +223,8 @@ class SearchController extends Controller
                         'name_th' => $tour->primaryCountry->name_th,
                         'iso2' => strtolower($tour->primaryCountry->iso2 ?? ''),
                     ] : null,
+                    'country_slug' => $tour->primaryCountry?->slug,
+                    'city_slug' => $tour->cities->first()?->slug,
                     'cities' => $tour->cities->pluck('name_th'),
                     'next_periods' => $tour->periods->map(fn($p) => [
                         'start_date' => $p->start_date?->format('Y-m-d'),
