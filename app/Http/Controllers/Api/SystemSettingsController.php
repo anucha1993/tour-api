@@ -85,6 +85,7 @@ class SystemSettingsController extends Controller
                 'never_sync_fields' => 'sometimes|array',
                 'skip_past_periods' => 'sometimes|boolean',
                 'skip_disabled_tours' => 'sometimes|boolean',
+                'media_change_detection' => 'sometimes|boolean',
             ]);
 
             foreach ($validated as $key => $value) {

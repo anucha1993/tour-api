@@ -141,6 +141,19 @@ class Tour extends Model
         'status',
         'view_count',
         'updated_at_source',
+        // Media change-detection tracking
+        'pdf_source_url',
+        'pdf_source_name',
+        'pdf_source_size',
+        'pdf_source_etag',
+        'pdf_source_modified',
+        'pdf_updated_at',
+        'cover_source_url',
+        'cover_source_name',
+        'cover_source_size',
+        'cover_source_etag',
+        'cover_source_modified',
+        'cover_image_updated_at',
     ];
 
     protected $casts = [
@@ -165,6 +178,13 @@ class Tour extends Model
         'next_departure_date' => 'date',
         'has_promotion' => 'boolean',
         'updated_at_source' => 'datetime',
+        // Media change-detection tracking
+        'pdf_source_size' => 'integer',
+        'pdf_source_modified' => 'datetime',
+        'pdf_updated_at' => 'datetime',
+        'cover_source_size' => 'integer',
+        'cover_source_modified' => 'datetime',
+        'cover_image_updated_at' => 'datetime',
     ];
 
     /**

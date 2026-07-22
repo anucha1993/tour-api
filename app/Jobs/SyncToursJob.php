@@ -1405,6 +1405,10 @@ class SyncToursJob implements ShouldQueue
                             $config->pdf_footer_height,
                             $pendingMedia['old_pdf_url'] ?? null,
                             $pendingMedia['old_cover_image_url'] ?? null,
+                            $pendingMedia['pdf_meta'] ?? null,
+                            $pendingMedia['cover_meta'] ?? null,
+                            $pendingMedia['pdf_changed'] ?? false,
+                            $pendingMedia['cover_changed'] ?? false,
                         );
                     }
 
@@ -1503,9 +1507,16 @@ class SyncToursJob implements ShouldQueue
             'cover_image_url' => null,
             'old_pdf_url' => null,
             'old_cover_image_url' => null,
+            // Media change-detection payloads passed to ProcessTourMediaJob
+            'pdf_meta' => null,
+            'cover_meta' => null,
+            'pdf_changed' => false,
+            'cover_changed' => false,
         ];
 
-        // FIX: อ่าน old URLs จาก DB ก่อนที่จะถูกเขียนทับ เพื่อส่งให้ ProcessTourMediaJob ลบ
+        // FIX: อ่าน old URLs + media fingerprint จาก DB ก่อนที่จะถูกเขียนทับ
+        // เพื่อส่งให้ ProcessTourMediaJob ลบ และเพื่อเทียบว่า wholesaler เปลี่ยนไฟล์หรือไม่
+        $existingTour = null;
         $tourCode = $tourSection['tour_code'] ?? $tourSection['wholesaler_tour_code'] ?? $tourSection['external_id'] ?? null;
         if ($tourCode) {
             $existingTour = \App\Models\Tour::where('wholesaler_id', $config->wholesaler_id)
@@ -1513,13 +1524,25 @@ class SyncToursJob implements ShouldQueue
                     $q->where('wholesaler_tour_code', $tourCode)
                       ->orWhere('external_id', $tourSection['external_id'] ?? null);
                 })
-                ->first(['pdf_url', 'cover_image_url', 'pdf_branding_hash']);
+                ->first([
+                    'pdf_url', 'cover_image_url', 'pdf_branding_hash',
+                    'pdf_source_name', 'pdf_source_size', 'pdf_source_etag', 'pdf_source_modified',
+                    'cover_source_name', 'cover_source_size', 'cover_source_etag', 'cover_source_modified',
+                ]);
             if ($existingTour) {
                 $tourData['_pending_media']['old_pdf_url'] = $existingTour->pdf_url;
                 $tourData['_pending_media']['old_cover_image_url'] = $existingTour->cover_image_url;
                 $tourData['_pending_media']['old_branding_hash'] = $existingTour->pdf_branding_hash;
             }
         }
+
+        $probe = new \App\Services\RemoteFileProbe();
+
+        // Feature flag: media change-detection (HEAD probe + fingerprint compare + update tag).
+        // Source of truth: SystemSetting (UI toggle /dashboard/settings/smart-sync),
+        // defaulting to the MEDIA_CHANGE_DETECTION env flag. false → skip probing entirely.
+        $changeDetection = (bool) ($this->getSyncSettings()['media_change_detection']
+            ?? config('sync.media_change_detection', true));
 
         $pdfUrl = $merged['pdf_url'] ?? null;
         if ($pdfUrl && str_starts_with($pdfUrl, 'http') && !str_contains($pdfUrl, env('R2_URL', ''))) {
@@ -1537,9 +1560,42 @@ class SyncToursJob implements ShouldQueue
                 $brandingChanged = ($oldHash !== $currentHash);
             }
 
-            if (!$alreadyOnR2 || $brandingChanged) {
-                $tourData['_pending_media']['pdf_url'] = $pdfUrl;
+            // Media change-detection: fingerprint the incoming source file (HEAD only).
+            $pdfMeta = null;
+            if ($changeDetection) {
+                $pdfMeta = $probe->probe($pdfUrl);
+                $tourData['_pending_media']['pdf_meta'] = $pdfMeta;
             }
+
+            if (!$alreadyOnR2) {
+                // Not mirrored yet (new tour or lost cloud copy) → download.
+                // Metadata will be recorded by ProcessTourMediaJob (initial import, no tag).
+                $tourData['_pending_media']['pdf_url'] = $pdfUrl;
+            } elseif ($brandingChanged) {
+                // Re-process for branding only — source unchanged, so NOT a content update.
+                $tourData['_pending_media']['pdf_url'] = $pdfUrl;
+            } elseif ($changeDetection) {
+                // Already mirrored: compare fingerprint to detect a silent wholesaler swap.
+                $storedPdf = [
+                    'name' => $existingTour->pdf_source_name ?? null,
+                    'size' => $existingTour->pdf_source_size ?? null,
+                    'etag' => $existingTour->pdf_source_etag ?? null,
+                    'modified' => optional($existingTour->pdf_source_modified)->format('Y-m-d H:i:s'),
+                ];
+
+                if ($probe->isEmpty($storedPdf)) {
+                    // No baseline yet → capture fingerprint WITHOUT re-downloading, no tag.
+                    if (isset($tourData['tour'])) {
+                        $tourData['tour'] += $this->buildMediaMetaFields('pdf', $pdfMeta);
+                    }
+                } elseif ($probe->hasChanged($storedPdf, $pdfMeta)) {
+                    // Wholesaler replaced the PDF → re-mirror new file, delete old, tag update.
+                    $tourData['_pending_media']['pdf_url'] = $pdfUrl;
+                    $tourData['_pending_media']['pdf_changed'] = true;
+                }
+                // else: unchanged → keep existing cloud file + metadata as-is.
+            }
+            // else (change detection off & already mirrored): keep existing cloud file, no probe.
         }
 
         $coverImageUrl = $merged['cover_image_url'] ?? null;
@@ -1547,9 +1603,35 @@ class SyncToursJob implements ShouldQueue
             // Only dispatch media job if tour doesn't already have a Cloudflare URL
             $existingCover = $tourData['_pending_media']['old_cover_image_url'] ?? null;
             $alreadyOnCf = $existingCover && str_contains($existingCover, 'imagedelivery.net');
-            if (!$alreadyOnCf) {
-                $tourData['_pending_media']['cover_image_url'] = $coverImageUrl;
+
+            $coverMeta = null;
+            if ($changeDetection) {
+                $coverMeta = $probe->probe($coverImageUrl);
+                $tourData['_pending_media']['cover_meta'] = $coverMeta;
             }
+
+            if (!$alreadyOnCf) {
+                // Not mirrored yet → upload. Metadata recorded by ProcessTourMediaJob (no tag).
+                $tourData['_pending_media']['cover_image_url'] = $coverImageUrl;
+            } elseif ($changeDetection) {
+                $storedCover = [
+                    'name' => $existingTour->cover_source_name ?? null,
+                    'size' => $existingTour->cover_source_size ?? null,
+                    'etag' => $existingTour->cover_source_etag ?? null,
+                    'modified' => optional($existingTour->cover_source_modified)->format('Y-m-d H:i:s'),
+                ];
+
+                if ($probe->isEmpty($storedCover)) {
+                    // Capture baseline fingerprint without re-uploading, no tag.
+                    if (isset($tourData['tour'])) {
+                        $tourData['tour'] += $this->buildMediaMetaFields('cover', $coverMeta);
+                    }
+                } elseif ($probe->hasChanged($storedCover, $coverMeta)) {
+                    $tourData['_pending_media']['cover_image_url'] = $coverImageUrl;
+                    $tourData['_pending_media']['cover_changed'] = true;
+                }
+            }
+            // else (change detection off & already mirrored): keep existing cloud file, no probe.
         }
 
         // Write back URLs — keep existing R2/Cloudflare URLs if media job was not dispatched
@@ -1616,6 +1698,24 @@ class SyncToursJob implements ShouldQueue
         }
 
         return $tourData;
+    }
+
+    /**
+     * Build the media-fingerprint tour columns from a RemoteFileProbe result.
+     * Used to persist a baseline fingerprint in-transaction (no re-download).
+     *
+     * @param string $prefix 'pdf' or 'cover'
+     * @return array<string,mixed>
+     */
+    protected function buildMediaMetaFields(string $prefix, array $meta): array
+    {
+        return [
+            "{$prefix}_source_url" => $meta['url'] ?? null,
+            "{$prefix}_source_name" => $meta['name'] ?? null,
+            "{$prefix}_source_size" => $meta['size'] ?? null,
+            "{$prefix}_source_etag" => $meta['etag'] ?? null,
+            "{$prefix}_source_modified" => $meta['modified'] ?? null,
+        ];
     }
 
     /**

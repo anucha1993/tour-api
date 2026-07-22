@@ -38,6 +38,10 @@ class ProcessTourMediaJob implements ShouldQueue
     protected ?int $pdfFooterHeight;
     protected ?string $oldPdfUrl;
     protected ?string $oldCoverImageUrl;
+    protected ?array $pdfMeta;
+    protected ?array $coverMeta;
+    protected bool $pdfChanged;
+    protected bool $coverChanged;
 
     public function __construct(
         int $tourId,
@@ -50,6 +54,10 @@ class ProcessTourMediaJob implements ShouldQueue
         ?int $pdfFooterHeight = null,
         ?string $oldPdfUrl = null,
         ?string $oldCoverImageUrl = null,
+        ?array $pdfMeta = null,
+        ?array $coverMeta = null,
+        bool $pdfChanged = false,
+        bool $coverChanged = false,
     ) {
         $this->tourId = $tourId;
         $this->pdfUrl = $pdfUrl;
@@ -61,6 +69,10 @@ class ProcessTourMediaJob implements ShouldQueue
         $this->pdfFooterHeight = $pdfFooterHeight;
         $this->oldPdfUrl = $oldPdfUrl;
         $this->oldCoverImageUrl = $oldCoverImageUrl;
+        $this->pdfMeta = $pdfMeta;
+        $this->coverMeta = $coverMeta;
+        $this->pdfChanged = $pdfChanged;
+        $this->coverChanged = $coverChanged;
         $this->onQueue('media');
     }
 
@@ -101,6 +113,13 @@ class ProcessTourMediaJob implements ShouldQueue
                     $updates['pdf_branding_hash'] = $result['branded']
                         ? md5(($this->pdfHeaderImage ?? '') . '|' . ($this->pdfFooterImage ?? ''))
                         : null;
+
+                    // Record source fingerprint so the next sync can detect a swap.
+                    $updates += $this->buildMetaUpdates('pdf', $this->pdfMeta, $this->pdfUrl);
+                    // Tag as "updated" only when sync detected a real source change.
+                    if ($this->pdfChanged) {
+                        $updates['pdf_updated_at'] = now();
+                    }
                 }
             } catch (\Exception $e) {
                 Log::warning('ProcessTourMediaJob: Failed to upload PDF', [
@@ -120,6 +139,11 @@ class ProcessTourMediaJob implements ShouldQueue
                 $processedUrl = $this->uploadCoverImage();
                 if ($processedUrl) {
                     $updates['cover_image_url'] = $processedUrl;
+
+                    $updates += $this->buildMetaUpdates('cover', $this->coverMeta, $this->coverImageUrl);
+                    if ($this->coverChanged) {
+                        $updates['cover_image_updated_at'] = now();
+                    }
                 }
             } catch (\Exception $e) {
                 Log::warning('ProcessTourMediaJob: Failed to upload cover image', [
@@ -137,6 +161,23 @@ class ProcessTourMediaJob implements ShouldQueue
                 'fields' => array_keys($updates),
             ]);
         }
+    }
+
+    /**
+     * Build the media-fingerprint columns for the given media type.
+     *
+     * @param string $prefix 'pdf' or 'cover'
+     * @return array<string,mixed>
+     */
+    protected function buildMetaUpdates(string $prefix, ?array $meta, ?string $sourceUrl): array
+    {
+        return [
+            "{$prefix}_source_url" => $meta['url'] ?? $sourceUrl,
+            "{$prefix}_source_name" => $meta['name'] ?? null,
+            "{$prefix}_source_size" => $meta['size'] ?? null,
+            "{$prefix}_source_etag" => $meta['etag'] ?? null,
+            "{$prefix}_source_modified" => $meta['modified'] ?? null,
+        ];
     }
 
     protected function uploadPdf(): ?array

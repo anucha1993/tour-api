@@ -168,6 +168,9 @@ class SystemSetting extends Model
             'never_sync_fields' => self::getValue('sync.never_sync_fields', []),
             'skip_past_periods' => self::getValue('sync.skip_past_periods', true),
             'skip_disabled_tours' => self::getValue('sync.skip_disabled_tours', true),
+            // Media change-detection (HEAD probe + re-mirror + อัปเดต PDF/รูป badge).
+            // Defaults to the MEDIA_CHANGE_DETECTION env flag until overridden in the UI.
+            'media_change_detection' => self::getValue('sync.media_change_detection', (bool) config('sync.media_change_detection', true)),
         ];
     }
 
