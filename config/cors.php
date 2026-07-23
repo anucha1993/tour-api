@@ -38,10 +38,12 @@ return [
         'https://www.nexttripholiday.com',
         'https://admin.nexttripholiday.com',
         'https://backend.nexttripholiday.com',
+        'https://invoices.nexttrip.work',
     ],
 
     'allowed_origins_patterns' => [
         '#^https://.*\.nexttripholiday\.com$#',
+        '#^https://.*\.nexttrip\.work$#',
     ],
 
     'allowed_headers' => ['*'],
