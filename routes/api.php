@@ -36,6 +36,7 @@ use App\Http\Controllers\AboutController;
 use App\Http\Controllers\FlashSaleController;
 use App\Http\Controllers\BookingController;
 use App\Http\Controllers\ContactController;
+use App\Http\Controllers\OrganizationController;
 
 /*
 |--------------------------------------------------------------------------
@@ -229,6 +230,9 @@ Route::get('flash-sales/public', [FlashSaleController::class, 'publicActive']);
 // Public Contact Page
 Route::get('contact/public', [ContactController::class, 'publicPage']);
 Route::post('contact/submit', [ContactController::class, 'submitForm']);
+
+// Public Organization / Schema data (TravelAgency + FAQ JSON-LD)
+Route::get('organization/public', [OrganizationController::class, 'publicPage']);
 
 // Public Search & Autocomplete
 Route::get('search/autocomplete', [SearchController::class, 'autocomplete']);
@@ -651,6 +655,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('contact-settings', [ContactController::class, 'updateSettings']);
     Route::post('contact-settings/hero-image', [ContactController::class, 'uploadHeroImage']);
     Route::delete('contact-settings/hero-image', [ContactController::class, 'deleteHeroImage']);
+
+    // Organization / Schema Settings (TravelAgency + FAQ)
+    Route::get('organization-settings', [OrganizationController::class, 'getSettings']);
+    Route::put('organization-settings', [OrganizationController::class, 'updateSettings']);
 
     // Contact Messages
     Route::get('contact-messages', [ContactController::class, 'messageIndex']);
