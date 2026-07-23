@@ -269,6 +269,10 @@ Route::middleware('auth:sanctum')->group(function () {
     });
     Route::apiResource('web-members', \App\Http\Controllers\Api\WebMemberController::class)->only(['index', 'show', 'destroy']);
 
+    // Invoice integration: unified customer search (web_members + guest bookings)
+    // Consumed server-to-server by nexttrip-invoice using its service token.
+    Route::get('integrations/customers/search', [\App\Http\Controllers\Api\InvoiceIntegrationController::class, 'searchCustomers']);
+
     // Quotations Admin
     Route::prefix('quotations')->group(function () {
         Route::get('/statistics', [\App\Http\Controllers\Api\QuotationAdminController::class, 'statistics']);
