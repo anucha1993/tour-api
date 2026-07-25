@@ -444,6 +444,80 @@ class InternationalTourSettingController extends Controller
     }
 
     /**
+     * Update country cover intro HTML (long-form country description)
+     */
+    public function updateCountryCoverIntroHtml(Request $request, InternationalTourSetting $internationalTourSetting, $countryId)
+    {
+        $request->validate([
+            'intro_html' => 'nullable|string|max:20000',
+        ]);
+
+        $cover = InternationalTourCountryCover::where('setting_id', $internationalTourSetting->id)
+            ->where('country_id', $countryId)
+            ->first();
+
+        if (!$cover) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ไม่พบภาพ Cover ประเทศ',
+            ], 404);
+        }
+
+        $cover->update([
+            'intro_html' => $request->intro_html,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $cover,
+            'message' => 'อัปเดตเนื้อหาแนะนำประเทศสำเร็จ',
+        ]);
+    }
+
+    /**
+     * Update country cover FAQ (list of {q,a} for FAQPage JSON-LD)
+     */
+    public function updateCountryCoverFaq(Request $request, InternationalTourSetting $internationalTourSetting, $countryId)
+    {
+        $request->validate([
+            'faq' => 'nullable|array|max:30',
+            'faq.*.q' => 'required_with:faq|string|max:300',
+            'faq.*.a' => 'required_with:faq|string|max:3000',
+        ]);
+
+        $cover = InternationalTourCountryCover::where('setting_id', $internationalTourSetting->id)
+            ->where('country_id', $countryId)
+            ->first();
+
+        if (!$cover) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ไม่พบภาพ Cover ประเทศ',
+            ], 404);
+        }
+
+        // Normalize: keep only rows with both q and a filled
+        $faq = collect($request->input('faq', []))
+            ->map(fn($row) => [
+                'q' => trim((string)($row['q'] ?? '')),
+                'a' => trim((string)($row['a'] ?? '')),
+            ])
+            ->filter(fn($row) => $row['q'] !== '' && $row['a'] !== '')
+            ->values()
+            ->all();
+
+        $cover->update([
+            'faq' => $faq ?: null,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $cover,
+            'message' => 'อัปเดต FAQ สำเร็จ',
+        ]);
+    }
+
+    /**
      * Update country cover pinned tour codes
      */
     public function updateCountryCoverPinnedTours(Request $request, InternationalTourSetting $internationalTourSetting, $countryId)

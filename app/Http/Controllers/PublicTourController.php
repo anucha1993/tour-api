@@ -886,6 +886,7 @@ class PublicTourController extends Controller
                 'hero_text' => $countryCover?->hero_text ?? $setting->hero_text,
                 // Per-country long SEO description (only when a country cover exists)
                 'country_intro' => $countryCover?->intro_html,
+                'country_faq' => $countryCover?->faq,
                 'pagination_mode' => $setting->pagination_mode ?? 'page',
                 'show_sidebar' => (bool) ($setting->show_sidebar ?? true),
                 'sidebar_show_blog_posts' => (bool) ($setting->sidebar_show_blog_posts ?? true),
@@ -1529,7 +1530,9 @@ class PublicTourController extends Controller
                 // Use city-specific cover if available, otherwise use default cover
                 'cover_image_url' => $cityCover?->image_url ?? $setting->cover_image_url,
                 'cover_image_position' => $cityCover?->image_position ?? $setting->cover_image_position ?? 'center',
-                'hero_text' => $setting->hero_text,
+                'hero_text' => $cityCover?->hero_text ?: $setting->hero_text,
+                'city_intro' => $cityCover?->intro_html,
+                'city_faq' => $cityCover?->faq,
                 'pagination_mode' => $setting->pagination_mode ?? 'page',
             ],
             'active_filters' => $skipFilters ? null : [

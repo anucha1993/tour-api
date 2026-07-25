@@ -14,6 +14,9 @@ class DomesticTourCityCover extends Model
         'cloudflare_id',
         'image_position',
         'alt_text',
+        'hero_text',
+        'intro_html',
+        'faq',
         'sort_order',
     ];
 
@@ -21,6 +24,7 @@ class DomesticTourCityCover extends Model
         'setting_id' => 'integer',
         'city_id' => 'integer',
         'sort_order' => 'integer',
+        'faq' => 'array',
     ];
 
     public function setting(): BelongsTo

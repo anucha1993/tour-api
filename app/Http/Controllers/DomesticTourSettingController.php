@@ -444,6 +444,104 @@ class DomesticTourSettingController extends Controller
     }
 
     /**
+     * Update city cover hero text (overrides setting-level hero_text when this city is selected)
+     */
+    public function updateCityCoverHeroText(Request $request, DomesticTourSetting $domesticTourSetting, $cityId)
+    {
+        $request->validate([
+            'hero_text' => 'nullable|string|max:255',
+        ]);
+
+        $cover = DomesticTourCityCover::where('setting_id', $domesticTourSetting->id)
+            ->where('city_id', $cityId)
+            ->first();
+
+        if (!$cover) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ไม่พบภาพ Cover จังหวัด',
+            ], 404);
+        }
+
+        $cover->update(['hero_text' => $request->hero_text]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $cover,
+            'message' => 'อัปเดตข้อความ Hero สำเร็จ',
+        ]);
+    }
+
+    /**
+     * Update city cover intro HTML (long-form city description)
+     */
+    public function updateCityCoverIntroHtml(Request $request, DomesticTourSetting $domesticTourSetting, $cityId)
+    {
+        $request->validate([
+            'intro_html' => 'nullable|string|max:20000',
+        ]);
+
+        $cover = DomesticTourCityCover::where('setting_id', $domesticTourSetting->id)
+            ->where('city_id', $cityId)
+            ->first();
+
+        if (!$cover) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ไม่พบภาพ Cover จังหวัด',
+            ], 404);
+        }
+
+        $cover->update(['intro_html' => $request->intro_html]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $cover,
+            'message' => 'อัปเดตเนื้อหาแนะนำจังหวัดสำเร็จ',
+        ]);
+    }
+
+    /**
+     * Update city cover FAQ (list of {q,a} for FAQPage JSON-LD)
+     */
+    public function updateCityCoverFaq(Request $request, DomesticTourSetting $domesticTourSetting, $cityId)
+    {
+        $request->validate([
+            'faq' => 'nullable|array|max:30',
+            'faq.*.q' => 'required_with:faq|string|max:300',
+            'faq.*.a' => 'required_with:faq|string|max:3000',
+        ]);
+
+        $cover = DomesticTourCityCover::where('setting_id', $domesticTourSetting->id)
+            ->where('city_id', $cityId)
+            ->first();
+
+        if (!$cover) {
+            return response()->json([
+                'success' => false,
+                'message' => 'ไม่พบภาพ Cover จังหวัด',
+            ], 404);
+        }
+
+        $faq = collect($request->input('faq', []))
+            ->map(fn($row) => [
+                'q' => trim((string)($row['q'] ?? '')),
+                'a' => trim((string)($row['a'] ?? '')),
+            ])
+            ->filter(fn($row) => $row['q'] !== '' && $row['a'] !== '')
+            ->values()
+            ->all();
+
+        $cover->update(['faq' => $faq ?: null]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $cover,
+            'message' => 'อัปเดต FAQ สำเร็จ',
+        ]);
+    }
+
+    /**
      * Get the active setting for public display
      */
     public function getPublicSetting()

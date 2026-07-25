@@ -16,6 +16,7 @@ class InternationalTourCountryCover extends Model
         'alt_text',
         'hero_text',
         'intro_html',
+        'faq',
         'pinned_tour_codes',
         'sort_order',
     ];
@@ -24,6 +25,7 @@ class InternationalTourCountryCover extends Model
         'setting_id' => 'integer',
         'country_id' => 'integer',
         'sort_order' => 'integer',
+        'faq' => 'array',
     ];
 
     public function setting(): BelongsTo

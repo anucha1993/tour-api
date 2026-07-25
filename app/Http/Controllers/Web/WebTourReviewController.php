@@ -265,6 +265,21 @@ class WebTourReviewController extends Controller
             $query->where('tour_type', $request->tour_type);
         }
 
+        // Filter by country (accepts country id or slug)
+        if ($request->filled('country')) {
+            $country = $request->get('country');
+            if (is_numeric($country)) {
+                $query->whereHas('tour', function ($q) use ($country) {
+                    $q->where('primary_country_id', (int) $country);
+                });
+            } else {
+                $slug = trim((string) $country);
+                $query->whereHas('tour.primaryCountry', function ($q) use ($slug) {
+                    $q->where('slug', $slug);
+                });
+            }
+        }
+
         $perPage = min((int) $request->get('per_page', 12), 48);
         $reviews = $query->paginate($perPage);
 
