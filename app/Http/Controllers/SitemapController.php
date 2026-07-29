@@ -25,7 +25,17 @@ class SitemapController extends Controller
             ->whereNotNull('slug')
             ->whereHas('periods', fn ($q) => $q->displayable()->where('start_date', '>=', $today))
             ->with(['primaryCountry:id,slug', 'cities:id,slug'])
-            ->select('id', 'slug', 'primary_country_id', 'updated_at')
+            ->select(
+                'id',
+                'slug',
+                'primary_country_id',
+                'updated_at',
+                // Needed so the `effective_cover_image_url` accessor can resolve
+                // between the auto cover and the custom cover set by admin.
+                'cover_image_url',
+                'custom_cover_image_url',
+                'cover_image_source',
+            )
             ->orderByDesc('updated_at')
             ->limit(5000)
             ->get()
@@ -34,6 +44,9 @@ class SitemapController extends Controller
                 'country_slug' => $t->primaryCountry?->slug,
                 'city_slug' => $t->cities->first()?->slug,
                 'updated_at' => $t->updated_at,
+                // Image sitemap entry — helps Google Images index tour covers.
+                // Emit only when we actually have a URL.
+                'cover_image_url' => $t->effective_cover_image_url,
             ]);
 
         // Published blog posts.
@@ -41,7 +54,7 @@ class SitemapController extends Controller
             ->where('status', 'published')
             ->where('published_at', '<=', now())
             ->whereNotNull('slug')
-            ->select('slug', 'updated_at')
+            ->select('slug', 'updated_at', 'cover_image_url')
             ->orderByDesc('updated_at')
             ->limit(5000)
             ->get();
