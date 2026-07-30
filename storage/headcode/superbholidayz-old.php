@@ -63,16 +63,16 @@
 class HeadcodeSuperbholidayzAdapter extends \App\Services\WholesalerAdapters\HeadcodeBaseAdapter
 {
     /**
-     * รายการ category id ที่ "รู้จักแล้ว" ณ 2026-07-13
+     * Default tour "category" IDs to fetch — verified 2026-07-13.
+     * Superb Holidayz groups tours by category (destination), and each id represents
+     * one category. The set here covers every category that currently returns data.
      *
-     * ⚠ ตั้งแต่เวอร์ชันนี้ รายการนี้ไม่ได้ใช้กำหนดว่าจะดึง id ไหนอีกแล้ว
-     *   (getTourIds() สแกน 1..max_scan_id เอง)
-     *   เก็บไว้เพื่อใช้ "เทียบ" ว่ามีหมวดใหม่โผล่มาหรือหมวดเก่าหายไป
-     *   แล้วเขียนลง log ให้ทราบ
+     * If the wholesaler adds a new category id in the future, override via
+     * `auth_credentials.tour_ids` in the WholesalerApiConfig, or extend this list.
      *
-     * ประวัติ: รายการเดิม [21,29,28,23,25,24,18,2,3,17,1,19] สืบทอดมาจาก
-     * ApiController และตกหล่น 31 (KM), 34 (CD), 35 (TAO), 36, 38, 41 (HRB), 43 (GUI)
-     * ทำให้ทัวร์ทั้งหมวดเหล่านั้นไม่เคยถูก sync เลย
+     * Historical: original list [21,29,28,23,25,24,18,2,3,17,1,19] was inherited from
+     * ApiController and missed 31 (KM), 34 (CD), 35 (TAO), 36, 38, 41 (HRB), 43 (GUI)
+     * — causing all tours in those categories to never be synced.
      */
     private const DEFAULT_TOUR_IDS = [
         1, 2, 3, 17, 18, 19,           // Original (Malaysia/Singapore/Brunei group)
@@ -90,39 +90,16 @@ class HeadcodeSuperbholidayzAdapter extends \App\Services\WholesalerAdapters\Hea
     private const API_BASE = 'https://superbholidayz.com/superb/apiweb.php';
 
     /**
-     * ขอบบนของการสแกนหา category id
-     * ปัจจุบัน id สูงสุดที่มีข้อมูลคือ 43 — เผื่อไว้ถึง 80
-     * ปรับได้ผ่าน auth_credentials.max_scan_id
-     */
-    private const DEFAULT_MAX_SCAN_ID = 80;
-
-    /**
-     * รายการ category id ที่จะดึง
-     *
-     * ⚠ เดิมใช้รายการตายตัว (DEFAULT_TOUR_IDS) ทำให้ทุกครั้งที่ Superb Holidayz
-     *   เพิ่มหมวดใหม่ ทัวร์ทั้งหมวดนั้นจะไม่ถูก sync เลยจนกว่าจะมีคนมาแก้โค้ด
-     *   (เคยเกิดกับ id 31, 34, 35, 36, 38, 41, 43 มาแล้ว)
-     *
-     * ตอนนี้เปลี่ยนเป็นสแกนตั้งแต่ 1 ถึง max_scan_id แล้วเก็บเฉพาะ id ที่มีข้อมูล
-     * id ที่ไม่มีข้อมูลจะถูกข้ามเงียบ ๆ ไม่ถือเป็น error
-     *
-     * ถ้าต้องการล็อกรายการแบบเดิม ให้ตั้ง auth_credentials.tour_ids
+     * Get the list of tour IDs to fetch.
+     * Can be overridden via auth_credentials.tour_ids
      */
     private function getTourIds(): array
     {
         $creds = $this->config->auth_credentials ?? [];
-
-        // โหมดล็อกรายการ (ใช้เมื่อต้องการควบคุมเองเท่านั้น)
         if (!empty($creds['tour_ids']) && is_array($creds['tour_ids'])) {
-            return array_map('intval', $creds['tour_ids']);
+            return $creds['tour_ids'];
         }
-
-        $maxId = (int) ($creds['max_scan_id'] ?? self::DEFAULT_MAX_SCAN_ID);
-        if ($maxId < 1) {
-            $maxId = self::DEFAULT_MAX_SCAN_ID;
-        }
-
-        return range(1, $maxId);
+        return self::DEFAULT_TOUR_IDS;
     }
 
     /**
@@ -307,25 +284,18 @@ class HeadcodeSuperbholidayzAdapter extends \App\Services\WholesalerAdapters\Hea
         $tourIds = $this->getTourIds();
         $apiBase = $this->getApiBaseUrl();
 
-        // ── Fetch all data by looping tour IDs ──────────────────────────────
-        // สแกนทุก id ในช่วง แล้วเก็บเฉพาะที่มีข้อมูล
-        // id ที่ว่างเปล่าเป็นเรื่องปกติ (หมวดที่ยังไม่มีทัวร์) ไม่ใช่ error
-        $rawData    = [];
-        $idsWithData = [];   // id ที่ส่งข้อมูลกลับมา
-        $idsFailed   = [];   // id ที่ยิงไม่สำเร็จ
-
+        // ── Fetch all data by looping tour IDs (เหมือน ApiController เดิม) ──
+        $rawData = [];
         foreach ($tourIds as $id) {
             $url = $apiBase . '?id=' . (int) $id;
             try {
                 $response = $this->httpGet($url);
                 if (is_array($response) && !empty($response)) {
-                    $idsWithData[] = (int) $id;
                     foreach ($response as $item) {
                         $rawData[] = $item;
                     }
                 }
             } catch (\Throwable $e) {
-                $idsFailed[] = (int) $id;
                 \Illuminate\Support\Facades\Log::warning('HeadcodeSuperbholidayz: Failed to fetch tour ID ' . $id, [
                     'wholesaler_id' => $this->wholesalerId,
                     'error' => $e->getMessage(),
@@ -343,32 +313,10 @@ class HeadcodeSuperbholidayzAdapter extends \App\Services\WholesalerAdapters\Hea
             return $this->buildSyncResult([]);
         }
 
-        // ── สรุปผลการสแกน ──────────────────────────────────────────────────
-        // เทียบกับรายการเดิม เพื่อรู้ว่ามีหมวดใหม่โผล่มาหรือหมวดเก่าหายไป
-        $newIds  = array_values(array_diff($idsWithData, self::DEFAULT_TOUR_IDS));
-        $goneIds = array_values(array_diff(self::DEFAULT_TOUR_IDS, $idsWithData));
-
         \Illuminate\Support\Facades\Log::info('HeadcodeSuperbholidayz: Fetched raw items', [
-            'wholesaler_id'  => $this->wholesalerId,
-            'count'          => count($rawData),
-            'scanned_ids'    => count($tourIds),
-            'ids_with_data'  => $idsWithData,
-            'ids_failed'     => $idsFailed,
+            'wholesaler_id' => $this->wholesalerId,
+            'count' => count($rawData),
         ]);
-
-        if (!empty($newIds)) {
-            \Illuminate\Support\Facades\Log::notice('HeadcodeSuperbholidayz: พบหมวดใหม่ที่ไม่มีในรายการเดิม', [
-                'wholesaler_id' => $this->wholesalerId,
-                'new_ids'       => $newIds,
-                'hint'          => 'ทัวร์ในหมวดนี้ถูก sync แล้วอัตโนมัติ — อัปเดต DEFAULT_TOUR_IDS ในไฟล์เพื่อความชัดเจน',
-            ]);
-        }
-        if (!empty($goneIds)) {
-            \Illuminate\Support\Facades\Log::notice('HeadcodeSuperbholidayz: หมวดเดิมไม่มีข้อมูลแล้ว', [
-                'wholesaler_id' => $this->wholesalerId,
-                'gone_ids'      => $goneIds,
-            ]);
-        }
 
         if ($pingMode) {
             $stubs = [];
