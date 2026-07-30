@@ -273,6 +273,10 @@ Route::middleware('auth:sanctum')->group(function () {
     // Consumed server-to-server by nexttrip-invoice using its service token.
     Route::get('integrations/customers/search', [\App\Http\Controllers\Api\InvoiceIntegrationController::class, 'searchCustomers']);
 
+    // Invoice integration: callback reporting a booking's invoice-side status
+    // (quotation created / invoiced / paid / cancelled). Consumed by nexttrip-invoice.
+    Route::patch('integrations/bookings/{id}/invoice-status', [\App\Http\Controllers\Api\InvoiceIntegrationController::class, 'updateInvoiceStatus']);
+
     // Quotations Admin
     Route::prefix('quotations')->group(function () {
         Route::get('/statistics', [\App\Http\Controllers\Api\QuotationAdminController::class, 'statistics']);
@@ -595,6 +599,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('bookings/{id}/status', [BookingController::class, 'updateStatus']);
     Route::delete('bookings/{id}', [BookingController::class, 'destroy']);
     Route::post('bookings/{id}/outbound/retry', [BookingController::class, 'retryOutbound']);
+    Route::post('bookings/{id}/resend-invoice', [BookingController::class, 'resendToInvoice']);
 
     // Outbound booking lifecycle (quote → hold → confirm → cancel)
     Route::post('bookings/outbound/quote', [\App\Http\Controllers\Api\BookingController::class, 'quote']);

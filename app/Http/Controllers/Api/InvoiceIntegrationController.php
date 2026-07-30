@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
+use App\Models\BookingEvent;
 use App\Models\WebMember;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 /**
  * InvoiceIntegrationController
@@ -152,5 +154,58 @@ class InvoiceIntegrationController extends Controller
             $d = substr($d, 1);
         }
         return substr($d, -9);
+    }
+
+    /**
+     * Callback FROM nexttrip-invoice reporting the invoice-side lifecycle of a
+     * booking (its generated quotation number and current status). Called
+     * server-to-server with the invoice's Sanctum service token.
+     *
+     * PATCH /api/integrations/bookings/{id}/invoice-status
+     * Body: { quotationId, quotationNumber, status, invoiceNumber?, note? }
+     * status one of: quotation_created | invoiced | paid | cancelled
+     */
+    public function updateInvoiceStatus(Request $request, int $id)
+    {
+        $booking = Booking::find($id);
+        if (! $booking) {
+            return response()->json(['success' => false, 'error' => 'Booking not found'], 404);
+        }
+
+        $validated = $request->validate([
+            'quotationId' => ['nullable', 'integer'],
+            'quotationNumber' => ['nullable', 'string', 'max:50'],
+            'status' => ['required', Rule::in(['quotation_created', 'invoiced', 'paid', 'cancelled'])],
+            'invoiceNumber' => ['nullable', 'string', 'max:50'],
+            'note' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $booking->invoice_quotation_id = $validated['quotationId'] ?? $booking->invoice_quotation_id;
+        $booking->invoice_quotation_number = $validated['quotationNumber'] ?? $booking->invoice_quotation_number;
+        $booking->invoice_status = $validated['status'];
+        $booking->invoice_status_updated_at = now();
+
+        // ใบเสนอราคาฝั่ง invoice ถูกลบ/ยกเลิกทิ้ง -> รีเซ็ต booking กลับเป็น
+        // "ยังไม่ได้ส่ง" เพื่อให้ป้าย "Invoice ✓" หายไปและกดส่งใหม่ (resend) ได้อีกครั้ง
+        // มิเช่นนั้น invoice_sent_at ที่เคยตั้งไว้ตอน sync ครั้งแรกจะค้างอยู่ตลอดไป
+        // แม้ข้อมูลฝั่ง invoice จะไม่มีอยู่จริงแล้วก็ตาม
+        if ($validated['status'] === 'cancelled') {
+            $booking->invoice_sent_at = null;
+            $booking->invoice_quotation_id = null;
+            $booking->invoice_quotation_number = null;
+        }
+
+        $booking->save();
+
+        BookingEvent::log(
+            $booking->id,
+            'invoice_status_update',
+            'info',
+            $validated['note'] ?? "Invoice status: {$validated['status']}",
+            $validated,
+            'nexttrip-invoice',
+        );
+
+        return response()->json(['success' => true]);
     }
 }

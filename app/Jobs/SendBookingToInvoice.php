@@ -77,6 +77,8 @@ class SendBookingToInvoice implements ShouldQueue
             throw new \RuntimeException('Invoice webhook failed with HTTP ' . $response->status());
         }
 
+        $booking->forceFill(['invoice_sent_at' => now()])->save();
+
         Log::info('SendBookingToInvoice: booking synced to invoice', [
             'booking_id' => $this->bookingId,
             'booking_code' => $booking->booking_code,

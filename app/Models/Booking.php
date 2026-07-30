@@ -20,6 +20,11 @@ class Booking extends Model
         'provider_booking_ref',
         'provider_quote_ref',
         'provider_status',
+        'invoice_quotation_id',
+        'invoice_quotation_number',
+        'invoice_status',
+        'invoice_status_updated_at',
+        'invoice_sent_at',
         'hold_expires_at',
         'currency',
         'provider_payload',
@@ -51,6 +56,8 @@ class Booking extends Model
 
     protected $casts = [
         'hold_expires_at' => 'datetime',
+        'invoice_status_updated_at' => 'datetime',
+        'invoice_sent_at' => 'datetime',
         'provider_payload' => 'array',
         'price_adult' => 'decimal:2',
         'price_single' => 'decimal:2',

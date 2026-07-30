@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\SendBookingToInvoice;
 use App\Models\Booking;
 use App\Models\Period;
 use App\Models\PointTransaction;
@@ -293,6 +294,53 @@ class BookingController extends Controller
                 : 'ยิง API แล้ว — สถานะ: ' . ($booking->provider_status ?? 'unknown'),
             'is_confirmed_by_provider' => $confirmed,
             'booking' => $booking->fresh(['member', 'tour', 'period', 'flashSaleItem']),
+        ]);
+    }
+
+    /**
+     * Manually (re)send a confirmed booking snapshot to the nexttrip-invoice
+     * webhook. This is a fallback for when the automatic queued job
+     * (SendBookingToInvoice, dispatched on confirm) fails or the queue
+     * worker is down. Runs synchronously so the admin gets immediate
+     * success/failure feedback. Idempotent on the invoice side (keyed by
+     * bookingCode), so it's safe to click even if a previous attempt
+     * partially succeeded.
+     */
+    public function resendToInvoice(int $id)
+    {
+        $booking = Booking::find($id);
+        if (!$booking) {
+            return response()->json(['message' => 'ไม่พบข้อมูลการจอง'], 404);
+        }
+
+        if ($booking->status !== 'confirmed') {
+            return response()->json([
+                'success' => false,
+                'message' => 'ส่งไปยัง Invoice ได้เฉพาะใบจองที่ยืนยันแล้วเท่านั้น',
+            ], 422);
+        }
+
+        try {
+            SendBookingToInvoice::dispatchSync($booking->id);
+        } catch (\Throwable $e) {
+            Log::error('Manual resend booking to invoice failed', [
+                'booking_id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'ส่งไปยัง Invoice ไม่สำเร็จ: ' . $e->getMessage(),
+            ], 500);
+        }
+
+        $booking = $booking->fresh(['member', 'tour', 'period', 'flashSaleItem']);
+
+        return response()->json([
+            'success' => true,
+            'message' => $booking->invoice_sent_at
+                ? 'ส่งไปยัง Invoice สำเร็จ'
+                : 'ส่งคำขอแล้ว แต่ยังไม่ยืนยันผล — ตรวจสอบสถานะอีกครั้ง',
+            'booking' => $booking,
         ]);
     }
 
