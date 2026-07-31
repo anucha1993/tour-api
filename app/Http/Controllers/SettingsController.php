@@ -1204,6 +1204,7 @@ HTML;
                 'total_passengers' => 'จำนวนผู้เดินทาง',
                 'total_amount'     => 'ยอดรวมทั้งหมด',
                 'status_label'     => 'สถานะการจอง',
+                'sale_name'        => 'ชื่อเซลล์ผู้ดูแล',
                 'year'             => 'ปีปัจจุบัน',
             ],
         ]);
@@ -1279,6 +1280,7 @@ HTML;
             'total_passengers' => '2',
             'total_amount'     => '฿59,900',
             'status_label'     => 'ยืนยันแล้ว',
+            'sale_name'        => 'สมหญิง ขายเก่ง',
             'year'             => (string) date('Y'),
         ];
 

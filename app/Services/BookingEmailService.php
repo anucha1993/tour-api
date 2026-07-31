@@ -181,6 +181,7 @@ class BookingEmailService
             'total_passengers' => (string) $booking->total_passengers,
             'total_amount'     => '฿' . number_format($booking->total_amount, 0),
             'status_label'     => $booking->status_label,
+            'sale_name'        => $booking->sale_code ?: 'ไม่ระบุ',
             'year'             => (string) date('Y'),
         ];
     }

@@ -116,7 +116,17 @@ class TourTransformService
             if ($value !== null && !empty($mapping['string_transform'])) {
                 $value = $this->applyStringTransform($value, $mapping['string_transform']);
             }
-            
+
+            // Normalize date-like fields to ISO "Y-m-d" regardless of transform_type.
+            // Wholesaler APIs send dates in all sorts of raw formats (e.g. BEST sends
+            // "09/20/2026" = m/d/Y), but realtime search date-range filtering compares
+            // these strings directly against ISO "YYYY-MM-DD" search params — a raw
+            // non-ISO string always loses that string comparison, silently excluding
+            // every period/tour ("พบ 0 ทัวร์" even though matching tours exist).
+            if ($value !== null && is_string($value) && str_ends_with($targetField, '_date')) {
+                $value = $this->normalizeDateValue($value);
+            }
+
             // Apply lookup transform if enabled (converts code to display name)
             if ($value !== null && $applyLookup && $mapping['transform_type'] === 'lookup') {
                 $displayName = $this->getDisplayName($value, $targetField, $mapping['transform_config']);
@@ -198,6 +208,44 @@ class TourTransformService
         }
 
         return $fields;
+    }
+
+    /**
+     * Normalize a raw date string from any wholesaler format to ISO "Y-m-d".
+     * Realtime search compares date fields as plain strings against ISO
+     * search params, so a non-ISO raw value (e.g. "09/20/2026") must be
+     * converted here or every date-range/month filter silently matches nothing.
+     */
+    protected function normalizeDateValue(string $value): string
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return $value;
+        }
+
+        // Already ISO (Y-m-d or Y-m-d H:i:s) — leave as-is
+        if (preg_match('/^\d{4}-\d{2}-\d{2}/', $value)) {
+            return substr($value, 0, 10);
+        }
+
+        // Common slash/dash-delimited formats. Try m/d/Y first (confirmed
+        // format for wholesalers like BEST) before d/m/Y, and only accept a
+        // format if re-formatting the parsed date reproduces the input
+        // exactly (avoids e.g. "09/20/2026" being misread as d/m/Y).
+        foreach (['m/d/Y', 'd/m/Y', 'm-d-Y', 'd-m-Y'] as $format) {
+            $date = \DateTime::createFromFormat('!' . $format, $value);
+            if ($date && $date->format($format) === $value) {
+                return $date->format('Y-m-d');
+            }
+        }
+
+        // Fall back to a generic parse; if it fails, return the raw value
+        // unchanged rather than throwing (safer than breaking the whole tour).
+        try {
+            return (new \DateTime($value))->format('Y-m-d');
+        } catch (\Throwable $e) {
+            return $value;
+        }
     }
 
     /**
@@ -435,7 +483,10 @@ class TourTransformService
     protected function lookupCountryName(string $value, ?string $lookupBy = null): ?string
     {
         $value = trim($value);
-        
+        if ($value === '') {
+            return null;
+        }
+
         // Try to find by iso2, iso3, name_en, or name_th
         $country = \App\Models\Country::where(function ($q) use ($value) {
             $q->where('iso2', $value)
@@ -443,12 +494,31 @@ class TourTransformService
               ->orWhereRaw('UPPER(name_en) = ?', [strtoupper($value)])
               ->orWhereRaw('UPPER(name_th) = ?', [strtoupper($value)]);
         })->first();
-        
+
         if ($country) {
             // Return Thai name preferably, fallback to English
             return $country->name_th ?: $country->name_en;
         }
-        
+
+        // Fallback: some wholesalers send a "dirty" country field with an extra
+        // prefix/suffix (e.g. BEST's CNX-departure Japan tours send
+        // country_name_eng = "CNXJAPAN" instead of "JAPAN"). Try matching the
+        // country name as a SUBSTRING of the raw value so we still resolve the
+        // real country instead of showing the garbage text as-is.
+        $upperValue = strtoupper($value);
+        if (strlen($upperValue) >= 4) {
+            $fuzzy = \App\Models\Country::whereRaw(
+                '? LIKE CONCAT(\'%\', UPPER(name_en), \'%\')',
+                [$upperValue]
+            )
+                ->orderByRaw('LENGTH(name_en) DESC')
+                ->first();
+
+            if ($fuzzy) {
+                return $fuzzy->name_th ?: $fuzzy->name_en;
+            }
+        }
+
         // If not found in DB, return original value
         return $value;
     }
