@@ -96,6 +96,13 @@ class SendBookingToInvoice implements ShouldQueue
 
         $airline = $tour?->transports?->firstWhere('transport_type', 'airline');
 
+        $tourType = 'NORMAL';
+        if ($booking->source === 'flash_sale') {
+            $tourType = 'FLASH_SALE';
+        } elseif ($tour?->has_promotion || $tour?->badge === 'PROMOTION') {
+            $tourType = 'PROMOTION';
+        }
+
         $pax = [
             'adult' => (int) $booking->qty_adult,
             'adultSingle' => (int) $booking->qty_adult_single,
@@ -133,6 +140,7 @@ class SendBookingToInvoice implements ShouldQueue
                 'countryName' => $tour?->primaryCountry?->name_th,
                 'airlineId' => $airline?->transport_id,
                 'airlineName' => $airline?->transport_name,
+                'tourType' => $tourType,
             ],
 
             'travel' => [
