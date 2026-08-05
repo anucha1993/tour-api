@@ -49,6 +49,7 @@ class SendBookingToInvoice implements ShouldQueue
             'tour.wholesaler',
             'tour.transports',
             'period',
+            'flashSaleItem',
         ])->find($this->bookingId);
 
         if (! $booking) {
@@ -97,10 +98,17 @@ class SendBookingToInvoice implements ShouldQueue
         $airline = $tour?->transports?->firstWhere('transport_type', 'airline');
 
         $tourType = 'NORMAL';
+        $tourDiscountLabel = null;
+        $tourDiscountPercent = null;
         if ($booking->source === 'flash_sale') {
             $tourType = 'FLASH_SALE';
+            $tourDiscountPercent = $booking->flashSaleItem?->discount_percent !== null
+                ? (float) $booking->flashSaleItem->discount_percent
+                : null;
         } elseif ($tour?->has_promotion || $tour?->badge === 'PROMOTION') {
             $tourType = 'PROMOTION';
+            $tourDiscountLabel = $tour?->discount_label;
+            $tourDiscountPercent = $tour?->max_discount_percent > 0 ? (float) $tour->max_discount_percent : null;
         }
 
         $pax = [
@@ -141,6 +149,8 @@ class SendBookingToInvoice implements ShouldQueue
                 'airlineId' => $airline?->transport_id,
                 'airlineName' => $airline?->transport_name,
                 'tourType' => $tourType,
+                'tourDiscountLabel' => $tourDiscountLabel,
+                'tourDiscountPercent' => $tourDiscountPercent,
             ],
 
             'travel' => [

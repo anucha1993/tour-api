@@ -67,6 +67,7 @@ class UserController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'unique:users,email'],
+            'phone' => ['nullable', 'string', 'max:20'],
             'password' => ['required', 'confirmed', Password::min(8)],
             'role' => ['required', Rule::in(['admin', 'sale', 'it'])],
             'is_active' => ['boolean'],
@@ -86,6 +87,7 @@ class UserController extends Controller
         $user = User::create([
             'name' => $validated['name'],
             'email' => $validated['email'],
+            'phone' => $validated['phone'] ?? null,
             'password' => $validated['password'],
             'role' => $validated['role'],
             'is_active' => $validated['is_active'] ?? true,
@@ -118,6 +120,7 @@ class UserController extends Controller
         $validated = $request->validate([
             'name' => ['sometimes', 'required', 'string', 'max:255'],
             'email' => ['sometimes', 'required', 'email', Rule::unique('users')->ignore($user->id)],
+            'phone' => ['sometimes', 'nullable', 'string', 'max:20'],
             'password' => ['sometimes', 'nullable', 'confirmed', Password::min(8)],
             'role' => ['sometimes', 'required', Rule::in(['admin', 'sale', 'it'])],
             'is_active' => ['sometimes', 'boolean'],
@@ -139,6 +142,9 @@ class UserController extends Controller
         }
         if (isset($validated['email'])) {
             $user->email = $validated['email'];
+        }
+        if (array_key_exists('phone', $validated)) {
+            $user->phone = $validated['phone'];
         }
         if (!empty($validated['password'])) {
             $user->password = $validated['password'];

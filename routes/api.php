@@ -277,6 +277,10 @@ Route::middleware('auth:sanctum')->group(function () {
     // (quotation created / invoiced / paid / cancelled). Consumed by nexttrip-invoice.
     Route::patch('integrations/bookings/{id}/invoice-status', [\App\Http\Controllers\Api\InvoiceIntegrationController::class, 'updateInvoiceStatus']);
 
+    // Invoice integration: read-only lookup of a booking's promo/flash-sale
+    // discount detail. Used by nexttrip-invoice's one-off backfill script.
+    Route::get('integrations/bookings/{id}/tour-discount', [\App\Http\Controllers\Api\InvoiceIntegrationController::class, 'getBookingTourDiscount']);
+
     // Quotations Admin
     Route::prefix('quotations')->group(function () {
         Route::get('/statistics', [\App\Http\Controllers\Api\QuotationAdminController::class, 'statistics']);

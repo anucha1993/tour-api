@@ -208,4 +208,48 @@ class InvoiceIntegrationController extends Controller
 
         return response()->json(['success' => true]);
     }
+
+    /**
+     * Read-only lookup of a booking's promo/flash-sale discount detail, used
+     * by nexttrip-invoice's one-off backfill script to fill in
+     * tourDiscountLabel/tourDiscountPercent on quotations created before those
+     * columns existed. Mirrors the exact same logic as
+     * SendBookingToInvoice::buildPayload() so the backfilled values match what
+     * a fresh webhook delivery would have sent.
+     *
+     * GET /api/integrations/bookings/{id}/tour-discount
+     * Returns: { success, data: { tourType, tourDiscountLabel, tourDiscountPercent } }
+     */
+    public function getBookingTourDiscount(int $id)
+    {
+        $booking = Booking::with(['tour', 'flashSaleItem'])->find($id);
+        if (! $booking) {
+            return response()->json(['success' => false, 'error' => 'Booking not found'], 404);
+        }
+
+        $tour = $booking->tour;
+        $tourType = 'NORMAL';
+        $tourDiscountLabel = null;
+        $tourDiscountPercent = null;
+
+        if ($booking->source === 'flash_sale') {
+            $tourType = 'FLASH_SALE';
+            $tourDiscountPercent = $booking->flashSaleItem?->discount_percent !== null
+                ? (float) $booking->flashSaleItem->discount_percent
+                : null;
+        } elseif ($tour?->has_promotion || $tour?->badge === 'PROMOTION') {
+            $tourType = 'PROMOTION';
+            $tourDiscountLabel = $tour?->discount_label;
+            $tourDiscountPercent = $tour?->max_discount_percent > 0 ? (float) $tour->max_discount_percent : null;
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'tourType' => $tourType,
+                'tourDiscountLabel' => $tourDiscountLabel,
+                'tourDiscountPercent' => $tourDiscountPercent,
+            ],
+        ]);
+    }
 }
