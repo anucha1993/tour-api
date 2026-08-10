@@ -8,6 +8,7 @@ use App\Models\ReviewImage;
 use App\Models\ReviewPageSetting;
 use App\Services\CloudflareImagesService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
@@ -27,7 +28,9 @@ class TourReviewAdminController extends Controller
     public function index(Request $request)
     {
         $query = TourReview::with([
-            'tour:id,title,slug,tour_code',
+            'tour:id,title,slug,tour_code,primary_country_id',
+            'tour.primaryCountry:id,name_th,name_en,slug,iso2,flag_emoji',
+            'country:id,name_th,name_en,slug,iso2,flag_emoji',
             'user:id,first_name,last_name,avatar',
             'moderator:id,name',
             'images',
@@ -68,6 +71,30 @@ class TourReviewAdminController extends Controller
             }
         }
 
+        // Filter by country (accepts country id or slug).
+        // Matches either the review's own country_id OR its tour's primary_country_id.
+        if ($request->filled('country')) {
+            $country = $request->get('country');
+            if (is_numeric($country)) {
+                $cid = (int) $country;
+                $query->where(function ($q) use ($cid) {
+                    $q->where('tour_reviews.country_id', $cid)
+                      ->orWhereHas('tour', function ($tq) use ($cid) {
+                          $tq->where('primary_country_id', $cid);
+                      });
+                });
+            } else {
+                $slug = trim((string) $country);
+                $query->where(function ($q) use ($slug) {
+                    $q->whereHas('country', function ($cq) use ($slug) {
+                        $cq->where('slug', $slug);
+                    })->orWhereHas('tour.primaryCountry', function ($cq) use ($slug) {
+                        $cq->where('slug', $slug);
+                    });
+                });
+            }
+        }
+
         // Search
         if ($request->filled('search')) {
             $search = $request->search;
@@ -97,10 +124,25 @@ class TourReviewAdminController extends Controller
             'featured' => TourReview::where('is_featured', true)->count(),
         ];
 
+        // Country list: countries that have at least one review — uses
+        // COALESCE(review.country_id, tour.primary_country_id) so we count both
+        // reviews attached directly to a country and reviews inherited from a linked tour.
+        $countries = \App\Models\Country::query()
+            ->select('countries.id', 'countries.name_th', 'countries.name_en', 'countries.slug', 'countries.iso2', 'countries.flag_emoji')
+            ->selectRaw('COUNT(tour_reviews.id) as review_count')
+            ->join('tour_reviews', function ($join) {
+                $join->on('countries.id', '=', DB::raw('COALESCE(tour_reviews.country_id, (SELECT tours.primary_country_id FROM tours WHERE tours.id = tour_reviews.tour_id))'));
+            })
+            ->groupBy('countries.id', 'countries.name_th', 'countries.name_en', 'countries.slug', 'countries.iso2', 'countries.flag_emoji')
+            ->orderByDesc('review_count')
+            ->orderBy('countries.name_th')
+            ->get();
+
         return response()->json([
             'success' => true,
             'data' => $reviews,
             'stats' => $stats,
+            'countries' => $countries,
         ]);
     }
 
@@ -111,6 +153,7 @@ class TourReviewAdminController extends Controller
     {
         $review = TourReview::with([
             'tour:id,title,slug,cover_image_url',
+            'country:id,name_th,name_en,slug,iso2,flag_emoji',
             'user:id,first_name,last_name,email,phone,avatar',
             'moderator:id,name',
             'replier:id,name',
@@ -240,6 +283,7 @@ class TourReviewAdminController extends Controller
 
         $validator = Validator::make($request->all(), [
             'tour_id' => 'nullable|exists:tours,id',
+            'country_id' => 'nullable|exists:countries,id',
             'program_name' => 'nullable|string|max:255',
             'reviewer_name' => 'required|string|max:100',
             'reviewer_avatar' => 'nullable|image|max:2048',
@@ -319,6 +363,7 @@ class TourReviewAdminController extends Controller
 
         $review = TourReview::create([
             'tour_id' => $request->tour_id,
+            'country_id' => $request->country_id,
             'program_name' => $request->program_name,
             'reviewer_name' => $request->reviewer_name,
             'reviewer_avatar_url' => $avatarUrl,
@@ -415,6 +460,7 @@ class TourReviewAdminController extends Controller
         $validator = Validator::make($request->all(), [
             'reviewer_name' => 'required|string|max:100',
             'program_name' => 'nullable|string|max:255',
+            'country_id' => 'nullable|exists:countries,id',
             'reviewer_avatar' => 'nullable|image|max:2048',
             'rating' => 'required|integer|min:1|max:5',
             'category_ratings' => 'nullable|array',
@@ -483,6 +529,9 @@ class TourReviewAdminController extends Controller
 
         $review->reviewer_name = $request->reviewer_name;
         $review->program_name = $request->program_name;
+        if ($request->has('country_id')) {
+            $review->country_id = $request->country_id ?: null;
+        }
         $review->rating = $request->rating;
         $review->category_ratings = $request->category_ratings;
         $review->tags = $request->tags;

@@ -1555,15 +1555,18 @@ HTML;
     public function updateTrackingConfig(Request $request): JsonResponse
     {
         // Format helpers — light validation. We accept empty strings to disable a tracker.
+        // NOTE: regex rules MUST use array-of-strings form (not pipe-separated) because
+        // the regex itself contains "|" (alternation) which Laravel's pipe-rule parser
+        // would otherwise split on — producing "No ending delimiter '/' found" at runtime.
         $validated = $request->validate([
-            'gtm_id'          => 'nullable|string|max:50|regex:/^(GTM-[A-Z0-9]+)?$/i',
-            'ga4_id'          => 'nullable|string|max:50|regex:/^(G-[A-Z0-9]+|UA-\d+-\d+)?$/i',
-            'fb_pixel_id'     => 'nullable|string|max:50|regex:/^\d*$/',
-            'tiktok_pixel_id' => 'nullable|string|max:50',
-            'enabled'         => 'sometimes|boolean',
+            'gtm_id'          => ['nullable', 'string', 'max:50', 'regex:/^(GTM-[A-Z0-9]+)?$/i'],
+            'ga4_id'          => ['nullable', 'string', 'max:50', 'regex:/^(G-[A-Z0-9]+|UA-\d+-\d+)?$/i'],
+            'fb_pixel_id'     => ['nullable', 'string', 'max:50', 'regex:/^\d*$/'],
+            'tiktok_pixel_id' => ['nullable', 'string', 'max:50'],
+            'enabled'         => ['sometimes', 'boolean'],
             // Raw snippets: cap size to prevent abuse, but accept any HTML/JS.
-            'custom_head_html' => 'nullable|string|max:20000',
-            'custom_body_html' => 'nullable|string|max:20000',
+            'custom_head_html' => ['nullable', 'string', 'max:20000'],
+            'custom_body_html' => ['nullable', 'string', 'max:20000'],
         ], [
             'gtm_id.regex'      => 'GTM ID ต้องขึ้นต้นด้วย "GTM-" (เช่น GTM-ABC1234)',
             'ga4_id.regex'      => 'GA4 ID ต้องขึ้นต้นด้วย "G-" (เช่น G-ABC1234567)',

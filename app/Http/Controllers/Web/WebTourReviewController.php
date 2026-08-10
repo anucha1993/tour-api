@@ -9,6 +9,7 @@ use App\Models\ReviewImage;
 use App\Models\ReviewPageSetting;
 use App\Models\Tour;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
@@ -228,7 +229,12 @@ class WebTourReviewController extends Controller
     public function listAll(Request $request)
     {
         $query = TourReview::approved()
-            ->with(['tour:id,title,slug,tour_code,cover_image_url', 'images']);
+            ->with([
+                'tour:id,title,slug,tour_code,cover_image_url,primary_country_id',
+                'tour.primaryCountry:id,name_th,name_en,slug,iso2,flag_emoji',
+                'country:id,name_th,name_en,slug,iso2,flag_emoji',
+                'images',
+            ]);
 
         // Sort
         $sort = $request->get('sort', 'latest');
@@ -265,17 +271,26 @@ class WebTourReviewController extends Controller
             $query->where('tour_type', $request->tour_type);
         }
 
-        // Filter by country (accepts country id or slug)
+        // Filter by country (accepts country id or slug). Matches either the review's
+        // own country_id OR its tour's primary_country_id.
         if ($request->filled('country')) {
             $country = $request->get('country');
             if (is_numeric($country)) {
-                $query->whereHas('tour', function ($q) use ($country) {
-                    $q->where('primary_country_id', (int) $country);
+                $cid = (int) $country;
+                $query->where(function ($q) use ($cid) {
+                    $q->where('tour_reviews.country_id', $cid)
+                      ->orWhereHas('tour', function ($tq) use ($cid) {
+                          $tq->where('primary_country_id', $cid);
+                      });
                 });
             } else {
                 $slug = trim((string) $country);
-                $query->whereHas('tour.primaryCountry', function ($q) use ($slug) {
-                    $q->where('slug', $slug);
+                $query->where(function ($q) use ($slug) {
+                    $q->whereHas('country', function ($cq) use ($slug) {
+                        $cq->where('slug', $slug);
+                    })->orWhereHas('tour.primaryCountry', function ($cq) use ($slug) {
+                        $cq->where('slug', $slug);
+                    });
                 });
             }
         }
@@ -298,6 +313,24 @@ class WebTourReviewController extends Controller
             ->groupBy('tour_type')
             ->pluck('count', 'tour_type');
 
+        // Countries list (with approved-review counts) — for country filter dropdown.
+        // Uses COALESCE(review.country_id, tour.primary_country_id) so we count both
+        // reviews attached directly to a country and reviews inherited from a linked tour.
+        $countries = \App\Models\Country::query()
+            ->select('countries.id', 'countries.name_th', 'countries.name_en', 'countries.slug', 'countries.iso2', 'countries.flag_emoji')
+            ->selectRaw('COUNT(tour_reviews.id) as review_count')
+            ->join('tour_reviews', function ($join) {
+                $join->on('countries.id', '=', DB::raw('COALESCE(tour_reviews.country_id, (SELECT tours.primary_country_id FROM tours WHERE tours.id = tour_reviews.tour_id))'))
+                    ->where('tour_reviews.status', '=', 'approved');
+            })
+            ->groupBy('countries.id', 'countries.name_th', 'countries.name_en', 'countries.slug', 'countries.iso2', 'countries.flag_emoji')
+            ->orderByDesc('review_count')
+            ->orderBy('countries.name_th')
+            ->get();
+
+        // Map to slug -> count (used by sidebar filter to show counts)
+        $countryCounts = $countries->pluck('review_count', 'slug');
+
         return response()->json([
             'success' => true,
             'data' => [
@@ -306,6 +339,8 @@ class WebTourReviewController extends Controller
                     'total_reviews' => $totalReviews,
                     'rating_distribution' => $ratingDist,
                     'tour_type_counts' => $tourTypeCounts,
+                    'country_counts' => $countryCounts,
+                    'countries' => $countries,
                 ],
                 'reviews' => $reviews,
             ],

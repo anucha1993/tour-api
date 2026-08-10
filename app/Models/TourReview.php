@@ -13,6 +13,7 @@ class TourReview extends Model
 
     protected $fillable = [
         'tour_id',
+        'country_id',
         'program_name',
         'user_id',
         'order_id',
@@ -58,6 +59,11 @@ class TourReview extends Model
     public function tour(): BelongsTo
     {
         return $this->belongsTo(Tour::class);
+    }
+
+    public function country(): BelongsTo
+    {
+        return $this->belongsTo(Country::class);
     }
 
     public function user(): BelongsTo

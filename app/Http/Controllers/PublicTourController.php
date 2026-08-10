@@ -1229,12 +1229,24 @@ class PublicTourController extends Controller
 
         $filters = [];
 
-        // Countries (always show all, not scoped)
+        // Countries (always show all, not scoped) — sorted by popularity:
+        // number of non-cancelled bookings that land on tours in this country
+        // (same metric the admin dashboard's "การจองแยกตามประเทศ" chart uses).
+        // Falls back to tour_count / name_th for ties or when no bookings yet.
         if ($setting->filter_country ?? true) {
             $filters['countries'] = Country::active()
                 ->where('id', '!=', $thailandId)
                 ->whereHas('tours', fn($q) => $q->whereIn('tours.id', $allActiveTourIds))
                 ->withCount(['tours' => fn($q) => $q->whereIn('tours.id', $allActiveTourIds)])
+                ->withCount([
+                    'tours as bookings_count' => function ($q) {
+                        $q->join('bookings', 'bookings.tour_id', '=', 'tours.id')
+                          ->whereNotIn('bookings.status', ['cancelled'])
+                          ->select(DB::raw('COUNT(bookings.id)'));
+                    },
+                ])
+                ->orderByDesc('bookings_count')
+                ->orderByDesc('tours_count')
                 ->orderBy('name_th')
                 ->get()
                 ->map(fn($c) => [
@@ -1243,6 +1255,7 @@ class PublicTourController extends Controller
                     'slug' => $c->slug,
                     'iso2' => strtolower($c->iso2 ?? ''),
                     'tour_count' => $c->tours_count,
+                    'bookings_count' => (int) ($c->bookings_count ?? 0),
                 ]);
         }
 
