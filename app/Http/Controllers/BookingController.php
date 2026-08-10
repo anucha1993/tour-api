@@ -444,6 +444,11 @@ class BookingController extends Controller
                     'error' => $e->getMessage(),
                 ]);
             }
+        } elseif ($booking->status === 'confirmed' && !$booking->invoice_sent_at) {
+            // No provider integration for this tour, but the admin created the
+            // booking already "confirmed" — still notify the invoice app
+            // (runOutboundForBooking would have done this itself otherwise).
+            SendBookingToInvoice::dispatch($booking->id);
         }
 
         // Award member points immediately if booking is created as paid
@@ -516,6 +521,19 @@ class BookingController extends Controller
             } catch (\Exception $e) {
                 // Don't fail the update if email fails
             }
+        }
+
+        // If an admin manually flips status to "confirmed" here (as opposed to the
+        // automatic provider-confirm flow in BookingService::confirm(), which already
+        // dispatches this job), we must also notify the invoice app — otherwise the
+        // booking is stuck "confirmed" but never auto-synced (invoice_sent_at stays null).
+        if (
+            isset($validated['status'])
+            && $validated['status'] === 'confirmed'
+            && $oldStatus !== 'confirmed'
+            && !$booking->invoice_sent_at
+        ) {
+            SendBookingToInvoice::dispatch($booking->id);
         }
 
         // If cancelled and was flash sale → decrement quantity_sold
