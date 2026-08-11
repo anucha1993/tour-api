@@ -40,7 +40,8 @@
  *     pdf           → pdf_url   ⚠ relative path ต้องเติม domain
  *     word          → docx_url  ⚠ relative path ต้องเติม domain
  *     startingprice → ราคาเริ่มต้น
- *     Size          → capacity ของกรุ๊ป
+ *     Size          → capacity ของกรุ๊ป ⚠ มาเป็นข้อความ "25+1" (ลูกค้า+หัวหน้าทัวร์)
+ *                     → parse เอาเลขหน้า (25) เป็น capacity, เก็บดิบใน capacity_raw
  *
  *   Period level (ต่างกันในแต่ละแถว):
  *     pid      → external_id เช่น "UIEU-010/2026-1_081017102026"
@@ -54,8 +55,9 @@
  *     com      → commission_agent
  *     complus  → commission เพิ่มเติม
  *     Pro      → ราคาโปรโมชั่น (0 = ไม่มี)
- *     AVBL     → available
- *     Booking  → 0=จองได้ 4=เต็ม/รอคิว 14=ตัดกรุ๊ป 15=CXL 16=ปิดกรุ๊ป
+ *     AVBL     → available ⚠ บางแถวเป็นข้อความสถานะ ("ตัดกรุ๊ป"/"ปิดกรุ๊ป"/"CXL") ไม่ใช่เลข
+ *     Booking  → 0=จองได้ 4=เต็ม/รอคิว 14=ตัดกรุ๊ป 15=CXL 16=ปิดกรุ๊ป (มาเป็นข้อความไทยได้)
+ *                ⚠ กติกา 2026-08-10: 4/14/16 → บังคับที่นั่งเหลือ 0 เสมอ, 15 → ไม่ sync
  *     visa     → ข้อมูลวีซ่า
  *     Link     → เอกสารเสริม
  *     Namelist → ไฟล์รายชื่อ
@@ -73,6 +75,27 @@ class HeadcodeUniqueinterAdapter extends \App\Services\WholesalerAdapters\Headco
     /** สถานะ departure: 1 = เปิดขาย, 3 = ปิด/เต็ม */
     private const STATUS_OPEN   = 1;
     private const STATUS_CLOSED = 3;
+
+    /**
+     * API ส่งช่อง Booking (และบางครั้ง AVBL) มาเป็นข้อความไทย/อังกฤษ
+     * แทนที่จะเป็นรหัสตัวเลข → normalize เป็นรหัสก่อนตีความ
+     * key เป็นตัวพิมพ์เล็กทั้งหมด (เทียบด้วย mb_strtolower)
+     */
+    private const BOOKING_TEXT_MAP = [
+        'จองได้'    => '0',
+        'เต็ม'      => '4',
+        'รอคิว'     => '4',
+        'full'      => '4',
+        'ตัดกรุ๊ป'   => '14',
+        'ตัดกรุ้ป'   => '14',   // เผื่อสะกดต่าง
+        'cxl'       => '15',
+        'ยกเลิก'    => '15',
+        'cancel'    => '15',
+        'ปิดกรุ๊ป'   => '16',
+        'ปิดกรุ้ป'   => '16',   // เผื่อสะกดต่าง
+        'close'     => '16',
+        'closed'    => '16',
+    ];
 
     /**
      * ดึงทัวร์ทั้งหมดพร้อมรอบเดินทาง (single-phase)
@@ -213,18 +236,29 @@ class HeadcodeUniqueinterAdapter extends \App\Services\WholesalerAdapters\Headco
                     continue;
                 }
 
-                $bookingCode = trim((string) ($r['Booking'] ?? ''));
+                // ── Booking มาได้ทั้งรหัสตัวเลขและข้อความไทย/อังกฤษ ──────────
+                //   '0'  / จองได้     → เปิดขาย
+                //   '4'  / เต็ม/รอคิว  → ปิด ที่นั่ง 0
+                //   '14' / ตัดกรุ๊ป    → ปิด ที่นั่ง 0  (กติกา 2026-08-10: ตัดกรุ๊ปห้ามโชว์ที่นั่งเหลือ)
+                //   '16' / ปิดกรุ๊ป    → ปิด ที่นั่ง 0
+                //   '15' / CXL/ยกเลิก → ไม่ sync เข้าระบบเลย
+                $bookingRaw  = trim((string) ($r['Booking'] ?? ''));
+                $bookingCode = self::BOOKING_TEXT_MAP[mb_strtolower($bookingRaw, 'UTF-8')]
+                    ?? $bookingRaw;
 
-                // 15 = CXL (ยกเลิกพีเรียด) → ไม่ sync เข้าระบบเลย
+                // CXL (ยกเลิกพีเรียด) → ข้าม
                 if ($bookingCode === '15') {
                     continue;
                 }
 
-                // 0 = จองได้, 14 = ตัดกรุ๊ป (ยืนยันเดินทาง) → เปิดขาย
-                // 4 = เต็ม/รอคิว, 16 = ปิดกรุ๊ป → ปิด
-                $status = in_array($bookingCode, ['0', '14'], true)
+                // เปิดขายเฉพาะสถานะจองได้เท่านั้น
+                $status = ($bookingCode === '0')
                     ? self::STATUS_OPEN
                     : self::STATUS_CLOSED;
+
+                // สถานะที่ต้องบังคับที่นั่งเหลือ = 0 เสมอ ไม่สนเลขใน AVBL
+                // (API มักส่งเลข allotment เดิมค้างมา เช่น 20/30 ทั้งที่กรุ๊ปถูกตัด/ปิดแล้ว)
+                $forceZeroSeat = in_array($bookingCode, ['4', '14', '16'], true);
 
                 $priceAdult     = $this->num($r['Adult']   ?? null);
                 $priceChdBed    = $this->num($r['Chd+B']   ?? null);
@@ -234,8 +268,78 @@ class HeadcodeUniqueinterAdapter extends \App\Services\WholesalerAdapters\Headco
                 $commission     = $this->num($r['com']     ?? null);
                 $commissionPlus = $this->num($r['complus'] ?? null);
                 $promoPrice     = $this->num($r['Pro']     ?? null);
-                $available      = (int) $this->num($r['AVBL'] ?? null);
-                $capacity       = (int) $this->num($r['Size'] ?? null);
+                // ── AVBL: ตัวเลขปกติ หรือข้อความสถานะ (เช่น "ตัดกรุ๊ป", "ปิดกรุ๊ป", "CXL")
+                $avblRaw = trim((string) ($r['AVBL'] ?? ''));
+                if ($avblRaw !== '' && preg_match('/^\d+$/u', $avblRaw)) {
+                    $available = (int) $avblRaw;                 // ตัวเลขปกติ
+                } elseif ($avblRaw !== '') {
+                    $avblCode = self::BOOKING_TEXT_MAP[mb_strtolower($avblRaw, 'UTF-8')] ?? null;
+                    if ($avblCode === '15') {
+                        continue;                                // CXL ในช่อง AVBL → ข้ามพีเรียดนี้
+                    }
+                    if ($avblCode === null) {
+                        \Illuminate\Support\Facades\Log::warning(
+                            'HeadcodeUniqueinterAdapter: AVBL รูปแบบไม่รู้จัก',
+                            [
+                                'wholesaler_id' => $this->wholesalerId,
+                                'pid'           => (string) ($r['pid'] ?? ''),
+                                'avbl_raw'      => $avblRaw,
+                            ]
+                        );
+                    }
+                    // ข้อความสถานะใด ๆ ในช่องที่นั่ง = ขายไม่ได้
+                    $status        = self::STATUS_CLOSED;
+                    $forceZeroSeat = true;
+                    $available     = 0;
+                } else {
+                    $available = 0;                              // ว่าง → ไม่มีข้อมูลที่นั่ง
+                }
+
+                // ── กติกา 2026-08-10: ตัดกรุ๊ป/ปิดกรุ๊ป/เต็ม → ที่นั่งเหลือต้องเป็น 0 เสมอ ──
+                if ($forceZeroSeat) {
+                    $available = 0;
+                }
+
+                // เปิดขายแต่ที่นั่งเหลือ 0 = ขายไม่ได้จริง → ปิด กันสับสนหน้าเว็บ
+                if ($status === self::STATUS_OPEN && $available <= 0) {
+                    $status = self::STATUS_CLOSED;
+                }
+
+                // ── Size มาเป็นข้อความ เช่น "25+1" (25 ที่นั่งลูกค้า + 1 หัวหน้าทัวร์) ──
+                // capacity = เฉพาะที่นั่งที่ขายลูกค้าได้ (ไม่รวมหัวหน้าทัวร์)
+                // เก็บค่าดิบไว้ใน capacity_raw เพื่อตรวจย้อนหลัง
+                $sizeRaw  = trim((string) ($r['Size'] ?? ''));
+                $capacity = 0;
+                if (preg_match('/^(\d+)\s*\+\s*(\d+)$/u', $sizeRaw, $sm)) {
+                    $capacity = (int) $sm[1];                    // "25+1" → 25
+                } elseif ($sizeRaw !== '' && preg_match('/^\d+$/u', $sizeRaw)) {
+                    $capacity = (int) $sizeRaw;                  // "25" → 25
+                } elseif ($sizeRaw !== '') {
+                    // รูปแบบที่ไม่รู้จัก เช่น "FULL", "TBA" → log ไว้ อย่าแปลงเงียบ ๆ
+                    \Illuminate\Support\Facades\Log::warning(
+                        'HeadcodeUniqueinterAdapter: Size รูปแบบไม่รู้จัก',
+                        [
+                            'wholesaler_id' => $this->wholesalerId,
+                            'pid'           => (string) ($r['pid'] ?? ''),
+                            'size_raw'      => $sizeRaw,
+                        ]
+                    );
+                    $capacity = (int) $this->num($sizeRaw);      // fallback แบบเดิม
+                }
+
+                // กันข้อมูลเพี้ยน: คงเหลือมากกว่าขนาดกรุ๊ปเป็นไปไม่ได้
+                if ($capacity > 0 && $available > $capacity) {
+                    \Illuminate\Support\Facades\Log::warning(
+                        'HeadcodeUniqueinterAdapter: AVBL เกิน Size — ตรวจ mapping',
+                        [
+                            'wholesaler_id' => $this->wholesalerId,
+                            'pid'           => (string) ($r['pid'] ?? ''),
+                            'size_raw'      => $sizeRaw,
+                            'capacity'      => $capacity,
+                            'available'     => $available,
+                        ]
+                    );
+                }
 
                 if ($priceAdult <= 0) {
                     continue; // ไม่มีราคา = ไม่ขาย
@@ -268,9 +372,12 @@ class HeadcodeUniqueinterAdapter extends \App\Services\WholesalerAdapters\Headco
                     'start_date'        => $startDate,
                     'end_date'          => $endDate ?: null,
                     'capacity'          => $capacity ?: null,
-                    'booked'            => ($capacity > 0)
-                                            ? max(0, $capacity - $available)
-                                            : null,
+                    'capacity_raw'      => $sizeRaw ?: null,
+                    // เมื่อบังคับที่นั่ง 0 (ตัดกรุ๊ป/ปิดกรุ๊ป/เต็ม) ตัวเลขจองจริงไม่รู้
+                    // → null ดีกว่าคำนวณมั่วจาก capacity − 0
+                    'booked'            => ($forceZeroSeat || $capacity <= 0)
+                                            ? null
+                                            : max(0, $capacity - $available),
                     'available'         => $available,
                     'status'            => $status,
                     'price_adult'       => $priceAdult     ?: null,
@@ -379,6 +486,9 @@ class HeadcodeUniqueinterAdapter extends \App\Services\WholesalerAdapters\Headco
     /**
      * เติม domain ให้ relative path
      * API ส่ง pdf/word มาเป็น "catalog/PdfUIEU010_xxx.pdf"
+     * ⚠ ชื่อไฟล์ของ Unique มีช่องว่าง เช่น "PdfUI-ASIA_001_Vietnam Danang Bana Hills.pdf"
+     *   ต้อง encode เป็น %20 ไม่งั้น HTTP client ฝั่งเซิร์ฟเวอร์ดาวน์โหลดล้ม
+     *   → ไฟล์ไม่เข้า R2 → ไม่ผ่าน PDF Branding
      */
     private function absUrl(?string $path): ?string
     {
@@ -386,8 +496,22 @@ class HeadcodeUniqueinterAdapter extends \App\Services\WholesalerAdapters\Headco
         if ($path === '') {
             return null;
         }
-        if (preg_match('#^https?://#i', $path)) {
-            return $path;
+
+        // แยกส่วน domain (ถ้ามี) ออกจาก path ก่อน encode
+        $prefix = '';
+        if (preg_match('#^(https?://[^/]+/)(.*)$#i', $path, $m)) {
+            $prefix = $m[1];
+            $path   = $m[2];
+        }
+
+        // encode ทีละ segment (คงเครื่องหมาย / ไว้)
+        // ถ้ามี % อยู่แล้ว = ถูก encode มาก่อน ไม่ encode ซ้ำ
+        if (!str_contains($path, '%')) {
+            $path = implode('/', array_map('rawurlencode', explode('/', $path)));
+        }
+
+        if ($prefix !== '') {
+            return $prefix . $path;
         }
         return self::API_HOST . ltrim($path, '/');
     }
@@ -418,41 +542,53 @@ class HeadcodeUniqueinterAdapter extends \App\Services\WholesalerAdapters\Headco
     /**
      * แปลงชื่อสายการบินเต็ม → รหัส IATA 2 ตัว
      * API ส่งมาเป็น "Emirates" ไม่ใช่ "EK"
+     *
+     * ⚠ เวอร์ชันใหม่ (2026-08-11): ใช้ DB `transports` เป็นแหล่งหลัก แทน hardcoded array
+     *   1) ถ้า API ส่งรหัส 2 ตัว (เช่น "EK") → ใช้ตรง ๆ
+     *   2) ค้นชื่อใน `transports.name` (case-insensitive, partial match)
+     *      แล้วอ่านรหัสจาก `transports.code` / `transports.code1`
+     *   3) ถ้ายังไม่เจอ ใช้ alias สั้น ๆ เฉพาะกรณีที่ API ส่งชื่อเล่นที่ DB ไม่มี
+     *      (เช่น "ANA" ที่ DB เก็บชื่อเต็ม "All Nippon Airways")
      */
     private function airlineNameToCode(string $name): ?string
     {
-        static $map = [
-            'EMIRATES' => 'EK', 'QATAR' => 'QR', 'ETIHAD' => 'EY',
-            'THAI AIRWAYS' => 'TG', 'THAI AIRASIA' => 'FD', 'AIRASIA' => 'FD',
-            'THAI VIETJET' => 'VZ', 'VIETJET' => 'VJ', 'THAI LION' => 'SL',
-            'BANGKOK AIRWAYS' => 'PG', 'NOK AIR' => 'DD',
-            'SINGAPORE AIRLINES' => 'SQ', 'SCOOT' => 'TR',
-            'MALAYSIA AIRLINES' => 'MH', 'CATHAY' => 'CX',
-            'EVA AIR' => 'BR', 'CHINA AIRLINES' => 'CI',
-            'JAPAN AIRLINES' => 'JL', 'ALL NIPPON' => 'NH', 'ANA' => 'NH',
-            'KOREAN AIR' => 'KE', 'ASIANA' => 'OZ',
-            'AIR CHINA' => 'CA', 'CHINA EASTERN' => 'MU', 'CHINA SOUTHERN' => 'CZ',
-            'VIETNAM AIRLINES' => 'VN', 'PHILIPPINE' => 'PR',
-            'TURKISH' => 'TK', 'LUFTHANSA' => 'LH', 'SWISS' => 'LX',
-            'AIR FRANCE' => 'AF', 'KLM' => 'KL', 'BRITISH AIRWAYS' => 'BA',
-            'FINNAIR' => 'AY', 'AUSTRIAN' => 'OS', 'ITA AIRWAYS' => 'AZ',
-            'AEROFLOT' => 'SU', 'OMAN AIR' => 'WY', 'GULF AIR' => 'GF',
-            'SAUDIA' => 'SV', 'AIR INDIA' => 'AI', 'SRILANKAN' => 'UL',
-            'QANTAS' => 'QF', 'AIR NEW ZEALAND' => 'NZ',
-        ];
-
         $upper = mb_strtoupper(trim($name), 'UTF-8');
+        if ($upper === '') return null;
 
         // ถ้าส่งมาเป็นรหัส 2 ตัวอยู่แล้ว
         if (preg_match('/^[A-Z0-9]{2}$/', $upper)) {
             return $upper;
         }
 
-        foreach ($map as $needle => $code) {
-            if (str_contains($upper, $needle)) {
-                return $code;
-            }
+        // 1) ALIAS ก่อน — API ส่งชื่อเล่นสั้น ๆ ที่ DB มักเก็บชื่อเต็ม
+        //    เช่น "ANA" → NH (DB name = "All Nippon Airways" → LIKE '%ANA%' จะจับผิด)
+        static $aliases = [
+            'ANA'      => 'NH',
+            'AIRASIA'  => 'FD',
+            'CATHAY'   => 'CX',
+            'SCOOT'    => 'TR',
+        ];
+        foreach ($aliases as $needle => $code) {
+            if (str_contains($upper, $needle)) return $code;
         }
+
+        // 2) DB exact match ก่อน (ทั้งบรรทัด)
+        $transport = \App\Models\Transport::query()
+            ->whereRaw('UPPER(name) = ?', [$upper])
+            ->first(['code', 'code1']);
+        if ($transport) {
+            return $transport->code ?: $transport->code1;
+        }
+
+        // 3) DB partial match — ชื่อทัวร์บางครั้งมีคำเสริม เช่น "Emirates Skywards"
+        //    ⚠ ใช้เป็นทางเลือกสุดท้าย เพราะ LIKE อาจจับผิดชื่อสายการบินที่คล้ายกัน
+        $transport = \App\Models\Transport::query()
+            ->where('name', 'like', '%' . trim($name) . '%')
+            ->first(['code', 'code1']);
+        if ($transport) {
+            return $transport->code ?: $transport->code1;
+        }
+
         return null;
     }
 
@@ -460,94 +596,102 @@ class HeadcodeUniqueinterAdapter extends \App\Services\WholesalerAdapters\Headco
      * เดาประเทศจากชื่อทัวร์ → คืนรายการ ISO2
      * จำเป็นเพราะฟิลด์ Country ส่งมาเป็น "ทัวร์เส้นทางยุโรป" ซึ่ง lookup ไม่ได้
      *
+     * ⚠ เวอร์ชันใหม่ (2026-08-11): scan ชื่อทัวร์เทียบกับ `countries.name_en` ใน DB
+     *   แทน hardcoded array ~60 รายการ → เพิ่มประเทศได้จากหน้า admin ไม่ต้องแก้ code
+     *
+     * รักษาไว้เฉพาะ ALIASES ที่ไม่ตรงชื่อประเทศจริง เช่น
+     *   "SCANDINAVIA" → [SE, NO, DK]     (กลุ่มประเทศ ไม่ใช่ประเทศเดียว)
+     *   "DOLOMITES"   → [IT]              (แคว้นในอิตาลี)
+     *   "ENGLAND/SCOTLAND/WALES" → [GB]   (subregion → รวมเป็น UK)
+     *   "NORWAYS"     → [NO]              (สะกดผิดที่ API ส่งบ่อย)
+     *
      * เช่น "UIEU_010_SCANDINAVIA SWEDEN NORWAYS DENMARK 10 DAYS"
      *      → ['SE', 'NO', 'DK']
      */
     private function guessCountryIso2(string $title): array
     {
-        static $map = [
-            // คำยาวมาก่อนคำสั้น เพื่อไม่ให้จับผิด
-            'NEW ZEALAND' => 'NZ', 'SOUTH KOREA' => 'KR', 'HONG KONG' => 'HK',
-            'CZECH REPUBLIC' => 'CZ', 'UNITED KINGDOM' => 'GB',
-            'SAUDI ARABIA' => 'SA', 'SOUTH AFRICA' => 'ZA',
-            'JAPAN' => 'JP', 'KOREA' => 'KR', 'TAIWAN' => 'TW', 'CHINA' => 'CN',
-            'HONGKONG' => 'HK', 'MACAU' => 'MO', 'VIETNAM' => 'VN',
-            'SINGAPORE' => 'SG', 'MALAYSIA' => 'MY', 'INDONESIA' => 'ID',
-            'PHILIPPINES' => 'PH', 'CAMBODIA' => 'KH', 'LAOS' => 'LA',
-            'MYANMAR' => 'MM', 'INDIA' => 'IN', 'NEPAL' => 'NP', 'BHUTAN' => 'BT',
-            'SRI LANKA' => 'LK', 'MALDIVES' => 'MV',
-            'DUBAI' => 'AE', 'ABU DHABI' => 'AE', 'QATAR' => 'QA', 'OMAN' => 'OM',
-            'JORDAN' => 'JO', 'ISRAEL' => 'IL', 'TURKEY' => 'TR', 'EGYPT' => 'EG',
-            'MOROCCO' => 'MA', 'TUNISIA' => 'TN', 'KENYA' => 'KE',
-            'GEORGIA' => 'GE', 'ARMENIA' => 'AM', 'AZERBAIJAN' => 'AZ',
-            'UZBEKISTAN' => 'UZ', 'KAZAKHSTAN' => 'KZ',
-            'FRANCE' => 'FR', 'ITALY' => 'IT', 'SWITZERLAND' => 'CH',
-            'GERMANY' => 'DE', 'AUSTRIA' => 'AT', 'SPAIN' => 'ES',
-            'PORTUGAL' => 'PT', 'NETHERLANDS' => 'NL', 'BELGIUM' => 'BE',
-            'LUXEMBOURG' => 'LU', 'CZECH' => 'CZ', 'HUNGARY' => 'HU',
-            'SLOVAKIA' => 'SK', 'SLOVENIA' => 'SI', 'POLAND' => 'PL',
-            'CROATIA' => 'HR', 'GREECE' => 'GR', 'MONACO' => 'MC',
-            'VATICAN' => 'VA', 'DOLOMITES' => 'IT',
-            'SWEDEN' => 'SE', 'NORWAYS' => 'NO', 'NORWAY' => 'NO',
-            'DENMARK' => 'DK', 'FINLAND' => 'FI', 'ICELAND' => 'IS',
-            'ESTONIA' => 'EE', 'LATVIA' => 'LV', 'LITHUANIA' => 'LT',
-            'ENGLAND' => 'GB', 'SCOTLAND' => 'GB', 'WALES' => 'GB',
-            'IRELAND' => 'IE', 'RUSSIA' => 'RU',
-            'AUSTRALIA' => 'AU', 'CANADA' => 'CA', 'USA' => 'US',
-            'AMERICA' => 'US', 'MEXICO' => 'MX', 'BRAZIL' => 'BR', 'PERU' => 'PE',
-        ];
-
         $upper = mb_strtoupper($title, 'UTF-8');
+        if ($upper === '') return [];
+
         $found = [];
-        foreach ($map as $needle => $iso2) {
+
+        // 1) ALIASES ก่อน (region names / กลุ่มประเทศ / subregion → country)
+        //    ตรวจก่อน DB เพราะ "Scandinavia" ไม่ใช่ชื่อประเทศใน DB
+        static $aliases = [
+            'SCANDINAVIA'    => ['SE', 'NO', 'DK'],
+            'BENELUX'        => ['BE', 'NL', 'LU'],
+            'BALTIC'         => ['EE', 'LV', 'LT'],
+            'DOLOMITES'      => ['IT'],
+            'ENGLAND'        => ['GB'],
+            'SCOTLAND'       => ['GB'],
+            'WALES'          => ['GB'],
+            'UNITED KINGDOM' => ['GB'],
+            'NORWAYS'        => ['NO'],   // สะกดผิดของ API
+            'HONGKONG'       => ['HK'],   // ไม่มี space
+            'USA'            => ['US'],
+            'AMERICA'        => ['US'],
+            'DUBAI'          => ['AE'],
+            'ABU DHABI'      => ['AE'],
+        ];
+        foreach ($aliases as $needle => $iso2s) {
             if (str_contains($upper, $needle)) {
-                $found[$iso2] = true;
+                foreach ($iso2s as $iso2) $found[$iso2] = true;
             }
         }
+
+        // 2) DB scan — เทียบชื่อประเทศจริงจาก `countries.name_en`
+        //    static cache ใน request เดียว เพื่อเลี่ยง query ซ้ำต่อทัวร์
+        static $countryList = null;
+        if ($countryList === null) {
+            $countryList = \App\Models\Country::query()
+                ->where('is_active', true)
+                ->get(['iso2', 'name_en'])
+                ->map(fn ($c) => [
+                    'iso2'   => strtoupper((string) $c->iso2),
+                    'needle' => mb_strtoupper((string) $c->name_en, 'UTF-8'),
+                ])
+                // ยาวก่อนสั้น เพื่อไม่ให้ "GEORGIA" (GE) จับก่อน "SOUTH GEORGIA" (GS)
+                ->sortByDesc(fn ($c) => mb_strlen($c['needle']))
+                ->values()
+                ->all();
+        }
+        foreach ($countryList as $c) {
+            if ($c['needle'] === '' || $c['iso2'] === '') continue;
+            // ต้องเป็นคำเต็ม (ขอบด้วยตัวอักษรไม่ใช่ตัวอักษร) เพื่อกัน "INDIA" จับ "INDIANAPOLIS"
+            if (preg_match('/(^|[^A-Z])' . preg_quote($c['needle'], '/') . '([^A-Z]|$)/u', $upper)) {
+                $found[$c['iso2']] = true;
+            }
+        }
+
         return array_keys($found);
     }
 
     /**
      * เดา region / sub_region จากหมวดเส้นทาง (ฟิลด์ Country) และ ISO2 ที่เจอ
+     *
+     * ⚠ เวอร์ชันใหม่ (2026-08-11): อ่าน region จาก `countries.region` ของ ISO2 ตัวแรก
+     *   ที่เจอ แทน hardcoded regionMap ~35 รายการ
      */
     private function guessRegion(string $categoryName, array $iso2List): array
     {
-        // ลองจากชื่อหมวดภาษาไทยก่อน เช่น "ทัวร์เส้นทางยุโรป"
+        // 1) ลองจากชื่อหมวดภาษาไทยก่อน เช่น "ทัวร์เส้นทางยุโรป"
         if (str_contains($categoryName, 'ยุโรป'))      return ['EUROPE', null];
         if (str_contains($categoryName, 'อเมริกา'))    return ['AMERICAS', null];
         if (str_contains($categoryName, 'ออสเตรเลีย')) return ['OCEANIA', null];
         if (str_contains($categoryName, 'แอฟริกา'))    return ['AFRICA', null];
 
-        static $regionMap = [
-            'JP' => ['ASIA', 'EAST_ASIA'],  'KR' => ['ASIA', 'EAST_ASIA'],
-            'TW' => ['ASIA', 'EAST_ASIA'],  'CN' => ['ASIA', 'EAST_ASIA'],
-            'HK' => ['ASIA', 'EAST_ASIA'],  'MO' => ['ASIA', 'EAST_ASIA'],
-            'VN' => ['ASIA', 'SOUTHEAST_ASIA'], 'SG' => ['ASIA', 'SOUTHEAST_ASIA'],
-            'MY' => ['ASIA', 'SOUTHEAST_ASIA'], 'ID' => ['ASIA', 'SOUTHEAST_ASIA'],
-            'PH' => ['ASIA', 'SOUTHEAST_ASIA'], 'KH' => ['ASIA', 'SOUTHEAST_ASIA'],
-            'LA' => ['ASIA', 'SOUTHEAST_ASIA'], 'MM' => ['ASIA', 'SOUTHEAST_ASIA'],
-            'IN' => ['ASIA', 'SOUTH_ASIA'], 'NP' => ['ASIA', 'SOUTH_ASIA'],
-            'BT' => ['ASIA', 'SOUTH_ASIA'], 'LK' => ['ASIA', 'SOUTH_ASIA'],
-            'MV' => ['ASIA', 'SOUTH_ASIA'],
-            'AE' => ['MIDDLE_EAST', null], 'QA' => ['MIDDLE_EAST', null],
-            'OM' => ['MIDDLE_EAST', null], 'JO' => ['MIDDLE_EAST', null],
-            'IL' => ['MIDDLE_EAST', null], 'TR' => ['MIDDLE_EAST', null],
-            'EG' => ['AFRICA', null], 'MA' => ['AFRICA', null],
-            'TN' => ['AFRICA', null], 'KE' => ['AFRICA', null], 'ZA' => ['AFRICA', null],
-            'AU' => ['OCEANIA', null], 'NZ' => ['OCEANIA', null],
-            'US' => ['AMERICAS', null], 'CA' => ['AMERICAS', null],
-            'MX' => ['AMERICAS', null], 'BR' => ['AMERICAS', null], 'PE' => ['AMERICAS', null],
-        ];
-
+        // 2) อ่าน region จาก DB ของ ISO2 ตัวแรกที่เจอ
+        //    static cache ต่อ request เพื่อไม่ query ซ้ำ
+        static $regionCache = [];
         foreach ($iso2List as $iso2) {
-            if (isset($regionMap[$iso2])) {
-                return $regionMap[$iso2];
+            if (!array_key_exists($iso2, $regionCache)) {
+                $regionCache[$iso2] = \Illuminate\Support\Facades\DB::table('countries')
+                    ->where('iso2', strtoupper((string) $iso2))
+                    ->value('region');
             }
-        }
-
-        // ที่เหลือในตารางคือประเทศยุโรป
-        if (!empty($iso2List)) {
-            return ['EUROPE', null];
+            if (!empty($regionCache[$iso2])) {
+                return [$regionCache[$iso2], null];
+            }
         }
 
         return [null, null];

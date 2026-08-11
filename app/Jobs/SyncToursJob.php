@@ -2651,6 +2651,20 @@ class SyncToursJob implements ShouldQueue
         // Map status if provided (system transform)
         if (isset($depData['status'])) {
             $periodFields['status'] = $this->mapPeriodStatus($depData['status']);
+        } elseif (!$isNew && $period->status === Period::STATUS_CLOSED) {
+            // Bug fix (2026-08-11): wholesalers with NO field mapping for 'status'
+            // (e.g. WCN/World Connections — their API has no status/booking column at
+            // all, only seat/balance) can never explicitly re-open a period. Once
+            // cleanupOrphanPeriods() force-closes it for being absent from a single
+            // sync batch (a transient API hiccup), it stays "closed" forever even
+            // after it reappears with fresh availability — silently hiding the tour
+            // from public search while admin UI (is_visible/sale_status) shows it as
+            // perfectly bookable. Since processPeriod() only runs for periods that
+            // ARE present in the current batch (not orphans), reaching this point
+            // proves the wholesaler is actively offering it again — reopen based on
+            // current availability instead of leaving a stale 'closed' flag.
+            $availableNow = (int) ($periodFields['available'] ?? $period->available ?? 0);
+            $periodFields['status'] = $availableNow > 0 ? Period::STATUS_OPEN : Period::STATUS_SOLD_OUT;
         }
         
         // Force status to 'closed' for past periods when handling = 'close'

@@ -30,10 +30,21 @@ class BookingController extends Controller
      */
     protected function applySaleVisibilityFilter($query): void
     {
-        // Visibility policy (2026-08-10): sales users are now allowed to see ALL
-        // bookings — no per-owner scoping. Kept as a no-op so callers can keep
-        // invoking it (and so we can re-introduce a filter later without churn).
-        return;
+        $user = Auth::user();
+        if (!$user) return; // Unauth: rely on route middleware
+        if (($user->role ?? null) !== 'sale') return; // admin/it: no restriction
+
+        $saleName = trim((string) ($user->name ?? ''));
+
+        $query->where(function ($q) use ($saleName) {
+            // Bookings not yet assigned to any sale
+            $q->whereNull('sale_code')
+              ->orWhere('sale_code', '');
+            if ($saleName !== '') {
+                // Bookings assigned to this sale (exact-match on name)
+                $q->orWhere('sale_code', $saleName);
+            }
+        });
     }
 
     /**
@@ -42,10 +53,15 @@ class BookingController extends Controller
      */
     protected function currentUserCanAccessBooking(Booking $booking): bool
     {
-        // Visibility policy (2026-08-10): all authenticated dashboard users
-        // (incl. sales) can view any booking. Kept as a hook for future
-        // per-row restrictions without changing call sites.
-        return Auth::check();
+        $user = Auth::user();
+        if (!$user) return false;
+        if (($user->role ?? null) !== 'sale') return true; // admin/it
+
+        $saleName = trim((string) ($user->name ?? ''));
+        $bookingSale = trim((string) ($booking->sale_code ?? ''));
+
+        // Unassigned or matches the sale's own name
+        return $bookingSale === '' || ($saleName !== '' && $bookingSale === $saleName);
     }
 
     /**
@@ -55,7 +71,7 @@ class BookingController extends Controller
     {
         $query = Booking::with([
             'member:id,first_name,last_name,email,phone',
-            'tour:id,title,slug,tour_code,wholesaler_tour_code,wholesaler_id,badge,has_promotion,discount_label,max_discount_percent',
+            'tour:id,title,slug,tour_code,wholesaler_id,badge,has_promotion,discount_label,max_discount_percent',
             'tour.wholesaler:id,name,code',
             'period:id,start_date,end_date',
             'flashSaleItem:id,flash_price,discount_percent,flash_sale_id',
@@ -103,7 +119,7 @@ class BookingController extends Controller
     {
         $booking = Booking::with([
             'member:id,first_name,last_name,email,phone,avatar',
-            'tour:id,title,slug,tour_code,wholesaler_tour_code,duration_days,duration_nights,wholesaler_id,badge,has_promotion,discount_label,max_discount_percent',
+            'tour:id,title,slug,tour_code,duration_days,duration_nights,wholesaler_id,badge,has_promotion,discount_label,max_discount_percent',
             'tour.wholesaler:id,name,code',
             'tour.transports:id,tour_id,transport_name,sort_order',
             'period:id,start_date,end_date,capacity,booked',
@@ -358,11 +374,11 @@ class BookingController extends Controller
     {
         $validated = $request->validate([
             'tour_id' => 'required|exists:tours,id',
-            'period_id' => 'required|exists:periods,id',
+            'period_id' => 'required|exists:tour_periods,id',
             'web_member_id' => 'nullable|integer|exists:web_members,id',
             'first_name' => 'required|string|max:100',
             'last_name' => 'required|string|max:100',
-            'email' => 'nullable|email|max:100',
+            'email' => 'required|email|max:100',
             'phone' => 'required|string|max:20',
             'qty_adult' => 'required|integer|min:1',
             'qty_adult_single' => 'integer|min:0',
@@ -391,7 +407,7 @@ class BookingController extends Controller
             'web_member_id' => $validated['web_member_id'] ?? null,
             'first_name' => $validated['first_name'],
             'last_name' => $validated['last_name'],
-            'email' => $validated['email'] ?? null,
+            'email' => $validated['email'],
             'phone' => $validated['phone'],
             'qty_adult' => $validated['qty_adult'],
             'qty_adult_single' => $validated['qty_adult_single'] ?? 0,
@@ -460,7 +476,7 @@ class BookingController extends Controller
         $validated = $request->validate([
             'first_name' => 'string|max:100',
             'last_name' => 'string|max:100',
-            'email' => 'nullable|email|max:100',
+            'email' => 'email|max:100',
             'phone' => 'string|max:20',
             'qty_adult' => 'integer|min:1',
             'qty_adult_single' => 'integer|min:0',
@@ -480,7 +496,7 @@ class BookingController extends Controller
             'special_request' => 'nullable|string|max:1000',
             'admin_note' => 'nullable|string|max:1000',
             'status' => 'in:pending,confirmed,paid,cancelled,completed',
-            'period_id' => 'exists:periods,id',
+            'period_id' => 'exists:tour_periods,id',
         ]);
 
         // Handle flash sale cancellation
