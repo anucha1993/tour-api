@@ -71,8 +71,9 @@ class BookingController extends Controller
     {
         $query = Booking::with([
             'member:id,first_name,last_name,email,phone',
-            'tour:id,title,slug,tour_code,wholesaler_id,badge,has_promotion,discount_label,max_discount_percent',
+            'tour:id,title,slug,tour_code,wholesaler_tour_code,duration_days,duration_nights,wholesaler_id,badge,has_promotion,discount_label,max_discount_percent',
             'tour.wholesaler:id,name,code',
+            'tour.transports:id,tour_id,transport_name,sort_order',
             'period:id,start_date,end_date',
             'flashSaleItem:id,flash_price,discount_percent,flash_sale_id',
         ]);
