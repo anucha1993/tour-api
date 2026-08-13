@@ -374,7 +374,7 @@ class BookingController extends Controller
     {
         $validated = $request->validate([
             'tour_id' => 'required|exists:tours,id',
-            'period_id' => 'required|exists:tour_periods,id',
+            'period_id' => 'required|exists:periods,id',
             'web_member_id' => 'nullable|integer|exists:web_members,id',
             'first_name' => 'required|string|max:100',
             'last_name' => 'required|string|max:100',
@@ -496,7 +496,7 @@ class BookingController extends Controller
             'special_request' => 'nullable|string|max:1000',
             'admin_note' => 'nullable|string|max:1000',
             'status' => 'in:pending,confirmed,paid,cancelled,completed',
-            'period_id' => 'exists:tour_periods,id',
+            'period_id' => 'exists:periods,id',
         ]);
 
         // Handle flash sale cancellation
