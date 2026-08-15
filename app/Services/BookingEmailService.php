@@ -43,18 +43,24 @@ class BookingEmailService
 
             $mailer = self::createMailer($smtpConfig);
 
-            // Send to customer
-            $email = (new Email())
-                ->from(new Address($smtpConfig['from_address'], $smtpConfig['from_name']))
-                ->to($booking->email)
-                ->subject($subject)
-                ->html($body);
+            // Manual/walk-in bookings can have no email — nothing to send the customer
+            if (empty($booking->email)) {
+                Log::info('BookingEmail: No customer email, skipping confirmation.', [
+                    'booking_code' => $booking->booking_code,
+                ]);
+            } else {
+                $email = (new Email())
+                    ->from(new Address($smtpConfig['from_address'], $smtpConfig['from_name']))
+                    ->to($booking->email)
+                    ->subject($subject)
+                    ->html($body);
 
-            $mailer->send($email);
+                $mailer->send($email);
 
-            Log::info('BookingEmail: Confirmation sent to ' . $booking->email, [
-                'booking_code' => $booking->booking_code,
-            ]);
+                Log::info('BookingEmail: Confirmation sent to ' . $booking->email, [
+                    'booking_code' => $booking->booking_code,
+                ]);
+            }
 
             // Send to admin(s) if enabled
             if (!empty($template['send_to_admin']) && !empty($template['admin_emails'])) {
@@ -111,18 +117,24 @@ class BookingEmailService
 
             $mailer = self::createMailer($smtpConfig);
 
-            $email = (new Email())
-                ->from(new Address($smtpConfig['from_address'], $smtpConfig['from_name']))
-                ->to($booking->email)
-                ->subject($subject)
-                ->html($body);
+            if (empty($booking->email)) {
+                Log::info('BookingEmail: No customer email, skipping status update.', [
+                    'booking_code' => $booking->booking_code,
+                ]);
+            } else {
+                $email = (new Email())
+                    ->from(new Address($smtpConfig['from_address'], $smtpConfig['from_name']))
+                    ->to($booking->email)
+                    ->subject($subject)
+                    ->html($body);
 
-            $mailer->send($email);
+                $mailer->send($email);
 
-            Log::info('BookingEmail: Status update sent to ' . $booking->email, [
-                'booking_code' => $booking->booking_code,
-                'status'       => $booking->status,
-            ]);
+                Log::info('BookingEmail: Status update sent to ' . $booking->email, [
+                    'booking_code' => $booking->booking_code,
+                    'status'       => $booking->status,
+                ]);
+            }
 
             // Also notify admin(s) — same pattern as sendBookingConfirmation().
             // Previously status updates (including cancellations) went ONLY to
