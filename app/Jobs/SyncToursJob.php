@@ -1937,11 +1937,27 @@ class SyncToursJob implements ShouldQueue
 
         // ค้นหา tour โดยใช้ tour_code wholesaler_tour_code หรือ external_id
         $tourCode = $tourSection['tour_code'] ?? $tourSection['wholesaler_tour_code'] ?? $tourSection['external_id'] ?? null;
-        
+        $externalId = $tourSection['external_id'] ?? null;
+
+        // FIX: a blank string ('') must NEVER be used to match — otherwise multiple
+        // tours whose wholesaler both send an empty code collide onto whichever row
+        // happened to be saved first with wholesaler_tour_code=''. Only match on a
+        // condition when that value is a real, non-empty identifier.
         $tour = Tour::where('wholesaler_id', $config->wholesaler_id)
-            ->where(function ($q) use ($tourCode, $tourSection) {
-                $q->where('wholesaler_tour_code', $tourCode)
-                  ->orWhere('external_id', $tourSection['external_id'] ?? null);
+            ->where(function ($q) use ($tourCode, $externalId) {
+                $hasCondition = false;
+                if ($tourCode !== null && $tourCode !== '') {
+                    $q->where('wholesaler_tour_code', $tourCode);
+                    $hasCondition = true;
+                }
+                if ($externalId !== null && $externalId !== '') {
+                    $hasCondition ? $q->orWhere('external_id', $externalId) : $q->where('external_id', $externalId);
+                    $hasCondition = true;
+                }
+                if (!$hasCondition) {
+                    // Neither identifier is usable — force no match (new tour path)
+                    $q->whereRaw('1 = 0');
+                }
             })
             ->first();
 
